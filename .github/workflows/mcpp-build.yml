@@ -1,0 +1,136 @@
+name: mcpp Build
+
+# The mcpp leg of the dual build system. CMake remains the full-platform path
+# and the only path for Android, iOS and Web; this workflow covers what mcpp
+# can build today (see .agents/docs/2026-09-09-mcpp-native-build-and-modules-plan.md).
+#
+# Two jobs on purpose. `parity` needs no toolchain and finishes in seconds, so
+# the failure it catches -- a source added to one build system and not the
+# other -- is reported before anyone waits on a compile.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'mcpp.toml'
+      - 'build.mcpp'
+      - 'mcpp/**'
+      - 'src/**'
+      - 'include/**'
+      - 'platform/linux/**'
+      - 'resources/**'
+      - 'cmake/platform/**'
+      - 'cmake/HuxerUIBuild.cmake'
+      - 'examples/mcpp_demo/**'
+      - '.github/workflows/mcpp-build.yml'
+  pull_request:
+    paths:
+      - 'mcpp.toml'
+      - 'build.mcpp'
+      - 'mcpp/**'
+      - 'src/**'
+      - 'include/**'
+      - 'platform/linux/**'
+      - 'resources/**'
+      - 'cmake/platform/**'
+      - 'cmake/HuxerUIBuild.cmake'
+      - 'examples/mcpp_demo/**'
+      - '.github/workflows/mcpp-build.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: mcpp-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Pinned rather than latest: an mcpp release changes build behaviour, and a
+  # green PR should stay green until someone chooses to move this line.
+  MCPP_VERSION: '2026.9.8.1'
+  XLINGS_NON_INTERACTIVE: '1'
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  parity:
+    name: mcpp/CMake parity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Check that both build systems describe the same project
+        run: python3 mcpp/parity/check_parity.py
+
+  linux:
+    name: mcpp build (linux x86_64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      # GTK 4, libepoxy, GIO and libsoup 3 stay distribution-owned, exactly as
+      # cmake/platform/Linux.cmake requires. build.mcpp resolves them through
+      # pkg-config -- the same .pc files pkg_check_modules reads -- so this is
+      # the one class of metadata the two build systems cannot disagree about.
+      - name: Install HuxerUI Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-4-dev libepoxy-dev libsoup-3.0-dev pkg-config
+
+      - name: Cache xlings and mcpp
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.xlings
+            ~/.mcpp
+          key: mcpp-${{ runner.os }}-${{ runner.arch }}-v1-${{ env.MCPP_VERSION }}
+          restore-keys: |
+            mcpp-${{ runner.os }}-${{ runner.arch }}-v1-
+
+      - name: Install xlings and mcpp
+        run: |
+          if [ ! -x "$HOME/.xlings/bin/xlings" ]; then
+            curl -fsSL https://d2learn.org/xlings-install.sh | bash
+          fi
+          echo "$HOME/.xlings/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
+
+      - name: Select the pinned mcpp
+        run: |
+          xlings install "mcpp@${MCPP_VERSION}" -y
+          mcpp --version
+
+      # The framework itself: 67 core sources plus platform/linux, with the
+      # builtin resource header produced by the committed hrc -- the SAME
+      # binary the CMake build runs, so neither build system can generate
+      # different code than the other.
+      - name: Build the framework
+        run: mcpp build
+
+      # An application on top of it. Its mcpp.toml names one dependency and its
+      # build.mcpp is one call; everything else -- GTK on the link line, the
+      # composable transform, the resource packages -- arrives through the
+      # dependency edge.
+      - name: Build the example application
+        working-directory: examples/mcpp_demo
+        run: mcpp build
+
+      # The demo's page uses [[huxerui::composable]] with UseState. If hcg had
+      # not been scheduled the build above would already have failed, but assert
+      # the transform actually happened rather than inferring it.
+      - name: Assert the composable transform ran
+        working-directory: examples/mcpp_demo
+        run: |
+          generated=$(find target -path '*hcg*' -name '*.cpp' | head -1)
+          test -n "$generated" || { echo "hcg produced no transformed source"; exit 1; }
+          grep -q 'HUXERUI_SCOPE_BEGIN' "$generated" \
+            || { echo "transformed source lacks the composable scope"; exit 1; }
+          echo "composable transform verified in $generated"

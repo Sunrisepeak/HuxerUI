@@ -1,0 +1,18 @@
+# The rule package HuxerUI consumers import from their build.mcpp.
+#
+# It is a `host-module` dependency: mcpp compiles its lib-root module for the
+# host in the same command as build.mcpp, which is what makes the BMI usable.
+# The framework re-exports it, so an application declares `huxerui` and gets
+# `import huxerui.rules;` without naming this package.
+
+[package]
+name        = "huxerui-rules"
+namespace   = "huxerui"
+version     = "0.3.0"
+description = "mcpp build rules for HuxerUI: composable codegen and resource compilation"
+license     = "Apache-2.0"
+
+[lib]
+# The module this package publishes is `huxerui.rules`; the package name is
+# `huxerui-rules`, which is not a legal C++ module name and does not have to be.
+path = "src/rules.cppm"

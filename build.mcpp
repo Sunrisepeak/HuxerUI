@@ -1,0 +1,64 @@
+// HuxerUI's own build program.
+//
+// Two jobs, and deliberately no third:
+//
+//   1. Linux platform dependencies, resolved through pkg-config -- the same
+//      .pc files cmake/platform/Linux.cmake reads with pkg_check_modules, so
+//      this metadata cannot drift between the two build systems.
+//   2. The builtin resource header, which 11 of this project's translation
+//      units #include and which therefore cannot be deferred to a consumer.
+//
+// There is NO composable codegen here: `grep -r '[[huxerui::composable]]' src/
+// platform/` finds nothing. huxerui_enable_codegen() is called only from
+// cmake/HuxerUIApp.cmake (applications) and cmake/HuxerUILibraries.cmake (user
+// libraries), so the framework's own build has never needed hcg.
+
+import std;
+import mcpp;
+import huxerui.rules;
+
+namespace {
+
+// pkg-config's output, split into mcpp directives. `-I` becomes a PRIVATE
+// include dir (Cargo discipline: it colours this package's own TUs only);
+// `-l` and `-L` reach the final link, which is what puts GTK on an
+// application's link line without the application naming it.
+bool probe(std::string_view module_spec) {
+    const std::string out = std::string(mcpp::out_dir()) + "/pkg-config.txt";
+    const std::string cmd = "pkg-config --cflags --libs '" + std::string(module_spec)
+                          + "' > '" + out + "' 2>/dev/null";
+    if (std::system(cmd.c_str()) != 0) return false;
+
+    std::ifstream in(out);
+    if (!in) return false;
+    std::string token;
+    while (in >> token) {
+        if (token.starts_with("-I"))      mcpp::include_dir(token.substr(2).c_str());
+        else if (token.starts_with("-l")) mcpp::link_lib(token.substr(2).c_str());
+        else if (token.starts_with("-L")) mcpp::link_search(token.substr(2).c_str());
+        else if (!token.empty())          mcpp::cxxflag(token.c_str());
+    }
+    return true;
+}
+
+} // namespace
+
+int main() {
+    if (!huxerui::rules::builtin_resources()) return 1;
+
+    if (std::string_view(mcpp::target_os()) == "linux") {
+        mcpp::rerun_if_env_changed("PKG_CONFIG_PATH");
+        mcpp::rerun_if_env_changed("PKG_CONFIG_LIBDIR");
+
+        // Version floors match cmake/platform/Linux.cmake.
+        for (std::string_view m : { "gtk4 >= 4.14", "epoxy >= 1.5",
+                                    "gio-2.0", "libsoup-3.0 >= 3.0" }) {
+            if (!probe(m)) {
+                std::cerr << "huxerui: pkg-config could not resolve '" << m
+                          << "' -- install the distribution development package\n";
+                return 1;
+            }
+        }
+    }
+    return 0;
+}

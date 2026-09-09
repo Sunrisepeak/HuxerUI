@@ -1,0 +1,91 @@
+# HuxerUI as a native mcpp package.
+#
+# This file is additive: nothing in the CMake build reads it, and deleting it
+# returns the repository to a CMake-only project. See
+# `.agents/docs/2026-09-09-mcpp-native-build-and-modules-plan.md` for the design
+# and `mcpp/README.md` for how to drive it.
+
+[workspace]
+members = ["mcpp/rules"]
+
+[package]
+name        = "huxerui"
+namespace   = "huxerui"
+version     = "0.3.0"
+# C++20 is the SDK ABI baseline (CMAKE_CXX_STANDARD 20, extensions off).
+# Do not raise it here: the standard is module-graph-global in mcpp, so this
+# value would also be imposed on every consumer of this package.
+standard    = "c++20"
+description = "HuxerUI declarative cross-platform UI framework"
+license     = "Apache-2.0"
+repo        = "https://github.com/Sunrisepeak/HuxerUI"
+platforms   = ["linux", "windows", "macos"]
+
+[targets.huxerui]
+# `lib`, not `shared`: whether HuxerUI is a separate file at run time is the
+# consuming program's decision, expressed with `[build] dependency_linkage`.
+# CMake's huxerui/huxerui_static pair is the same choice made by the author.
+kind = "lib"
+
+[build]
+# Mirrors `file(GLOB HUXERUI_CORE_SOURCE_FILES "${HUXERUI_PROJECT_DIR}/src/*/*.cpp")`
+# in cmake/HuxerUIBuild.cmake. mcpp/parity/check_parity.py asserts the two agree.
+sources                 = ["src/*/*.cpp"]
+include_dirs            = ["include", "src"]
+# `src` carries implementation-only headers; a consumer must never receive it.
+# CMake expresses the same split with PRIVATE vs PUBLIC target_include_directories.
+private_include_dirs    = ["src"]
+cxxflags                = ["-Wall", "-Wextra", "-Wpedantic"]
+macos_deployment_target = "12.0"
+# CMake's HUXERUI_ENABLE_PROFILING defaults ON and compiles src/runtime/profiling.cpp.
+defines                 = ["HUXERUI_ENABLE_PROFILING=1"]
+
+# The rule module consumers import. `reexport` hands it to *their* build.mcpp,
+# so an application declares `huxerui` and nothing else.
+[dependencies]
+huxerui-rules = { path = "mcpp/rules", host-module = true, reexport = true }
+
+# ---------------------------------------------------------------- Linux ----
+# Sources mirror cmake/platform/Linux.cmake. GTK4 / epoxy / gio / libsoup are
+# resolved by build.mcpp through pkg-config -- the same .pc files
+# pkg_check_modules reads, so this metadata cannot drift between the two builds.
+[target.'cfg(linux)'.build]
+sources = ["platform/linux/*.cpp"]
+
+# -------------------------------------------------------------- Windows ----
+[target.windows.build]
+# windows_installer.cpp is NOT part of the framework: it is the WiX custom-action
+# DLL, built as a separate SDK artifact by cmake/HuxerUISdk.cmake:131. A bare
+# `platform/windows/*.cpp` glob sweeps it into libhuxerui, which is what
+# mcpp/parity/check_parity.py caught before this ever ran on Windows.
+sources  = ["platform/windows/*.cpp", "!platform/windows/windows_installer.cpp"]
+defines  = ["UNICODE", "_UNICODE", "NOMINMAX", "WIN32_LEAN_AND_MEAN",
+            "WINVER=0x0A00", "_WIN32_WINNT=0x0A00"]
+cxxflags = ["/W4", "/permissive-", "/utf-8"]
+
+[target.windows.runtime]
+libraries = ["advapi32", "d2d1", "d3d11", "dwrite", "dwmapi", "dxguid", "dxgi",
+             "imm32", "ole32", "oleaut32", "psapi", "shell32", "uiautomationcore",
+             "user32", "winhttp", "windowscodecs",
+             "dcomp", "windowsapp", "crypt32", "propsys"]
+
+# ---------------------------------------------------------------- macOS ----
+[target.macos.build]
+# `.mm` is a first-class C++ source kind in mcpp but is NOT in the default
+# glob (src/**/*.{cppm,cpp,cc,c,S,s,asm}), so it must be listed explicitly.
+sources  = ["platform/macos/*.mm"]
+cxxflags = ["-fobjc-arc"]
+# `-weak_framework` has no neutral spelling; [runtime] frameworks covers only
+# ordinary framework linkage.
+ldflags  = ["-weak_framework", "UniformTypeIdentifiers"]
+
+# frameworks belongs to the TOP-LEVEL [runtime] table. The per-target
+# vocabulary is `libraries` / `link_library_dirs` only, so a
+# [target.macos.runtime] frameworks entry is reported and ignored -- the build
+# then fails at link on macOS alone. Unconditional here is correct: the engine
+# renders this only for Mach-O (src/build/flags.cppm, `flavor == MachO`), the
+# same shape [resources] has for PE.
+[runtime]
+frameworks = ["AppKit", "AVFoundation", "Carbon", "CoreGraphics", "CoreImage",
+              "CoreText", "CoreVideo", "ImageIO", "Foundation", "Metal",
+              "MetalPerformanceShaders", "QuartzCore", "UserNotifications"]
