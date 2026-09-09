@@ -24,21 +24,6 @@ platforms   = ["linux", "windows", "macos"]
 # The package's primary module interface. mcpp's convention is
 # `src/<last segment of package name>.cppm`; HuxerUI keeps the module out of
 # `src/` because `src/` is private implementation and this file is public API.
-# WINDOWS BUILDS WITH MSVC, NOT CLANG.
-#
-# mcpp's default on a Windows host is xim:llvm, and HuxerUI's Windows backend
-# does not compile with it -- src/io/file.cpp:1387 casts 10 to
-# FILE_INFORMATION_CLASS in a constant expression, which MSVC accepts and clang
-# rejects ("must be initialized by a constant expression"). That is a source
-# property of the Win32 backend, not a build-system problem, and AGENTS.md
-# already fixes the answer: "Windows SDKs use the windows-2022 MSVC developer
-# environment ... do not use MinGW."
-#
-# Pinning the family here keeps the mcpp and CMake builds on the same compiler,
-# which is also what stops the two from diverging on dialect one file at a time.
-[toolchain]
-windows = "msvc"
-
 [lib]
 path = "modules/huxerui.cppm"
 
@@ -163,9 +148,17 @@ sources = ["platform/linux/*.cpp"]
 sources  = ["platform/windows/*.cpp", "!platform/windows/windows_installer.cpp"]
 defines  = ["UNICODE", "_UNICODE", "NOMINMAX", "WIN32_LEAN_AND_MEAN",
             "WINVER=0x0A00", "_WIN32_WINNT=0x0A00"]
-# Same three flags cmake/HuxerUIBuild.cmake sets for MSVC. They are valid here
-# because [toolchain] windows pins the MSVC family above.
-cxxflags = ["/W4", "/permissive-", "/utf-8"]
+# NO MSVC-DIALECT FLAGS. mcpp builds Windows with clang targeting
+# x86_64-windows-msvc -- the MSVC ABI and the Windows SDK, not MinGW -- and its
+# GNU driver rejects `/W4`, `/permissive-` and `/utf-8` outright
+# ("error: no such file or directory: '/W4'"). The warning level is already set
+# once in the base [build] cxxflags, and clang reads UTF-8 by default.
+#
+# `[toolchain] windows = "msvc"` would put both build systems on one compiler
+# and was tried; mcpp 2026.9.8.1 then hands the host module's BMI to cl.exe in
+# clang's `name=path` spelling and the link fails with
+# `LNK1104: cannot open file 'huxerui.rules=...ifc'`. Revisit when that is
+# fixed upstream.
 
 [target.windows.runtime]
 libraries = ["advapi32", "d2d1", "d3d11", "dwrite", "dwmapi", "dxguid", "dxgi",
