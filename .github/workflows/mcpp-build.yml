@@ -145,6 +145,33 @@ jobs:
         run: mcpp build
 
       # Three claims this PR makes, asserted rather than inferred.
+
+      # `mcpp pack` on a `kind = "lib"` target writes interface + prebuilt
+      # binaries -- which IS the SDK shape, and needs no packaging script of its
+      # own. It is per-leg by construction: each runner packs its own target.
+      #
+      # This is NOT the release SDK. That one covers six platforms and ships a
+      # CMake package config for CMake consumers; `mcpp pack` produces the three
+      # legs mcpp builds, for mcpp consumers. cmake/HuxerUISdk.cmake keeps
+      # owning the release.
+      - name: Pack the library and check its shape
+        shell: bash
+        run: |
+          mcpp pack
+          archive=$(find target/dist -name 'huxerui-*.tar.gz' -o -name 'huxerui-*.zip' | head -1)
+          test -n "$archive" || { echo "mcpp pack produced no archive"; exit 1; }
+          echo "packed $archive"
+          list=$(tar tzf "$archive" 2>/dev/null || unzip -Z1 "$archive")
+          for expected in 'include/huxerui/huxerui.h' 'interface/huxerui.cppm' 'mcpp.toml'; do
+            echo "$list" | grep -q "$expected" \
+              || { echo "the package omits $expected"; exit 1; }
+          done
+          # Both consumption paths belong in the package: a consumer writing
+          # `#include <huxerui/huxerui.h>` and one writing `import huxerui;`
+          # are looking at the same library.
+          echo "$list" | grep -qE 'lib/.+/(libhuxerui\.a|huxerui\.lib)' \
+            || { echo "the package carries no library"; exit 1; }
+          echo "package carries headers, the module interface and a library"
       - name: Assert the composable transform ran and is macro-free
         working-directory: examples/mcpp_demo
         run: |
@@ -238,6 +265,33 @@ jobs:
         working-directory: examples/mcpp_demo
         run: mcpp build
 
+
+      # `mcpp pack` on a `kind = "lib"` target writes interface + prebuilt
+      # binaries -- which IS the SDK shape, and needs no packaging script of its
+      # own. It is per-leg by construction: each runner packs its own target.
+      #
+      # This is NOT the release SDK. That one covers six platforms and ships a
+      # CMake package config for CMake consumers; `mcpp pack` produces the three
+      # legs mcpp builds, for mcpp consumers. cmake/HuxerUISdk.cmake keeps
+      # owning the release.
+      - name: Pack the library and check its shape
+        shell: bash
+        run: |
+          mcpp pack
+          archive=$(find target/dist -name 'huxerui-*.tar.gz' -o -name 'huxerui-*.zip' | head -1)
+          test -n "$archive" || { echo "mcpp pack produced no archive"; exit 1; }
+          echo "packed $archive"
+          list=$(tar tzf "$archive" 2>/dev/null || unzip -Z1 "$archive")
+          for expected in 'include/huxerui/huxerui.h' 'interface/huxerui.cppm' 'mcpp.toml'; do
+            echo "$list" | grep -q "$expected" \
+              || { echo "the package omits $expected"; exit 1; }
+          done
+          # Both consumption paths belong in the package: a consumer writing
+          # `#include <huxerui/huxerui.h>` and one writing `import huxerui;`
+          # are looking at the same library.
+          echo "$list" | grep -qE 'lib/.+/(libhuxerui\.a|huxerui\.lib)' \
+            || { echo "the package carries no library"; exit 1; }
+          echo "package carries headers, the module interface and a library"
   windows:
     name: mcpp build (windows x86_64)
     runs-on: windows-2022
@@ -285,6 +339,33 @@ jobs:
         working-directory: examples/mcpp_demo
         run: mcpp build
 
+
+      # `mcpp pack` on a `kind = "lib"` target writes interface + prebuilt
+      # binaries -- which IS the SDK shape, and needs no packaging script of its
+      # own. It is per-leg by construction: each runner packs its own target.
+      #
+      # This is NOT the release SDK. That one covers six platforms and ships a
+      # CMake package config for CMake consumers; `mcpp pack` produces the three
+      # legs mcpp builds, for mcpp consumers. cmake/HuxerUISdk.cmake keeps
+      # owning the release.
+      - name: Pack the library and check its shape
+        shell: bash
+        run: |
+          mcpp pack
+          archive=$(find target/dist -name 'huxerui-*.tar.gz' -o -name 'huxerui-*.zip' | head -1)
+          test -n "$archive" || { echo "mcpp pack produced no archive"; exit 1; }
+          echo "packed $archive"
+          list=$(tar tzf "$archive" 2>/dev/null || unzip -Z1 "$archive")
+          for expected in 'include/huxerui/huxerui.h' 'interface/huxerui.cppm' 'mcpp.toml'; do
+            echo "$list" | grep -q "$expected" \
+              || { echo "the package omits $expected"; exit 1; }
+          done
+          # Both consumption paths belong in the package: a consumer writing
+          # `#include <huxerui/huxerui.h>` and one writing `import huxerui;`
+          # are looking at the same library.
+          echo "$list" | grep -qE 'lib/.+/(libhuxerui\.a|huxerui\.lib)' \
+            || { echo "the package carries no library"; exit 1; }
+          echo "package carries headers, the module interface and a library"
   cmake-tests:
     name: cmake tests (files this PR touches)
     runs-on: ubuntu-24.04

@@ -81,6 +81,25 @@ consumer is given `dep_dir()`, the dependency's *source* root -- and inventing
 one would mean writing into a package root that may be read-only. 44 files /
 196 KB, incrementally cached; the alternatives are enumerated in the plan.
 
+## Packaging
+
+```bash
+mcpp pack
+```
+
+writes `target/dist/huxerui-<version>-<compatibility tag>.tar.gz` containing
+`include/huxerui/**`, `interface/huxerui.cppm` and `lib/<triple>/libhuxerui.a`
+-- both consumption paths and the binary, with no packaging script of its own.
+It is per-leg by construction: a package for another platform comes from that
+platform's runner, and `mcpp pack` says so when `[package] platforms` claims one
+that was not packed.
+
+**This is not the release SDK.** That one covers six platforms and ships a CMake
+package config for CMake consumers; `mcpp pack` produces the three legs mcpp
+builds, for mcpp consumers. `cmake/HuxerUISdk.cmake` and `scripts/package_sdk.sh`
+keep owning the release -- the script also *builds* the Android, Web and iOS
+artifacts, which mcpp cannot.
+
 ## Parity
 
 Two build systems maintaining one set of facts drift, and the drift is quiet:
