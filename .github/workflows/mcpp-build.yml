@@ -161,20 +161,30 @@ jobs:
       # part of `mcpp build` on Windows. Assert the tool is actually there and
       # runs: `wix --version` failing is how a missing .NET 6 runtime shows up,
       # and that is a different problem from a missing payload.
+      #
+      # The store searched is mcpp's own registry, not ~/.xlings: mcpp resolves
+      # payloads into `.mcpp/registry/data/xpkgs` (both are checked, because
+      # which one holds it is mcpp's business rather than this job's).
       - name: Assert the WiX toolset is provisioned
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $root = Get-ChildItem -Directory -Recurse -Filter 'wix' `
-                    (Join-Path $HOME '.xlings\data\xpkgs') -ErrorAction SilentlyContinue |
-                  Select-Object -First 1
-          if (-not $root) { throw 'xim:wix was not provisioned' }
-          $wix = Get-ChildItem -Recurse -Filter 'wix.exe' $root.FullName | Select-Object -First 1
-          if (-not $wix) { throw "wix.exe not found under $($root.FullName)" }
+          $roots = @(
+            (Join-Path $HOME '.mcpp\registry\data\xpkgs'),
+            (Join-Path $HOME '.xlings\data\xpkgs')
+          ) | Where-Object { Test-Path $_ }
+          if (-not $roots) { throw 'no payload store found' }
+          $wix = Get-ChildItem -Path $roots -Recurse -Filter 'wix.exe' -ErrorAction SilentlyContinue |
+                 Select-Object -First 1
+          if (-not $wix) {
+            Write-Host 'searched:'; $roots | ForEach-Object { Write-Host "  $_" }
+            throw 'xim:wix was not provisioned (no wix.exe under the payload store)'
+          }
           Write-Host "wix.exe at $($wix.FullName)"
           & $wix.FullName --version
           foreach ($lib in @('balutil.lib', 'dutil.lib', 'mbanative.dll')) {
-            if (-not (Get-ChildItem -Recurse -Filter $lib $root.FullName)) {
-              throw "the payload is missing $lib"
+            if (-not (Get-ChildItem -Path $roots -Recurse -Filter $lib -ErrorAction SilentlyContinue)) {
+              throw "the WiX payload is missing $lib"
             }
           }
           Write-Host 'wix.exe, balutil.lib, dutil.lib and mbanative.dll are all present'
