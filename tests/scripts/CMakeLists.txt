@@ -40,17 +40,6 @@ if (TARGET huxerui_cli_core AND UNIX)
                     "${HUXERUI_PROJECT_DIR}/install.sh" "$<TARGET_FILE:huxerui_cli>"
     )
 endif ()
-# The mcpp-side tooling derives one artifact from another -- the module shell
-# and the scope prelude from the public headers, the drift verdict from the
-# CMake build -- so a defect in either is silent rather than loud.
-find_package(Python3 COMPONENTS Interpreter QUIET)
-if (Python3_Interpreter_FOUND)
-    add_test(NAME HuxerUIMcppToolingTests
-            COMMAND "${Python3_EXECUTABLE}"
-                    "${CMAKE_CURRENT_SOURCE_DIR}/mcpp_tooling_test.py"
-    )
-endif ()
-
 get_property(script_tests DIRECTORY PROPERTY TESTS)
 foreach (script_test IN LISTS script_tests)
     set_tests_properties(${script_test} PROPERTIES LABELS "tools;scripts")

@@ -73,14 +73,53 @@ jobs:
   parity:
     name: mcpp/CMake parity
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+
+      - name: Cache xlings and mcpp
+        uses: actions/cache@v4
         with:
-          python-version: '3.12'
+          path: |
+            ~/.xlings
+            ~/.mcpp
+          key: mcpp-${{ runner.os }}-${{ runner.arch }}-v2-${{ env.MCPP_VERSION }}-${{ hashFiles('mcpp.toml') }}
+          restore-keys: |
+            mcpp-${{ runner.os }}-${{ runner.arch }}-v2-${{ env.MCPP_VERSION }}-
+            mcpp-${{ runner.os }}-${{ runner.arch }}-v2-
+
+      - name: Install xlings and mcpp
+        run: |
+          if [ ! -x "$HOME/.xlings/bin/xlings" ]; then
+            curl -fsSL https://d2learn.org/xlings-install.sh | bash
+          fi
+          echo "$HOME/.xlings/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
+          xlings install "mcpp@${MCPP_VERSION}" -y || true
+
+      - name: Select the pinned mcpp
+        run: |
+          xlings install "mcpp@${MCPP_VERSION}" -y
+          mcpp --version
+
+      # The tooling is built by mcpp rather than written in Python: a
+      # repository that offers mcpp as a first-class build system should not
+      # need a second language to check its own build. It builds only the two
+      # small programs and their dependencies, not the framework.
+      - name: Unit-test the scanning the tools and the rules share
+        working-directory: mcpp/huxerui-source-select
+        run: mcpp test
+
       - name: Check that both build systems describe the same project
-        run: python3 mcpp/parity/check_parity.py
+        working-directory: mcpp/huxerui-tools
+        run: mcpp run huxerui-build-check
+
+      # The module shell and the scope prelude are generated from the public
+      # headers; a public name added to a header and not to the shell is a name
+      # `import huxerui;` cannot see.
+      - name: Check that the module shell is up to date
+        working-directory: mcpp/huxerui-tools
+        run: mcpp run huxerui-module-gen -- --check
 
   linux:
     name: mcpp build (linux x86_64)
@@ -132,14 +171,6 @@ jobs:
       # build.mcpp is one call; everything else -- GTK on the link line, the
       # composable transform, the resource packages -- arrives through the
       # dependency edge.
-      # The pure half of the build rules -- glob matching, the composable
-      # pre-filter, the resource-namespace sanitiser. Split into its own
-      # package precisely so `mcpp test` can reach it: huxerui-build-rules
-      # imports mcpp and only exists inside a build program's compile.
-      - name: Unit-test the build rules
-        working-directory: mcpp/huxerui-source-select
-        run: mcpp test
-
       - name: Build the example application
         working-directory: examples/mcpp_demo
         run: mcpp build
@@ -399,4 +430,4 @@ jobs:
         working-directory: build
         run: |
           ctest --output-on-failure \
-            -R '^(HuxerUICodegenTests|HuxerUICliTests|HuxerUIMcppToolingTests)$'
+            -R '^(HuxerUICodegenTests|HuxerUICliTests)$'

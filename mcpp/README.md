@@ -24,12 +24,20 @@ payloads declared in `../mcpp.toml`, which mcpp provisions on the first build.
 
 | Path | Contents |
 |---|---|
-| `rules/` | `huxerui.rules`, the module a consumer's `build.mcpp` imports |
-| `parity/check_parity.py` | asserts mcpp.toml and the CMake build describe the same project |
+| `huxerui-build-rules/` | `huxerui.rules`, the module a consumer's `build.mcpp` imports |
+| `huxerui-source-select/` | the pure half of the rules -- globbing, the composable pre-filter, header scanning -- split out so `mcpp test` can reach it |
+| `huxerui-tools/` | `huxerui-build-check` (parity) and `huxerui-module-gen` (the module shell and scope prelude) |
 
 Elsewhere: `../modules/huxerui.cppm` is the C++20 module front door (generated
-by `../scripts/gen_module_exports.py`), and `../tools/{codegen,resource_compiler}/mcpp.toml`
+by `huxerui-module-gen`), and `../tools/{codegen,resource_compiler}/mcpp.toml`
 make `hcg` and `hrc` buildable packages.
+
+Both tools were Python once. They are C++ now for the reason this directory
+exists: a repository that offers mcpp as a first-class build system should not
+need a second language to check its own build. The rewrite was not free of
+consequence -- the C++ header scanner finds five public names the Python one
+missed, all of which compile, and correctly drops one it exported that was a
+template parameter rather than a type.
 
 `../mcpp.toml` is the framework package and the workspace root; `../build.mcpp`
 resolves the Linux platform dependencies and produces the builtin resource
@@ -107,11 +115,11 @@ add `platform/windows/win32_foo.cpp`, forget `mcpp.toml`, and the Windows mcpp
 build fails at link with `undefined reference`, far from the cause.
 
 ```bash
-python3 mcpp/parity/check_parity.py
+cd mcpp/huxerui-tools && mcpp run huxerui-build-check
 ```
 
-runs in seconds, needs no toolchain, and is the first job in
-`.github/workflows/mcpp-build.yml`. It already caught one real defect: a bare
+is the first job in `.github/workflows/mcpp-build.yml`. It already caught one
+real defect: a bare
 `platform/windows/*.cpp` glob swept in `windows_installer.cpp`, which is the
 WiX custom-action DLL built separately by `cmake/HuxerUISdk.cmake`, not part of
 the framework.
