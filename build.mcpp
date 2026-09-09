@@ -19,10 +19,40 @@ import huxerui.rules;
 
 namespace {
 
-// pkg-config's output, split into mcpp directives. `-I` becomes a PRIVATE
-// include dir (Cargo discipline: it colours this package's own TUs only);
-// `-l` and `-L` reach the final link, which is what puts GTK on an
-// application's link line without the application naming it.
+// pkg-config's output, split into mcpp directives. `-l` and `-L` reach the
+// final link, which is what puts GTK on an application's link line without the
+// application naming it.
+//
+// THE INCLUDE DIRS GO IN AFTER THE SYSTEM ONES (`-idirafter`), NOT BEFORE.
+// This is not a preference; `-I` here breaks the build outright.
+//
+// `pkg-config --cflags gtk4` on Debian/Ubuntu emits, among a dozen others,
+//
+//     -I/usr/include/x86_64-linux-gnu
+//
+// which is the SYSTEM glibc's multiarch directory. mcpp compiles with its own
+// payload toolchain and its own glibc, and that glibc's <time.h> reaches its
+// companion headers through <bits/time.h>. Put the system multiarch dir on
+// `-I` and those `bits/` headers resolve to the SYSTEM's, so the payload's
+// libstdc++ is compiled against two different glibcs at once:
+//
+//     .../xim-x-glibc/2.44/include/time.h:37
+//       -> /usr/include/x86_64-linux-gnu/bits/time.h:73
+//     error: 'time' has not been declared in '::'
+//     error: 'struct timespec' has no member named 'tv_sec'
+//     error: cannot convert '<brace-enclosed initializer list>' to 'unsigned int'
+//                                             (__GTHREAD_COND_INIT)
+//
+// and every core translation unit fails -- not just the platform ones, because
+// a build program's include dirs colour the whole package, exactly as
+// huxerui_configure_compile_target() puts HUXERUI_PLATFORM_INCLUDE_DIRECTORIES
+// on huxerui_core_objects. CMake does not hit this only because it uses the
+// system compiler, whose glibc IS the system one.
+//
+// `-idirafter` keeps the toolchain's own header chain intact while leaving the
+// GTK headers findable: they exist in no system directory, so nothing shadows
+// them. Verified against gcc 16.1.0 + xim-x-glibc 2.44: `-I` fails, `-idirafter`
+// compiles.
 bool probe(std::string_view module_spec) {
     const std::string out = std::string(mcpp::out_dir()) + "/pkg-config.txt";
     const std::string cmd = "pkg-config --cflags --libs '" + std::string(module_spec)
@@ -33,10 +63,15 @@ bool probe(std::string_view module_spec) {
     if (!in) return false;
     std::string token;
     while (in >> token) {
-        if (token.starts_with("-I"))      mcpp::include_dir(token.substr(2).c_str());
-        else if (token.starts_with("-l")) mcpp::link_lib(token.substr(2).c_str());
-        else if (token.starts_with("-L")) mcpp::link_search(token.substr(2).c_str());
-        else if (!token.empty())          mcpp::cxxflag(token.c_str());
+        if (token.empty())                     continue;
+        else if (token.starts_with("-I"))      mcpp::include_dir_after(token.substr(2).c_str());
+        else if (token.starts_with("-l"))      mcpp::link_lib(token.substr(2).c_str());
+        else if (token.starts_with("-L"))      mcpp::link_search(token.substr(2).c_str());
+        // A linker flag is not a compile flag. pkg-config --libs can emit
+        // -Wl,... and routing it to cxxflag would put it on every compile
+        // line, where it is at best ignored and at worst rejected.
+        else if (token.starts_with("-Wl,"))    mcpp::link_flag(token.c_str());
+        else                                   mcpp::cxxflag(token.c_str());
     }
     return true;
 }
