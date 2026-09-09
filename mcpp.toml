@@ -161,10 +161,20 @@ defines  = ["UNICODE", "_UNICODE", "NOMINMAX", "WIN32_LEAN_AND_MEAN",
 # fixed upstream.
 
 [target.windows.runtime]
+# The first group is what cmake/platform/Windows.cmake names explicitly.
+#
+# The second is what CMake adds IMPLICITLY and mcpp does not:
+# CMAKE_CXX_STANDARD_LIBRARIES defaults to kernel32/user32/gdi32/winspool/
+# shell32/ole32/oleaut32/uuid/comdlg32/advapi32, so a CMake target links them
+# whether or not it says so. mcpp names exactly what the manifest names, so the
+# omission surfaces at the link -- measured as
+# `lld-link: error: undefined symbol: __declspec(dllimport) CreateDIBSection`
+# from win32_system_tray.cpp, which uses GDI without gdi32 ever being listed.
 libraries = ["advapi32", "d2d1", "d3d11", "dwrite", "dwmapi", "dxguid", "dxgi",
              "imm32", "ole32", "oleaut32", "psapi", "shell32", "uiautomationcore",
              "user32", "winhttp", "windowscodecs",
-             "dcomp", "windowsapp", "crypt32", "propsys"]
+             "dcomp", "windowsapp", "crypt32", "propsys",
+             "kernel32", "gdi32", "winspool", "uuid", "comdlg32"]
 
 # ---------------------------------------------------------------- macOS ----
 [target.macos.build]
