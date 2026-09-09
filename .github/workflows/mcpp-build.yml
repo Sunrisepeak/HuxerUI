@@ -141,7 +141,9 @@ jobs:
         run: |
           grep -q '^import huxerui;' src/main.cpp \
             || { echo "the demo no longer imports the module"; exit 1; }
-          ! grep -q '#include <huxerui/' src/main.cpp \
+          # Anchored: the file's own comment explains what `import` replaces,
+          # and an unanchored pattern matches that sentence.
+          ! grep -qE '^[[:space:]]*#include <huxerui/' src/main.cpp \
             || { echo "the demo still includes the umbrella header"; exit 1; }
           echo "demo builds against import huxerui;"
 
