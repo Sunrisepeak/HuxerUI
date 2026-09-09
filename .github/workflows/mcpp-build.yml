@@ -75,25 +75,24 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      # GTK 4, libepoxy, GIO and libsoup 3 stay distribution-owned, exactly as
-      # cmake/platform/Linux.cmake requires. build.mcpp resolves them through
-      # pkg-config -- the same .pc files pkg_check_modules reads -- so this is
-      # the one class of metadata the two build systems cannot disagree about.
-      - name: Install HuxerUI Linux dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libgtk-4-dev libepoxy-dev libsoup-3.0-dev pkg-config
-
+      # NOTE: no apt-get. The GTK stack comes from the xlings payloads declared
+      # in [target.'cfg(linux)'.xlings.workspace], because mcpp compiles with
+      # its own toolchain and its own glibc -- see the comment there for what
+      # mixing the host's glibc in actually produces. CMake keeps using the
+      # distribution's packages; the two build systems answer "where does GTK
+      # come from" differently on purpose.
       - name: Cache xlings and mcpp
         uses: actions/cache@v4
         with:
           path: |
             ~/.xlings
             ~/.mcpp
-          key: mcpp-${{ runner.os }}-${{ runner.arch }}-v1-${{ env.MCPP_VERSION }}
+          # The payload store holds the whole GTK closure (36 packages), so
+          # the key names the manifest that selects them.
+          key: mcpp-${{ runner.os }}-${{ runner.arch }}-v2-${{ env.MCPP_VERSION }}-${{ hashFiles('mcpp.toml') }}
           restore-keys: |
-            mcpp-${{ runner.os }}-${{ runner.arch }}-v1-
+            mcpp-${{ runner.os }}-${{ runner.arch }}-v2-${{ env.MCPP_VERSION }}-
+            mcpp-${{ runner.os }}-${{ runner.arch }}-v2-
 
       - name: Install xlings and mcpp
         run: |
@@ -108,10 +107,10 @@ jobs:
           xlings install "mcpp@${MCPP_VERSION}" -y
           mcpp --version
 
-      # The framework itself: 67 core sources plus platform/linux, with the
-      # builtin resource header produced by the committed hrc -- the SAME
-      # binary the CMake build runs, so neither build system can generate
-      # different code than the other.
+      # The framework: 67 core sources, platform/linux, the builtin resource
+      # header (hrc) and the C++20 module shell. mcpp provisions the GTK
+      # payloads itself; this step is separate only so a provisioning failure
+      # is attributed to provisioning rather than to the compile.
       - name: Build the framework
         run: mcpp build
 
@@ -123,14 +122,36 @@ jobs:
         working-directory: examples/mcpp_demo
         run: mcpp build
 
-      # The demo's page uses [[huxerui::composable]] with UseState. If hcg had
-      # not been scheduled the build above would already have failed, but assert
-      # the transform actually happened rather than inferring it.
-      - name: Assert the composable transform ran
+      # Three claims this PR makes, asserted rather than inferred.
+      - name: Assert the composable transform ran and is macro-free
         working-directory: examples/mcpp_demo
         run: |
           generated=$(find target -path '*hcg*' -name '*.cpp' | head -1)
           test -n "$generated" || { echo "hcg produced no transformed source"; exit 1; }
-          grep -q 'HUXERUI_SCOPE_BEGIN' "$generated" \
+          grep -q 'return ::huxerui::Scope(' "$generated" \
             || { echo "transformed source lacks the composable scope"; exit 1; }
+          # Macros do not cross a module boundary, so generated code that named
+          # HUXERUI_SCOPE_BEGIN would not compile under `import huxerui;`.
+          ! grep -q 'HUXERUI_SCOPE_BEGIN' "$generated" \
+            || { echo "transform still injects the macro name"; exit 1; }
           echo "composable transform verified in $generated"
+
+      - name: Assert the demo consumes HuxerUI as a module
+        working-directory: examples/mcpp_demo
+        run: |
+          grep -q '^import huxerui;' src/main.cpp \
+            || { echo "the demo no longer imports the module"; exit 1; }
+          ! grep -q '#include <huxerui/' src/main.cpp \
+            || { echo "the demo still includes the umbrella header"; exit 1; }
+          echo "demo builds against import huxerui;"
+
+      # The framework is the CMake build's contract too: `#include` must keep
+      # working exactly as before. Compile the umbrella header on its own.
+      - name: Assert the header path still compiles
+        run: |
+          echo '#include <huxerui/huxerui.h>' > /tmp/header_only.cpp
+          echo 'int main() { return 0; }' >> /tmp/header_only.cpp
+          gxx=$(find "$HOME/.mcpp" "$HOME/.xlings" -name 'g++' -path '*gcc*' 2>/dev/null | head -1)
+          test -n "$gxx" || { echo "no payload g++ found"; exit 1; }
+          "$gxx" -std=c++20 -fsyntax-only -Iinclude /tmp/header_only.cpp
+          echo "#include <huxerui/huxerui.h> still compiles"

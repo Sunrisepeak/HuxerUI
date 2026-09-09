@@ -1,9 +1,56 @@
 # 2026-09-09 — mcpp 原生构建与 C++20 模块风格适配方案
 
-> **状态**：设计稿（待 review，未实现）
+> **状态**：已实现（PR #1，待 review）。实现过程中有三个决策与设计稿不同，见 §0。
 > **依赖**：mcpp ≥ 2026.9.8.1；分析报告 `docs/design/mcpp-dual-build-analysis.md`
 > **目标读者**：HuxerUI 维护者
 > **约束**：CMake 构建体系不做结构性改动；mcpp 侧的一切新增物集中在可删除的新增路径下
+
+---
+
+## 0. 实现过程中翻转的三个决策
+
+设计稿是在只读分析的基础上写的；真正构建之后，有三处的答案变了。都记在这里，因为"当初为什么这么写"比结论本身更容易丢。
+
+### 0.1 Linux 依赖：从 host pkg-config 改为 xlings payload
+
+设计稿 §5.3 推荐用 host 的 pkg-config，理由是"与 CMake 读同一份 `.pc`，这类元数据由构造保证不漂移"。**这个理由是对的，但代价没算到。**
+
+mcpp 是 payload-first 的：它用自己的工具链和自己的 glibc（`xim:glibc`）。`pkg-config --cflags gtk4` 在 Debian/Ubuntu 上会发 `-I/usr/include/x86_64-linux-gnu`——系统 glibc 的 multiarch 目录——于是 payload glibc 的 `<time.h>` 拉进了**系统的** `<bits/time.h>`：
+
+```
+.../xim-x-glibc/2.44/include/time.h:37 -> /usr/include/x86_64-linux-gnu/bits/time.h:73
+error: 'time' has not been declared in '::'
+error: 'struct timespec' has no member named 'tv_sec'
+error: cannot convert '<brace-enclosed initializer list>' to 'unsigned int'
+```
+
+**每个核心 TU 都失败**，不只是平台文件，因为构建程序的 include 目录着色整个包。CI 上实测到这一组错误（run 34342551784）。
+
+`-idirafter` 能让它重新编译过，但那只是治症状：**链接时仍然是"对着 glibc 2.39 编的库"和"对着 2.44 编的目标文件"拼在一起**。
+
+所以整个 GTK 栈改为 `[target.'cfg(linux)'.xlings.workspace]` 声明的 36 个 payload，`build.mcpp` 把 `PKG_CONFIG_LIBDIR` 只指向这些 payload 的 `pkgconfig` 目录（`PKG_CONFIG_LIBDIR` 是**替换**默认搜索路径，不是 `PKG_CONFIG_PATH` 那样前插），host 的头和库一条也进不来。
+
+CMake 侧继续用发行版的包，如 `cmake/platform/Linux.cmake` 与 AGENTS.md 要求的那样。**两套构建对"GTK 从哪来"给出不同答案是刻意的**——它们用不同的 C 库编译。
+
+### 0.2 宿主工具：从 `tools/prebuilt/` 改为源码构建
+
+设计稿 §2.2 倾向 B（直接用已提交的 prebuilt），理由是"两侧跑字节相同的二进制，零漂移"。**去宏化（§5.2）推翻了它**：改了 `transform.cpp` 之后，已提交的 prebuilt 按定义就是陈旧的，要等 `update-host-tools.yml` 在 main 上跑完才追上。
+
+而且本机无法正确重建它：payload 工具链产出的二进制链接 glibc 2.44，在 CI 的 Ubuntu 24.04（glibc 2.39）上根本跑不起来——prebuilt 的构建策略（GLIBC 2.28 + 静态 libstdc++）由那条 workflow 拥有，不是随手能复现的。
+
+改为 A：`tools/{codegen,resource_compiler}/mcpp.toml` 把两个工具声明为 `kind = "bin"` 包，框架用 `tools = [...]` + `reexport = true` 请求，mcpp 为宿主构建并全局缓存。这同时也更符合"mcpp 不依赖 host"——prebuilt 是为 host 的 C 库构建的。
+
+**CMake 侧一行不改，继续用 `tools/prebuilt/`。**
+
+### 0.3 C++20 模块：从 P5（另开 PR）改为本 PR 内完成
+
+设计稿把模块外壳排在最后一个阶段，理由是去宏化会改变既有生成输出、需要重建 6 份 prebuilt。0.2 消解了后半个理由（mcpp 侧不再用 prebuilt），所以模块外壳一并做了：
+
+- `scripts/gen_module_exports.py` 生成 `modules/huxerui.cppm`，547 个 `export using`
+- `tools/codegen/transform.h` 把注入文本提为 `kScopeOpenText` / `kScopeCloseText` 两个常量，实现与测试共用，不会各写一份
+- `examples/mcpp_demo` 改用 `import huxerui;`，用法与 `#include` 完全一致
+
+**`tools/prebuilt/` 仍是陈旧的**（仍注入宏名），CMake 的 `#include` 路径不受影响，但合入 main 后应由 `update-host-tools.yml` 重建——它正好在 `tools/codegen/**` 变更时触发。
 
 ---
 

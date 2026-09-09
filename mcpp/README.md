@@ -17,12 +17,8 @@ mcpp build                          # the framework
 cd examples/mcpp_demo && mcpp build # an application on top of it
 ```
 
-On Linux the framework needs the distribution's GTK 4 stack, exactly as the
-CMake build does:
-
-```bash
-sudo apt-get install -y libgtk-4-dev libepoxy-dev libsoup-3.0-dev pkg-config
-```
+**Nothing needs to be installed first.** The GTK 4 stack comes from the xlings
+payloads declared in `../mcpp.toml`, which mcpp provisions on the first build.
 
 ## What lives here
 
@@ -30,6 +26,10 @@ sudo apt-get install -y libgtk-4-dev libepoxy-dev libsoup-3.0-dev pkg-config
 |---|---|
 | `rules/` | `huxerui.rules`, the module a consumer's `build.mcpp` imports |
 | `parity/check_parity.py` | asserts mcpp.toml and the CMake build describe the same project |
+
+Elsewhere: `../modules/huxerui.cppm` is the C++20 module front door (generated
+by `../scripts/gen_module_exports.py`), and `../tools/{codegen,resource_compiler}/mcpp.toml`
+make `hcg` and `hrc` buildable packages.
 
 `../mcpp.toml` is the framework package and the workspace root; `../build.mcpp`
 resolves the Linux platform dependencies and produces the builtin resource
@@ -56,12 +56,22 @@ path arrive through the dependency edge: a dependency's `build.mcpp` emits
 `link-lib` / `link-search` that reach the **final** link, so an application
 never restates them. `examples/mcpp_demo/` is the worked example.
 
-## Two things worth knowing before editing
+## Three things worth knowing before editing
 
-**The host tools are the committed ones.** `hcg` and `hrc` are resolved from
-`tools/prebuilt/<platform>/<arch>/`, which is the same binary the CMake build
-runs. That is deliberate: building them from source on the mcpp side would let
-the two build systems generate different code from the same input.
+**The GTK stack is NOT the machine's.** mcpp compiles with its own toolchain and
+its own glibc, so reaching for the host's GTK mixes two C libraries in one
+binary. Measured: `pkg-config --cflags gtk4` emits
+`-I/usr/include/x86_64-linux-gnu`, the payload glibc's `<time.h>` then reaches
+the system's `<bits/time.h>`, and every core translation unit fails on
+`'time' has not been declared in '::'`. The payload list in `../mcpp.toml` is
+the transitive `.pc` closure, pinned. CMake keeps using the distribution's
+packages, as `cmake/platform/Linux.cmake` and AGENTS.md require.
+
+**The host tools are built from source, not taken from `tools/prebuilt/`.**
+Those binaries are produced for the host's C library by
+`.github/workflows/update-host-tools.yml`, and after a change to
+`tools/codegen/transform.cpp` they are stale until that workflow runs on main.
+CMake keeps using them; the mcpp leg builds its own with mcpp's toolchain.
 
 **The builtin resources are compiled twice.** The framework compiles them for
 the header its own 11 translation units `#include`; an application compiles

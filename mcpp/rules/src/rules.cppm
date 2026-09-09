@@ -26,6 +26,12 @@ export namespace huxerui::rules {
 // so the two spellings of "an application" can be reviewed side by side.
 struct options {
     std::vector<std::string> sources;             // default: src/**/*.cpp
+    // The bin target's entry, which mcpp compiles separately from `sources`.
+    // It is EXCLUDED from the transform set: a build program can add sources
+    // but cannot replace one, so a transformed copy of the entry would link
+    // beside the original as `multiple definition of 'main'`. AGENTS.md
+    // already says not to annotate the app root, so this costs nothing.
+    std::string              entry = "src/main.cpp";
     bool                     codegen = true;      // = huxerui_enable_codegen()
     std::string              resources;           // = RESOURCES (root; empty = none)
     std::string              resource_namespace;  // = RESOURCE_NAMESPACE
@@ -53,27 +59,9 @@ inline std::string env_or(const char* name, std::string_view fallback) {
     return (v && *v) ? std::string(v) : std::string(fallback);
 }
 
-// Split a triple into its coordinates. mcpp publishes these directly, so this
-// is only a fallback for an engine too old to set them.
-inline std::string host_os() {
-    std::string h = mcpp::host();
-    if (h.find("linux")   != std::string::npos) return "linux";
-    if (h.find("windows") != std::string::npos) return "windows";
-    if (h.find("macos")   != std::string::npos ||
-        h.find("darwin")  != std::string::npos ||
-        h.find("apple")   != std::string::npos) return "macos";
-    return {};
-}
-
-inline std::string host_arch_segment() {
-    std::string h = mcpp::host();
-    auto dash = h.find('-');
-    return dash == std::string::npos ? h : h.substr(0, dash);
-}
-
 } // namespace detail
 
-// The SDK root: the directory holding include/, resources/ and tools/prebuilt/.
+// The SDK root: the directory holding include/ and resources/.
 //
 // Two callers, two answers, and neither may guess. When HuxerUI builds itself
 // the root is its own manifest directory. When an application builds, the root
@@ -90,35 +78,24 @@ inline std::string sdk_root() {
     return dep;
 }
 
-// tools/prebuilt/<platform>/<architecture>/<tool>[.exe]
+// The host tools, built from source by mcpp and handed here as absolute paths.
 //
-// Mirrors _huxerui_resolve_host() + huxerui_resolve_host_tool() in
-// cmake/HuxerUICodegen.cmake, including its architecture spelling: linux uses
-// `aarch64` and macOS uses `arm64` for the same machine.
+// NOT tools/prebuilt/. Those binaries are produced for the host's C library by
+// .github/workflows/update-host-tools.yml, while mcpp compiles with its own
+// payload toolchain and its own glibc; and after a change to
+// tools/codegen/transform.cpp they are stale until that workflow runs on main.
+// Building from source keeps the mcpp leg self-consistent and takes nothing
+// from the machine. CMake keeps using tools/prebuilt/ exactly as before.
 //
-// Using the committed prebuilt rather than building the tool from source is
-// deliberate: it is the SAME binary the CMake build runs, so the two build
-// systems cannot produce different generated code.
+// `tools = ["hcg"]` on the dependency edge is what asks for this; `reexport`
+// on the same edge is what makes it reach an APPLICATION's build program
+// without the application declaring the tool packages itself.
 inline std::string host_tool(std::string_view tool) {
-    const std::string root = sdk_root();
-    if (root.empty()) return {};
-
-    const std::string os   = detail::host_os();
-    const std::string arch = detail::host_arch_segment();
-
-    std::string platform_dir = os;
-    std::string arch_dir;
-    if (arch == "x86_64" || arch == "amd64" || arch == "x64") {
-        arch_dir = "x86_64";
-    } else if (arch == "aarch64" || arch == "arm64") {
-        arch_dir = (os == "macos") ? "arm64" : "aarch64";
-    }
-    if (platform_dir.empty() || arch_dir.empty()) return {};
-
-    std::filesystem::path p = std::filesystem::path(root) / "tools" / "prebuilt"
-                            / platform_dir / arch_dir;
-    p /= std::string(tool) + (os == "windows" ? ".exe" : "");
-    return std::filesystem::exists(p) ? p.string() : std::string{};
+    if (tool == "hcg")
+        return mcpp::dep_bin("huxerui-codegen", "hcg");
+    if (tool == "hrc")
+        return mcpp::dep_bin("huxerui-resource-compiler", "hrc");
+    return {};
 }
 
 // ------------------------------------------------------------------ globs --
@@ -361,6 +338,27 @@ inline bool configure(options opt = {}) {
         return false;
     }
 
+    // `import huxerui;` needs <typeinfo> in the IMPORTING translation unit.
+    //
+    // GCC's `typeid` check is per-TU: it asks whether <typeinfo> was included
+    // here, not whether std::type_info is reachable. Entities in the module's
+    // global module fragment do not satisfy it, and HuxerUI's UseState(),
+    // View and Layout machinery all instantiate typeid in the caller -- so
+    // every importer would otherwise open with a line of compiler trivia:
+    //
+    //     include/huxerui/state.h:463: error: must '#include <typeinfo>'
+    //                                         before using 'typeid'
+    //
+    // Emitting it as a forced include keeps that out of application code,
+    // which is the point: `import huxerui;` has to be the ONLY difference from
+    // `#include <huxerui/huxerui.h>`. Measured on gcc 16.1.0.
+    if (std::string_view(mcpp::compiler()).find("msvc") == std::string_view::npos) {
+        mcpp::cxxflag("-include");
+        mcpp::cxxflag("typeinfo");
+    } else {
+        mcpp::cxxflag("/FItypeinfo");
+    }
+
     // Re-run when the SET of sources or resources changes; the edges below
     // track content.
     mcpp::rerun_if_changed_glob("src/**/*.cpp");
@@ -375,7 +373,30 @@ inline bool configure(options opt = {}) {
         if (sources.empty()) {
             detail::collect(mcpp::manifest_dir(), "src/**/*.cpp", sources);
         }
+        // The entry is mcpp's to compile; everything else this rule selects.
+        std::erase(sources, opt.entry);
+
+        // THE MANIFEST MUST SAY `sources = []`, AND THIS IS WHY.
+        //
+        // `mcpp::action{role = "source"}` ADDS its outputs to the compile set;
+        // there is no mechanism to replace an input. So a package that both
+        // globs `src/**/*.cpp` and receives a transformed copy links two
+        // definitions of every composable. Letting the rule own the selection
+        // -- ordinary sources through mcpp::source(), composable ones through
+        // the transform -- is the only shape that yields one object per file.
         auto cg = plan_codegen(sources);
+        std::vector<std::string> transformed;
+        for (const edge& e : cg) {
+            const std::string stem =
+                std::filesystem::path(e.description).filename().string();
+            transformed.push_back(e.inputs.empty() ? std::string{} : e.inputs[0]);
+        }
+        for (const std::string& rel : sources) {
+            const std::string abs =
+                (std::filesystem::path(mcpp::manifest_dir()) / rel).string();
+            if (std::ranges::find(transformed, abs) == transformed.end())
+                mcpp::source(abs.c_str());
+        }
         if (!cg.empty()) {
             detail::suppress_attribute_warning();
             // A transformed source is compiled from MCPP_OUT_DIR, so its own
@@ -414,8 +435,8 @@ inline bool configure(options opt = {}) {
 inline bool builtin_resources() {
     const std::string hrc = host_tool("hrc");
     if (hrc.empty()) {
-        std::cerr << "huxerui.rules: no prebuilt hrc for this host "
-                     "(tools/prebuilt/<platform>/<arch>/hrc)\n";
+        std::cerr << "huxerui.rules: hrc was not provided -- the `huxerui` "
+                     "dependency must carry tools = [\"hrc\"]\n";
         return false;
     }
     const std::string odir = std::string(mcpp::out_dir()) + "/hrc";

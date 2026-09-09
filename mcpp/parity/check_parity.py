@@ -175,10 +175,21 @@ def check_standard(m: dict) -> None:
              f"mcpp.toml says {mcpp_standard}")
 
 
+def check_module_shell() -> None:
+    """modules/huxerui.cppm is generated; a new public header must reach it."""
+    import subprocess
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "gen_module_exports.py"), "--check"],
+        capture_output=True, text=True)
+    if result.returncode != 0:
+        fail(result.stderr.strip() or "modules/huxerui.cppm is out of date")
+
+
 def main() -> int:
     m = manifest()
     check_standard(m)
     check_core_sources(m)
+    check_module_shell()
     for cmake_file, selector in PLATFORMS.items():
         check_platform(m, cmake_file, selector)
 

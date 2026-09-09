@@ -6,7 +6,7 @@
 # and `mcpp/README.md` for how to drive it.
 
 [workspace]
-members = ["mcpp/rules"]
+members = ["mcpp/rules", "tools/codegen", "tools/resource_compiler"]
 
 [package]
 name        = "huxerui"
@@ -21,6 +21,12 @@ license     = "Apache-2.0"
 repo        = "https://github.com/Sunrisepeak/HuxerUI"
 platforms   = ["linux", "windows", "macos"]
 
+# The package's primary module interface. mcpp's convention is
+# `src/<last segment of package name>.cppm`; HuxerUI keeps the module out of
+# `src/` because `src/` is private implementation and this file is public API.
+[lib]
+path = "modules/huxerui.cppm"
+
 [targets.huxerui]
 # `lib`, not `shared`: whether HuxerUI is a separate file at run time is the
 # consuming program's decision, expressed with `[build] dependency_linkage`.
@@ -30,7 +36,11 @@ kind = "lib"
 [build]
 # Mirrors `file(GLOB HUXERUI_CORE_SOURCE_FILES "${HUXERUI_PROJECT_DIR}/src/*/*.cpp")`
 # in cmake/HuxerUIBuild.cmake. mcpp/parity/check_parity.py asserts the two agree.
-sources                 = ["src/*/*.cpp"]
+# `modules/huxerui.cppm` is the C++20 front door: it includes the public headers
+# in its global module fragment and re-exports their names, so `import huxerui;`
+# and `#include <huxerui/huxerui.h>` name the SAME entities with the same
+# linkage. Compiling it here is what makes the module importable by consumers.
+sources                 = ["src/*/*.cpp", "modules/huxerui.cppm"]
 include_dirs            = ["include", "src"]
 # `src` carries implementation-only headers; a consumer must never receive it.
 # CMake expresses the same split with PRIVATE vs PUBLIC target_include_directories.
@@ -40,17 +50,90 @@ macos_deployment_target = "12.0"
 # CMake's HUXERUI_ENABLE_PROFILING defaults ON and compiles src/runtime/profiling.cpp.
 defines                 = ["HUXERUI_ENABLE_PROFILING=1"]
 
-# The rule module consumers import. `reexport` hands it to *their* build.mcpp,
-# so an application declares `huxerui` and nothing else.
+# Everything a consumer's build.mcpp needs, handed over by one dependency edge.
+# `reexport = true` is what makes an application's manifest a single line: the
+# tools and the rule module reach ITS build program without it naming them.
+#
+# The tools are built from source rather than taken from tools/prebuilt/ -- see
+# tools/codegen/mcpp.toml for why.
 [dependencies]
-huxerui-rules = { path = "mcpp/rules", host-module = true, reexport = true }
+huxerui-codegen           = { path = "tools/codegen",           tools = ["hcg"], reexport = true }
+huxerui-resource-compiler = { path = "tools/resource_compiler", tools = ["hrc"], reexport = true }
+huxerui-rules             = { path = "mcpp/rules", host-module = true,           reexport = true }
 
 # ---------------------------------------------------------------- Linux ----
-# Sources mirror cmake/platform/Linux.cmake. GTK4 / epoxy / gio / libsoup are
-# resolved by build.mcpp through pkg-config -- the same .pc files
-# pkg_check_modules reads, so this metadata cannot drift between the two builds.
+# Sources mirror cmake/platform/Linux.cmake.
 [target.'cfg(linux)'.build]
 sources = ["platform/linux/*.cpp"]
+
+# THE GTK STACK COMES FROM XLINGS, NOT FROM THE MACHINE.
+#
+# mcpp is payload-first: it compiles with its own toolchain and its own glibc
+# (xim:glibc). Reaching for the host's GTK mixes two C libraries in one binary,
+# and it does not fail politely. `pkg-config --cflags gtk4` on Debian/Ubuntu
+# emits `-I/usr/include/x86_64-linux-gnu` -- the system glibc's multiarch
+# directory -- and the payload glibc's <time.h> then reaches the SYSTEM's
+# <bits/time.h>:
+#
+#     .../xim-x-glibc/2.44/include/time.h:37
+#       -> /usr/include/x86_64-linux-gnu/bits/time.h:73
+#     error: 'time' has not been declared in '::'
+#     error: 'struct timespec' has no member named 'tv_sec'
+#     error: cannot convert '<brace-enclosed initializer list>' to 'unsigned int'
+#
+# Every core translation unit fails, not just the platform ones, because a build
+# program's include dirs colour the whole package. `-idirafter` makes that
+# compile again and is still wrong: the LINK would then join libraries built
+# against glibc 2.39 to objects compiled against 2.44.
+#
+# So the whole stack is declared here. build.mcpp points PKG_CONFIG_LIBDIR at
+# these payloads only, which is what keeps the host out entirely.
+#
+# The list is the transitive .pc closure of gtk4 + epoxy + libsoup, resolved
+# once and pinned. It is long because it is complete: an entry missing here
+# surfaces as `Package <x> was not found in the pkg-config search path`, which
+# names exactly what to add.
+#
+# CMake keeps using the distribution's packages, as cmake/platform/Linux.cmake
+# and AGENTS.md require -- the two build systems answer "where does GTK come
+# from" differently ON PURPOSE, because they compile with different C libraries.
+[target.'cfg(linux)'.xlings.workspace]
+"xim:cairo" = "1.18.4"
+"xim:expat" = "2.6.2"
+"xim:fontconfig" = "2.15.0.1"
+"xim:freetype" = "2.13.2"
+"xim:fribidi" = "1.0.13"
+"xim:gdk-pixbuf" = "2.44.8"
+"xim:glib" = "2.88.3"
+"xim:graphene" = "1.10.8"
+"xim:gtk4" = "4.16.13"
+"xim:harfbuzz" = "14.4.0"
+"xim:libX11" = "1.8.10"
+"xim:libXau" = "1.0.11"
+"xim:libXdmcp" = "1.1.5"
+"xim:libXext" = "1.3.6"
+"xim:libXft" = "2.3.9"
+"xim:libXrender" = "0.9.11"
+"xim:libdatrie" = "0.2.14"
+"xim:libepoxy" = "1.5.10"
+"xim:libffi" = "3.4.4"
+"xim:libglvnd" = "1.7.0.1"
+"xim:libjpeg-turbo" = "3.2.0"
+"xim:libpng" = "1.6.43"
+"xim:libpsl" = "0.23.3"
+"xim:libselinux" = "3.11"
+"xim:libsoup" = "3.6.6"
+"xim:libthai" = "0.1.30"
+"xim:libtiff" = "4.7.2"
+"xim:libxcb" = "1.17.0"
+"xim:nghttp2" = "1.70.0"
+"xim:pango" = "1.52.1"
+"xim:pcre2" = "10.42"
+"xim:pixman" = "0.42.2"
+"xim:sqlite" = "3.53.4"
+"xim:util-linux" = "2.40.2"
+"xim:xorgproto" = "2024.1"
+"xim:zlib" = "1.3.1"
 
 # -------------------------------------------------------------- Windows ----
 [target.windows.build]

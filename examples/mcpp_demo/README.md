@@ -9,15 +9,9 @@ mcpp build
 mcpp run
 ```
 
-On Linux the framework needs the distribution's GTK 4 stack, exactly as the
-CMake build does:
-
-```bash
-sudo apt-get install -y libgtk-4-dev libepoxy-dev libsoup-3.0-dev pkg-config
-```
-
-No separate CMake build of HuxerUI is required. `mcpp.toml` names the framework
-as a path dependency and mcpp builds it as part of this build.
+Nothing needs to be installed first: mcpp provisions the GTK 4 stack from the
+xlings payloads HuxerUI declares, and builds the framework itself as part of
+this build. No CMake step, no `apt-get`.
 
 ## What this demonstrates
 
@@ -45,6 +39,19 @@ packaged resources need an additional mcpp integration layer".
 function with `UseState` and ships a resource package. Both are scheduled as
 build-graph edges rather than done in the build program, so they are
 incremental, parallel and attributable to the file that failed.
+
+## It consumes HuxerUI as a C++20 module
+
+`src/main.cpp` opens with `import huxerui;`, not `#include <huxerui/huxerui.h>`,
+and **nothing else about the code changes** -- same names, same DSL, same
+`[[huxerui::composable]]`. `modules/huxerui.cppm` includes the public headers in
+its global module fragment and re-exports what they declare, so both spellings
+name the same entities with the same linkage against the same library.
+
+This works only because `hcg` injects the *expansion* of `HUXERUI_SCOPE_BEGIN` /
+`HUXERUI_SCOPE_END` rather than the macro names: macros do not cross a module
+boundary, so generated code naming them would not compile here. The macros
+remain public API for hand-written code.
 
 GTK reaches the link line without this manifest naming it: a dependency's
 `build.mcpp` emits `link-lib` / `link-search` that reach the **final** link, and

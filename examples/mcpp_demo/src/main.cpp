@@ -1,32 +1,23 @@
-// This page deliberately uses a [[huxerui::composable]] function with UseState.
+// The same page, written against the C++20 module front door.
 //
-// That is the part the previous revision of this demo could not do: its README
-// recorded that "stateful composables and packaged resources need an additional
-// mcpp integration layer". `huxerui.rules` is that layer, so the demo now
-// exercises it -- if the composable transform were not scheduled, this file
-// would fail to compile with "Use...() must be called from a
-// [[huxerui::composable]] function".
-
-#include <huxerui/huxerui.h>
+// `import huxerui;` replaces `#include <huxerui/huxerui.h>` and NOTHING ELSE
+// changes: the names, the DSL and [[huxerui::composable]] are identical,
+// because modules/huxerui.cppm includes those very headers in its global
+// module fragment and re-exports what they declare. Same entities, same
+// linkage, same library.
 
 #include <cstdio>
 
+import huxerui;
+
+#include "counter.h"
+
 using namespace huxerui;
-
-[[huxerui::composable]]
-View Counter() {
-  auto count = UseState(0);
-
-  return Row {
-    Button("Count").OnClick([count] { count += 1; }),
-    Text(count).With(FontSize(24.0F)),
-  }.With(Spacing(12.0F), CrossAlign(CrossAxisAlignment::Center));
-}
 
 View App() {
   return Column {
     Text("mcpp + HuxerUI", TextRole::Title),
-    Text("Built natively by mcpp: one dependency line, one build.mcpp line."),
+    Text("Built natively by mcpp, consumed as a C++20 module."),
     Divider(),
     Counter(),
     Row {
