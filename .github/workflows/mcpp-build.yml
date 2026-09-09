@@ -164,10 +164,15 @@ jobs:
       - name: Assert the composable transform ran and is macro-free
         working-directory: examples/mcpp_demo
         run: |
-          generated=$(find target -path '*hcg*' -name '*.cpp' | head -1)
+          # The demo is module-style, so the transformed unit is a .cppm.
+          generated=$(find target -path '*hcg*' \( -name '*.cpp' -o -name '*.cppm' \) | head -1)
           test -n "$generated" || { echo "hcg produced no transformed source"; exit 1; }
           grep -q 'return ::huxerui::Scope(' "$generated" \
             || { echo "transformed source lacks the composable scope"; exit 1; }
+          # A generated module interface must still declare itself, or the
+          # importer compiles first and dies on "failed to read compiled module".
+          grep -q '^export module ' "$generated" \
+            || { echo "the transform dropped the module declaration"; exit 1; }
           # Macros do not cross a module boundary, so generated code that named
           # HUXERUI_SCOPE_BEGIN would not compile under `import huxerui;`.
           ! grep -q 'HUXERUI_SCOPE_BEGIN' "$generated" \
