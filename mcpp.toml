@@ -6,7 +6,7 @@
 # and `mcpp/README.md` for how to drive it.
 
 [workspace]
-members = ["mcpp/rules", "tools/codegen", "tools/resource_compiler"]
+members = ["mcpp/huxerui-build-rules", "tools/codegen", "tools/resource_compiler"]
 
 [package]
 name        = "huxerui"
@@ -50,16 +50,20 @@ macos_deployment_target = "12.0"
 # CMake's HUXERUI_ENABLE_PROFILING defaults ON and compiles src/runtime/profiling.cpp.
 defines                 = ["HUXERUI_ENABLE_PROFILING=1"]
 
-# Everything a consumer's build.mcpp needs, handed over by one dependency edge.
+# BUILD-dependencies, not dependencies: none of these three reaches the
+# artifact. hcg and hrc run on the build machine and produce sources; the rule
+# module is compiled into build.mcpp itself. Declaring them as ordinary
+# dependencies would say they are part of what HuxerUI links, which is false.
+#
 # `reexport = true` is what makes an application's manifest a single line: the
 # tools and the rule module reach ITS build program without it naming them.
 #
 # The tools are built from source rather than taken from tools/prebuilt/ -- see
 # tools/codegen/mcpp.toml for why.
-[dependencies]
+[build-dependencies]
 huxerui-codegen           = { path = "tools/codegen",           tools = ["hcg"], reexport = true }
 huxerui-resource-compiler = { path = "tools/resource_compiler", tools = ["hrc"], reexport = true }
-huxerui-rules             = { path = "mcpp/rules", host-module = true,           reexport = true }
+huxerui-build-rules       = { path = "mcpp/huxerui-build-rules", host-module = true, reexport = true }
 
 # ---------------------------------------------------------------- Linux ----
 # Sources mirror cmake/platform/Linux.cmake.
@@ -137,6 +141,16 @@ sources = ["platform/linux/*.cpp"]
 
 # -------------------------------------------------------------- Windows ----
 [target.windows.build]
+# NO MSVC-DIALECT FLAGS HERE. mcpp builds Windows with clang in its GNU driver
+# mode (xim:llvm, target x86_64-windows-msvc), which rejects `/W4`,
+# `/permissive-` and `/utf-8` outright:
+#
+#     error: no such file or directory: '/W4'
+#
+# The warning level is already set once in the base [build] cxxflags with the
+# spellings clang understands, and clang reads UTF-8 sources by default. CMake
+# keeps using the MSVC driver and its own /W4 /permissive- /utf-8.
+#
 # windows_installer.cpp is NOT part of the framework: it is the WiX custom-action
 # DLL, built as a separate SDK artifact by cmake/HuxerUISdk.cmake:131. A bare
 # `platform/windows/*.cpp` glob sweeps it into libhuxerui, which is what
@@ -144,7 +158,6 @@ sources = ["platform/linux/*.cpp"]
 sources  = ["platform/windows/*.cpp", "!platform/windows/windows_installer.cpp"]
 defines  = ["UNICODE", "_UNICODE", "NOMINMAX", "WIN32_LEAN_AND_MEAN",
             "WINVER=0x0A00", "_WIN32_WINNT=0x0A00"]
-cxxflags = ["/W4", "/permissive-", "/utf-8"]
 
 [target.windows.runtime]
 libraries = ["advapi32", "d2d1", "d3d11", "dwrite", "dwmapi", "dxguid", "dxgi",

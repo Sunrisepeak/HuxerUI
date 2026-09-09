@@ -318,7 +318,7 @@ name = "huxerui"
 # 因此可以直接作为 bin target 由 mcpp 为宿主构建、全局缓存。
 [dependencies]
 huxerui-tools = { path = "tools", tools = ["hcg", "hrc"], reexport = true }
-huxerui-rules = { path = "tools/mcpp-rules", host-module = true, reexport = true }
+huxerui-build-rules = { path = "tools/mcpp-rules", host-module = true, reexport = true }
 ```
 
 `reexport = true` 的语义正是所需（`docs/30:1103-1140`）：

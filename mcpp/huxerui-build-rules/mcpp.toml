@@ -6,7 +6,7 @@
 # `import huxerui.rules;` without naming this package.
 
 [package]
-name        = "huxerui-rules"
+name        = "huxerui-build-rules"
 namespace   = "huxerui"
 version     = "0.3.0"
 description = "mcpp build rules for HuxerUI: composable codegen and resource compilation"
@@ -14,5 +14,5 @@ license     = "Apache-2.0"
 
 [lib]
 # The module this package publishes is `huxerui.rules`; the package name is
-# `huxerui-rules`, which is not a legal C++ module name and does not have to be.
+# `huxerui-build-rules`, which is not a legal C++ module name and does not have to be.
 path = "src/rules.cppm"

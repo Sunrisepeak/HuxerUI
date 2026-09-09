@@ -52,6 +52,13 @@ CMake 侧继续用发行版的包，如 `cmake/platform/Linux.cmake` 与 AGENTS.
 
 **`tools/prebuilt/` 仍是陈旧的**（仍注入宏名），CMake 的 `#include` 路径不受影响，但合入 main 后应由 `update-host-tools.yml` 重建——它正好在 `tools/codegen/**` 变更时触发。
 
+### 0.4 依赖表用 `[build-dependencies]`，规则包目录改名
+
+两处 review 意见，都在实现后修正：
+
+- **`hcg` / `hrc` / 规则模块声明在 `[build-dependencies]`，不是 `[dependencies]`。** 三者都不进产物：两个工具在构建机上运行并产出源，规则模块被编译进 `build.mcpp` 本身。写成普通依赖等于声称它们是 HuxerUI 链接的一部分，那是假的。
+- **`mcpp/rules/` 改名 `mcpp/huxerui-build-rules/`**，包名同步。一个叫 `rules` 的目录不说明任何事情；名字应当自带含义。
+
 ---
 
 ## 1. 目标与非目标
@@ -81,7 +88,7 @@ build.mcpp                             pkg-config 探测；不做 codegen（框�
 mcpp/                                  mcpp 侧的一切，CMake 完全不感知
   README.md                            这套东西是什么、怎么用
   rules/
-    mcpp.toml                          包 huxerui-rules（host-module）
+    mcpp.toml                          包 huxerui-build-rules（host-module）
     src/rules.cppm                     export module huxerui.rules;
   parity/
     check_parity.py                    与 CMake 的源集合 / 链接集合比对
@@ -118,7 +125,7 @@ scripts/gen_module_exports.py          导出清单生成器（authoring-time，
 
 **初稿只写了 A，那是个遗漏。** 按本方案自己的主张（§6：漂移是最大风险），**B 在最关键的一轴上更好** —— 两套构建跑同一个二进制，连"生成代码是否一致"这个问题都不存在，也不受缓存键 gap 影响。
 
-**倾向 B 作为默认，A 作为无 prebuilt 宿主的可选逃生口**，但这是一个真实的取舍分叉，列入 §9 待决策。若选 B，则 §2.1 布局中的两份 `tools/*/mcpp.toml` 不需要，`[dependencies]` 里两条 `tools = [...]` 边也去掉，只保留 `huxerui-rules` 一条。
+**倾向 B 作为默认，A 作为无 prebuilt 宿主的可选逃生口**，但这是一个真实的取舍分叉，列入 §9 待决策。若选 B，则 §2.1 布局中的两份 `tools/*/mcpp.toml` 不需要，`[dependencies]` 里两条 `tools = [...]` 边也去掉，只保留 `huxerui-build-rules` 一条。
 
 补充一点关于清单位置（若选 A）：mcpp 包的 `sources` glob 相对包根解析，把清单放在工具源码旁边，包根就是源码目录，不需要 `../../` 逃逸；这两个目录已经各自是独立的 CMake `project()`，多一个 `mcpp.toml` 与既有结构同构。
 
@@ -141,7 +148,7 @@ scripts/gen_module_exports.py          导出清单生成器（authoring-time，
 
 ```toml
 [workspace]
-members = ["tools/codegen", "tools/resource_compiler", "mcpp/rules"]
+members = ["tools/codegen", "tools/resource_compiler", "mcpp/huxerui-build-rules"]
 
 [package]
 name        = "huxerui"
@@ -170,7 +177,7 @@ profiling = []                        # ≙ HUXERUI_ENABLE_PROFILING
 [dependencies]
 huxerui-codegen  = { path = "tools/codegen",            tools = ["hcg"], reexport = true }
 huxerui-resource = { path = "tools/resource_compiler",  tools = ["hrc"], reexport = true }
-huxerui-rules    = { path = "mcpp/rules", host-module = true,            reexport = true }
+huxerui-build-rules    = { path = "mcpp/huxerui-build-rules", host-module = true,            reexport = true }
 
 # ---------------- Linux ----------------
 [target.'cfg(linux)'.build]
@@ -249,7 +256,7 @@ int main() {
 沿用 mcpp 自身规则包的 `plan` / `submit` 分离约定（`mcpp/examples/08-build-rules/rules-embed/`）：*"A rule without this pair has a cliff: past its last knob the only way out is to hand-write the action, and that copy then drifts."*
 
 ```cpp
-// mcpp/rules/src/rules.cppm
+// mcpp/huxerui-build-rules/src/rules.cppm
 export module huxerui.rules;
 import std;
 import mcpp;
@@ -497,7 +504,7 @@ CI 增加**一个** job：Linux 上 `mcpp build`。一个 job 覆盖绝大多数
 |---|---|---|
 | **P0** | parity 测试骨架；`examples/mcpp_demo` 进 CI（Linux） | demo 在 CI 上可重复构建 |
 | **P1** | 根 `mcpp.toml` + `build.mcpp`；两个工具包；parity 上线 | `mcpp build` 产出 `libhuxerui.a`；parity 通过；mcpp 侧不再依赖 `tools/prebuilt/` |
-| **P2** | `mcpp/rules/`；`reexport` 打通 | 一个用 composable + 资源的示例应用，`mcpp.toml` 依赖段**只有一行**；`mcpp_demo` 的 20 行绝对路径删除 |
+| **P2** | `mcpp/huxerui-build-rules/`；`reexport` 打通 | 一个用 composable + 资源的示例应用，`mcpp.toml` 依赖段**只有一行**；`mcpp_demo` 的 20 行绝对路径删除 |
 | **P3** | Windows / macOS 段 | 三平台 `mcpp build` 通过；`otool -L` / 依赖检查符合 release 策略 |
 | **P4** | 发布到 index | 干净机器上 `mcpp new` + 一行依赖即可构建运行 |
 | **P5a** | `hcg` 去宏化 + 模块外壳 + 生成器 + 校验（mcpp 侧） | `import huxerui;` 的应用在 mcpp 下构建通过；`#include` 路径行为不变；codegen 测试更新 |
