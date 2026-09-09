@@ -352,12 +352,35 @@ inline bool configure(options opt = {}) {
     // Emitting it as a forced include keeps that out of application code,
     // which is the point: `import huxerui;` has to be the ONLY difference from
     // `#include <huxerui/huxerui.h>`. Measured on gcc 16.1.0.
-    if (std::string_view(mcpp::compiler()).find("msvc") == std::string_view::npos) {
+    // THE SCOPE MACROS COME THE SAME WAY, AND FOR A SHARPER REASON.
+    //
+    // HUXERUI_SCOPE / _BEGIN / _END are public API -- hand-written composables
+    // use them directly -- and a macro does not cross a module boundary. So an
+    // importing translation unit that writes HUXERUI_SCOPE(...) by hand fails
+    // with `'HUXERUI_SCOPE' was not declared in this scope`, no matter that hcg
+    // no longer emits the names itself.
+    //
+    // hcg emitting the expansion fixes GENERATED code; this fixes HAND-WRITTEN
+    // code. They are different holes and both have to be closed for
+    // `import huxerui;` to behave exactly like `#include <huxerui/huxerui.h>`.
+    //
+    // The header is generated from view.h by scripts/gen_module_exports.py and
+    // checked by mcpp/parity/check_parity.py, so the two definitions cannot
+    // drift into an illegal redefinition for a unit that does both.
+    const std::string prelude =
+        root + "/mcpp/huxerui-build-rules/include/huxerui_scope_prelude.h";
+    const bool msvc =
+        std::string_view(mcpp::compiler()).find("msvc") != std::string_view::npos;
+    if (msvc) {
+        mcpp::cxxflag("/FItypeinfo");
+        mcpp::cxxflag(("/FI" + prelude).c_str());
+    } else {
         mcpp::cxxflag("-include");
         mcpp::cxxflag("typeinfo");
-    } else {
-        mcpp::cxxflag("/FItypeinfo");
+        mcpp::cxxflag("-include");
+        mcpp::cxxflag(prelude.c_str());
     }
+    mcpp::rerun_if_changed(prelude.c_str());
 
     // Re-run when the SET of sources or resources changes; the edges below
     // track content.

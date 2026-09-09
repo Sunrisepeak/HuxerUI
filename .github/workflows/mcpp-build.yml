@@ -140,6 +140,19 @@ jobs:
             || { echo "transform still injects the macro name"; exit 1; }
           echo "composable transform verified in $generated"
 
+      # Two different holes, two different fixes. hcg emitting the expansion
+      # covers GENERATED code; the force-included prelude covers HAND-WRITTEN
+      # code, which uses HUXERUI_SCOPE directly and would otherwise fail with
+      # `'HUXERUI_SCOPE' was not declared in this scope` under `import`.
+      - name: Assert hand-written scope macros work under import
+        working-directory: examples/mcpp_demo
+        run: |
+          grep -q 'HUXERUI_SCOPE(' src/counter.cpp \
+            || { echo "the demo no longer exercises a hand-written scope macro"; exit 1; }
+          grep -rq -- '-include.*huxerui_scope_prelude\.h' target/*/*/build.ninja \
+            || { echo "the scope prelude never reached the compile line"; exit 1; }
+          echo "hand-written HUXERUI_SCOPE compiles under import huxerui;"
+
       - name: Assert the demo consumes HuxerUI as a module
         working-directory: examples/mcpp_demo
         run: |

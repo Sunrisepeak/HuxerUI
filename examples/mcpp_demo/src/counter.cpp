@@ -13,12 +13,22 @@
 
 using namespace huxerui;
 
+// A HAND-WRITTEN scope, using the public macro directly and never touched by
+// hcg. It is here as evidence: macros do not cross a module boundary, so this
+// compiles only because huxerui.rules force-includes the generated prelude.
+View Banner() {
+  HUXERUI_SCOPE({ return Text("hand-written HUXERUI_SCOPE"); });
+}
+
 [[huxerui::composable]]
 View Counter() {
   auto count = UseState(0);
 
-  return Row {
-    Button("Count").OnClick([count] { count += 1; }),
-    Text(count).With(FontSize(24.0F)),
-  }.With(Spacing(12.0F), CrossAlign(CrossAxisAlignment::Center));
+  return Column {
+    Banner(),
+    Row {
+      Button("Count").OnClick([count] { count += 1; }),
+      Text(count).With(FontSize(24.0F)),
+    }.With(Spacing(12.0F), CrossAlign(CrossAxisAlignment::Center)),
+  }.With(Spacing(8.0F));
 }
