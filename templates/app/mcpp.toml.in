@@ -19,3 +19,15 @@ main = "src/main.cpp"
 # cannot replace one, so a package that also globbed src/**/*.cpp would link
 # both the original and the transformed copy of every composable.
 sources = []
+
+# The Windows executable's icon and the version metadata its Properties dialog
+# shows. FILEVERSION, ProductName, FileDescription and CompanyName all default
+# from [package], so this one line is the whole thing.
+#
+# ONLY PE TARGETS COMPILE THIS. On Linux and macOS the table is inapplicable --
+# no resource units, no diagnostics, byte-identical build -- so it is written
+# unconditionally and needs no cfg(windows) predicate. The file's existence IS
+# checked on every target, which is what catches a typo on the Linux build
+# rather than on the Windows one.
+[resources]
+icon = "assets/app.ico"

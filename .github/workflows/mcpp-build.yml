@@ -154,6 +154,20 @@ jobs:
       # CMake package config for CMake consumers; `mcpp pack` produces the three
       # legs mcpp builds, for mcpp consumers. cmake/HuxerUISdk.cmake keeps
       # owning the release.
+      # [resources] is compiled only on PE, so this is the one job that can
+      # observe it. The metadata all defaults from [package]; the manifest says
+      # `icon = "assets/app.ico"` and nothing else.
+      - name: Assert the Windows executable carries its version resource
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: examples/mcpp_demo
+        run: |
+          $exe = Get-ChildItem -Recurse -Filter 'huxerui_mcpp_demo.exe' target | Select-Object -First 1
+          if (-not $exe) { throw 'the demo produced no executable' }
+          $info = $exe.VersionInfo
+          Write-Host "FileVersion=$($info.FileVersion) ProductName=$($info.ProductName)"
+          if (-not $info.FileVersion) { throw 'the executable carries no version resource' }
+
       - name: Pack the library and check its shape
         shell: bash
         run: |
@@ -274,6 +288,20 @@ jobs:
       # CMake package config for CMake consumers; `mcpp pack` produces the three
       # legs mcpp builds, for mcpp consumers. cmake/HuxerUISdk.cmake keeps
       # owning the release.
+      # [resources] is compiled only on PE, so this is the one job that can
+      # observe it. The metadata all defaults from [package]; the manifest says
+      # `icon = "assets/app.ico"` and nothing else.
+      - name: Assert the Windows executable carries its version resource
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: examples/mcpp_demo
+        run: |
+          $exe = Get-ChildItem -Recurse -Filter 'huxerui_mcpp_demo.exe' target | Select-Object -First 1
+          if (-not $exe) { throw 'the demo produced no executable' }
+          $info = $exe.VersionInfo
+          Write-Host "FileVersion=$($info.FileVersion) ProductName=$($info.ProductName)"
+          if (-not $info.FileVersion) { throw 'the executable carries no version resource' }
+
       - name: Pack the library and check its shape
         shell: bash
         run: |
@@ -348,6 +376,20 @@ jobs:
       # CMake package config for CMake consumers; `mcpp pack` produces the three
       # legs mcpp builds, for mcpp consumers. cmake/HuxerUISdk.cmake keeps
       # owning the release.
+      # [resources] is compiled only on PE, so this is the one job that can
+      # observe it. The metadata all defaults from [package]; the manifest says
+      # `icon = "assets/app.ico"` and nothing else.
+      - name: Assert the Windows executable carries its version resource
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: examples/mcpp_demo
+        run: |
+          $exe = Get-ChildItem -Recurse -Filter 'huxerui_mcpp_demo.exe' target | Select-Object -First 1
+          if (-not $exe) { throw 'the demo produced no executable' }
+          $info = $exe.VersionInfo
+          Write-Host "FileVersion=$($info.FileVersion) ProductName=$($info.ProductName)"
+          if (-not $info.FileVersion) { throw 'the executable carries no version resource' }
+
       - name: Pack the library and check its shape
         shell: bash
         run: |
