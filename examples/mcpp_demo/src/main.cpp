@@ -1,46 +1,18 @@
-// The same page, written against the C++20 module front door.
+// The entry translation unit, and it instantiates NOTHING.
 //
-// `import huxerui;` replaces `#include <huxerui/huxerui.h>` and NOTHING ELSE
-// changes: the names, the DSL and [[huxerui::composable]] are identical,
-// because modules/huxerui.cppm includes those very headers in its global
-// module fragment and re-exports what they declare. Same entities, same
-// linkage, same library.
-
-#include <cstdio>
+// That is the whole trick behind it having no includes. HuxerUI's UseState(),
+// View and Layout templates instantiate `typeid` in their CALLER, and GCC's
+// typeid check is per-translation-unit -- so any TU that builds a View needs
+// <typeinfo>. Keep the entry to `RunApplication()` and the work in a module
+// unit, and the include goes where a module unit's includes belong: its own
+// global module fragment.
+//
+// huxerui.rules leaves the entry alone for a separate reason -- a build program
+// can add a source but cannot replace one, so a transformed copy of this file
+// would link beside the original as `multiple definition of main`. The two
+// constraints point the same way.
 
 import huxerui;
+import app;
 
-#include "counter.h"
-
-using namespace huxerui;
-
-View App() {
-  return Column {
-    Text("mcpp + HuxerUI", TextRole::Title),
-    Text("Built natively by mcpp, consumed as a C++20 module."),
-    Divider(),
-    Counter(),
-    Row {
-      Button("Say hello").OnClick([] { std::puts("Hello from the HuxerUI mcpp demo."); }),
-    }.With(Spacing(12.0F)),
-  }.With(
-      Padding(32.0F),
-      Spacing(16.0F),
-      CrossAlign(CrossAxisAlignment::Stretch),
-      Background(Color::Rgb(248, 249, 252))
-  );
-}
-
-const Application application{
-    App,
-    {
-        .window = {
-            .title = "mcpp HuxerUI Demo",
-            .initial_size = {640.0F, 420.0F},
-        },
-    },
-};
-
-int main() {
-  return RunApplication();
-}
+int main() { return huxerui::RunApplication(); }

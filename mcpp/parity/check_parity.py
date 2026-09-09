@@ -222,7 +222,9 @@ def check_package_template() -> None:
               [p.relative_to(ROOT) for p in root.rglob("*.hpp")]
     for header in headers:
         fail(f"{header}: an mcpp project is module-style and should carry no headers")
-    modules = list(root.rglob("*.cppm"))
+    # `.in` files are rendered and lose the suffix, so a template's module unit
+    # is `app.cppm.in` on disk.
+    modules = list(root.rglob("*.cppm")) + list(root.rglob("*.cppm.in"))
     if not modules:
         fail("templates/app declares no module interface unit; the project it "
              "generates would not be module-style")
@@ -231,7 +233,7 @@ def check_package_template() -> None:
         # `-include` prepends before `module;`, which is ill-formed, so
         # huxerui.rules does not force includes on a package with module units:
         # the unit carries them in its own global module fragment.
-        if "typeid" not in text and "UseState" in text and "#include <typeinfo>" not in text:
+        if "UseState" in text and "#include <typeinfo>" not in text:
             fail(f"{module.relative_to(ROOT)} instantiates typeid through "
                  f"UseState but its global module fragment omits <typeinfo>")
 

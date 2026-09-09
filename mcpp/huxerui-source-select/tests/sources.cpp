@@ -17,6 +17,7 @@ void check(bool condition, std::string_view what) {
 using huxerui::rules::sources::matches;
 using huxerui::rules::sources::needs_codegen;
 using huxerui::rules::sources::identifier;
+using huxerui::rules::sources::scan_module_interface;
 using huxerui::rules::sources::wix_paths;
 using huxerui::rules::sources::without_entry;
 
@@ -88,9 +89,31 @@ void wix_layout_matches_what_the_package_installs() {
     check(paths.dutil_include.ends_with("/build/native/include"), "dutil include");
 }
 
+void module_interface_is_read_from_the_source() {
+    const auto m = scan_module_interface(
+        "module;\n"
+        "#include <typeinfo>\n"
+        "export module app;\n"
+        "import huxerui;\n"
+        "import std;\n");
+    // Without these two the importer compiles before the generated interface
+    // exists and fails with `failed to read compiled module: app`.
+    check(m.name == "app", "the declared module name is read");
+    check(m.imports.size() == 2 && m.imports[0] == "huxerui" && m.imports[1] == "std",
+          "every import is read");
+
+    const auto none = scan_module_interface("#include <x>\nint main() { return 0; }\n");
+    check(none.name.empty(), "an ordinary translation unit declares no module");
+
+    // A commented-out declaration is not one.
+    const auto commented = scan_module_interface("// export module ghost;\nexport module real;\n");
+    check(commented.name == "real", "a comment is not a declaration");
+}
+
 } // namespace
 
 int main() {
+    module_interface_is_read_from_the_source();
     wix_layout_matches_what_the_package_installs();
     package_names_become_identifiers();
     glob_single_star_stays_within_one_segment();

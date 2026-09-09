@@ -50,6 +50,12 @@ struct edge {
     std::vector<std::string> command;
     std::vector<std::string> inputs;
     std::vector<std::string> outputs;
+    // A generated MODULE INTERFACE has to declare what it will provide and
+    // import: mcpp fixes the module graph during prepare, before the generator
+    // runs, and seeds a placeholder carrying exactly this declaration. Empty
+    // for an ordinary generated source.
+    std::string              provides;
+    std::vector<std::string> imports;
 };
 
 // ------------------------------------------------------------ SDK locating --
@@ -180,14 +186,20 @@ inline std::vector<edge> plan_codegen(std::span<const std::string> sources) {
         for (char& c : flat) if (c == '/' || c == '\\') c = '_';
         const std::string gen = odir + "/" + flat;
 
-        out.push_back(edge{
+        edge e{
             .id          = "hcg:" + stem,
             .role        = "source",
             .description = "huxerui composable " + rel,
             .command     = { hcg, "--input", abs.string(), "--output", gen },
             .inputs      = { abs.string(), hcg },
             .outputs     = { gen },
-        });
+        };
+        if (abs.extension() == ".cppm") {
+            const auto declared = huxerui::rules::sources::scan_module_interface(text);
+            e.provides = declared.name;
+            e.imports  = declared.imports;
+        }
+        out.push_back(std::move(e));
     }
     return out;
 }
@@ -297,6 +309,8 @@ inline bool submit(std::span<const edge> edges) {
         for (const std::string& c : e.command) a.arg(c.c_str());
         for (const std::string& i : e.inputs)  a.input(i.c_str());
         for (const std::string& o : e.outputs) a.output(o.c_str());
+        if (!e.provides.empty()) a.provides(e.provides.c_str());
+        for (const std::string& i : e.imports) a.imports(i.c_str());
         a.submit();
     }
     return true;
@@ -371,6 +385,13 @@ inline bool configure(options opt = {}) {
         root + "/mcpp/huxerui-build-rules/include/huxerui_scope_prelude.h";
     const bool msvc =
         std::string_view(mcpp::compiler()).find("msvc") != std::string_view::npos;
+    // The prelude's DIRECTORY is on the include path either way, so a module
+    // unit can put `#include <huxerui_scope_prelude.h>` in its global module
+    // fragment and hand-written HUXERUI_SCOPE works there too. Only the
+    // FORCING is conditional.
+    mcpp::include_dir(
+        (root + "/mcpp/huxerui-build-rules/include").c_str());
+
     if (has_module_interface) {
         // Nothing forced; the module units carry it themselves.
     } else if (msvc) {

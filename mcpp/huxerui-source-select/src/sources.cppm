@@ -119,6 +119,54 @@ without_entry(std::span<const std::string> sources, std::string_view entry) {
     return out;
 }
 
+// What a module interface unit declares, so a GENERATED copy of it can say the
+// same thing.
+//
+// `mcpp::action` fixes the module graph during prepare, before the generator
+// has run, so an action whose output is a module interface has to declare what
+// that output will provide and import -- mcpp seeds a placeholder carrying
+// exactly that declaration. Without it the importer compiles first and fails
+// with `failed to read compiled module`, which names the module and nothing
+// about the cause.
+struct module_interface {
+    std::string              name;      // empty when the unit declares none
+    std::vector<std::string> imports;
+};
+
+[[nodiscard]] inline module_interface scan_module_interface(std::string_view source) {
+    module_interface out;
+    std::size_t line_start = 0;
+    while (line_start <= source.size()) {
+        const std::size_t line_end = source.find('\n', line_start);
+        std::string_view line = source.substr(
+            line_start, (line_end == std::string_view::npos ? source.size() : line_end) - line_start);
+        line_start = (line_end == std::string_view::npos) ? source.size() + 1 : line_end + 1;
+
+        // Trim leading space; a declaration is at column zero in practice but
+        // nothing forbids indenting it.
+        while (!line.empty() && (line.front() == ' ' || line.front() == '\t')) line.remove_prefix(1);
+        if (line.starts_with("//")) continue;
+
+        auto take_name = [](std::string_view rest) {
+            while (!rest.empty() && (rest.front() == ' ' || rest.front() == '\t')) rest.remove_prefix(1);
+            std::size_t n = 0;
+            while (n < rest.size() &&
+                   (std::isalnum(static_cast<unsigned char>(rest[n])) || rest[n] == '_' || rest[n] == '.')) {
+                ++n;
+            }
+            return std::string(rest.substr(0, n));
+        };
+
+        if (line.starts_with("export module ")) {
+            out.name = take_name(line.substr(std::string_view("export module ").size()));
+        } else if (line.starts_with("import ")) {
+            const std::string name = take_name(line.substr(std::string_view("import ").size()));
+            if (!name.empty()) out.imports.push_back(name);
+        }
+    }
+    return out;
+}
+
 // The layout `xim:wix` installs, expressed once.
 //
 // Each of WiX's three NuGet payloads keeps its own directory shape under a
