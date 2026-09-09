@@ -15,6 +15,49 @@ TEST_CASE("HuxerUICliRendersEmbeddedTemplatePathsAndContents") {
 
 }
 
+TEST_CASE("HuxerUICliCreatesMcppProjects") {
+  TemporaryDirectory temporary;
+  const Invocation invocation =
+      Invoke(temporary.Path(), {"create", "app", "Sample-App", "--build", "mcpp", "--agent", "none"});
+
+  REQUIRE(invocation.result == 0);
+  const std::filesystem::path project = temporary.Path() / "Sample-App";
+  REQUIRE(std::filesystem::is_regular_file(project / "mcpp.toml"));
+  REQUIRE(std::filesystem::is_regular_file(project / "build.mcpp"));
+  REQUIRE(std::filesystem::is_regular_file(project / "src/main.cpp"));
+  // The composable lives outside the entry: huxerui.rules never transforms the
+  // target's entry, so a composable there would never be rewritten.
+  REQUIRE(std::filesystem::is_regular_file(project / "src/counter.cpp"));
+
+  // An mcpp project has no CMake and no platform shells.
+  REQUIRE_FALSE(std::filesystem::exists(project / "CMakeLists.txt"));
+  REQUIRE_FALSE(std::filesystem::exists(project / "platform"));
+  // template.toml describes the template to `mcpp new --list-templates`; it is
+  // not part of what the template produces.
+  REQUIRE_FALSE(std::filesystem::exists(project / "template.toml"));
+  // `.in` files are rendered and lose the suffix.
+  REQUIRE_FALSE(std::filesystem::exists(project / "mcpp.toml.in"));
+
+  const std::string manifest = Read(project / "mcpp.toml");
+  REQUIRE(manifest.find("name     = \"Sample-App\"") != std::string::npos);
+  // The EXACT package identity: a bare name reaches mcpp's deprecated
+  // bare-name search, which resolves in `mcpplibs` only.
+  REQUIRE(manifest.find("huxerui.huxerui = ") != std::string::npos);
+  REQUIRE(manifest.find("{{") == std::string::npos);
+
+  REQUIRE(Read(project / "src/main.cpp").find("import huxerui;") != std::string::npos);
+}
+
+TEST_CASE("HuxerUICliRejectsUnsupportedBuildSystems") {
+  TemporaryDirectory temporary;
+  REQUIRE(Invoke(temporary.Path(), {"create", "app", "Sample-App", "--build", "meson"}).result != 0);
+  REQUIRE(Invoke(temporary.Path(), {"create", "library", "sample-lib", "--build", "mcpp"}).result != 0);
+  // mcpp builds three platforms from one manifest and has no platform shells.
+  REQUIRE(Invoke(temporary.Path(),
+              {"create", "app", "Sample-App", "--build", "mcpp", "--platform", "windows"})
+              .result != 0);
+}
+
 TEST_CASE("HuxerUICliCreatesSelectedPlatformShells") {
   TemporaryDirectory temporary;
   const Invocation invocation = Invoke(

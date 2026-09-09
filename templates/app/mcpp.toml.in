@@ -3,6 +3,10 @@ name     = "{{project.name}}"
 version  = "0.1.0"
 standard = "c++20"
 
+# The EXACT package identity, not a bare name: namespace omission means
+# `mcpplibs` only, and mcpp's bare-name fallback is deprecated
+# ("This fallback is removed in 2026.9"). {{self.name}} renders the selector,
+# which carries the namespace.
 [dependencies]
 {{self.name}} = "{{self.version}}"
 

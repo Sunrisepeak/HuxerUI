@@ -6,6 +6,8 @@
 
 namespace {
 
+using huxerui::codegen::kScopeCloseText;
+using huxerui::codegen::kScopeOpenText;
 using huxerui::codegen::TransformError;
 using huxerui::codegen::TransformSource;
 

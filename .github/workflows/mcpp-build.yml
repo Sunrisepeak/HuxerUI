@@ -24,6 +24,11 @@ on:
       - 'cmake/platform/**'
       - 'cmake/HuxerUIBuild.cmake'
       - 'examples/mcpp_demo/**'
+      - 'tests/cli/**'
+      - 'tests/codegen/**'
+      - 'templates/**'
+      - 'tools/huxerui_cli/**'
+      - 'tools/codegen/**'
       - '.github/workflows/mcpp-build.yml'
   pull_request:
     paths:
@@ -39,6 +44,11 @@ on:
       - 'cmake/platform/**'
       - 'cmake/HuxerUIBuild.cmake'
       - 'examples/mcpp_demo/**'
+      - 'tests/cli/**'
+      - 'tests/codegen/**'
+      - 'templates/**'
+      - 'tools/huxerui_cli/**'
+      - 'tools/codegen/**'
       - '.github/workflows/mcpp-build.yml'
   workflow_dispatch:
 
@@ -266,3 +276,45 @@ jobs:
         shell: pwsh
         working-directory: examples/mcpp_demo
         run: mcpp build
+
+  cmake-tests:
+    name: cmake tests (files this PR touches)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      # This job does NOT add anything to the CMake build system; it runs the
+      # two suites that cover the CMake-compiled files this PR changes:
+      #
+      #   tools/codegen/transform.{h,cpp}  ->  HuxerUICodegenTests
+      #   tools/huxerui_cli/**             ->  HuxerUICliTests
+      #
+      # It exists because those changes were otherwise verified by nothing:
+      # update-host-tools.yml rebuilds the tools on main but runs
+      # tests/scripts/host_tools_test.py, not the Catch2 suites, and
+      # sdk-release.yml only fires on tags. Adding it caught a real defect --
+      # tests/codegen/transform.cpp referenced the new constants unqualified
+      # and did not compile.
+      - name: Install the CMake build's dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-4-dev libepoxy-dev libsoup-3.0-dev pkg-config ninja-build
+
+      # Configure only; the two test targets below link neither GTK nor the
+      # framework, so nothing here depends on the platform backend building.
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DHUXERUI_BUILD_EXAMPLES=OFF \
+            -DHUXERUI_BUILD_SHARED=OFF \
+            -DHUXERUI_BUILD_CLI=ON \
+            -DHUXERUI_BUILD_TESTS=ON
+
+      - name: Build the codegen and CLI test suites
+        run: cmake --build build --target huxerui_codegen_tests huxerui_cli_tests --parallel
+
+      - name: Run them
+        working-directory: build
+        run: ctest -R '^(HuxerUICodegenTests|HuxerUICliTests)$' --output-on-failure
