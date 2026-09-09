@@ -119,4 +119,32 @@ without_entry(std::span<const std::string> sources, std::string_view entry) {
     return out;
 }
 
+// The layout `xim:wix` installs, expressed once.
+//
+// Each of WiX's three NuGet payloads keeps its own directory shape under a
+// subdirectory of the package root, so these are the upstream-documented paths
+// rather than a repackaging. They are here rather than in the rule so they can
+// be tested: a wrong path surfaces on Windows only, at link time, as a missing
+// .lib -- and there is no Windows machine on the way to that discovery.
+struct wix_layout {
+    std::string tool;                   // wix.exe
+    std::string bootstrapper_include;   // BootstrapperApplication.h and friends
+    std::string bootstrapper_lib;       // balutil.lib
+    std::string bootstrapper_runtime;   // mbanative.dll, deployed beside the BA
+    std::string dutil_include;          // dutil.h and friends
+    std::string dutil_lib;              // dutil.lib
+};
+
+[[nodiscard]] inline wix_layout wix_paths(std::string_view root) {
+    const std::string r(root);
+    return wix_layout{
+        .tool                 = r + "/tool/tools/net6.0/any/wix.exe",
+        .bootstrapper_include = r + "/bootstrapper/build/native/include",
+        .bootstrapper_lib     = r + "/bootstrapper/build/native/v14/x64/balutil.lib",
+        .bootstrapper_runtime = r + "/bootstrapper/runtimes/win-x64/native/mbanative.dll",
+        .dutil_include        = r + "/dutil/build/native/include",
+        .dutil_lib            = r + "/dutil/build/native/v14/x64/dutil.lib",
+    };
+}
+
 } // namespace huxerui::rules::sources

@@ -161,6 +161,17 @@ defines  = ["UNICODE", "_UNICODE", "NOMINMAX", "WIN32_LEAN_AND_MEAN",
 # `LNK1104: cannot open file 'huxerui.rules=...ifc'`. Revisit when that is
 # fixed upstream.
 
+# The WiX toolset, for projects that build a Windows installer. It is an
+# xlings payload rather than a NuGet restore inside this repository: WiX is a
+# general-purpose tool, and the download-and-verify that used to live in
+# cmake/HuxerUIWindowsInstaller.cmake is index work.
+#
+# Declared by the framework so that a consumer gets it through the dependency
+# edge -- xpkg_dir answers for a package a DEPENDENCY declared (mcpp
+# 2026.9.6.6+), so an application's build.mcpp reaches it without naming it.
+[target.windows.xlings.workspace]
+"xim:wix" = "5.0.2"
+
 [target.windows.runtime]
 # The first group is what cmake/platform/Windows.cmake names explicitly.
 #

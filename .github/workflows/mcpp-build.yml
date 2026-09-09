@@ -157,6 +157,28 @@ jobs:
       # [resources] is compiled only on PE, so this is the one job that can
       # observe it. The metadata all defaults from [package]; the manifest says
       # `icon = "assets/app.ico"` and nothing else.
+      # xim:wix is declared by the framework's manifest, so provisioning it is
+      # part of `mcpp build` on Windows. Assert the tool is actually there and
+      # runs: `wix --version` failing is how a missing .NET 6 runtime shows up,
+      # and that is a different problem from a missing payload.
+      - name: Assert the WiX toolset is provisioned
+        shell: pwsh
+        run: |
+          $root = Get-ChildItem -Directory -Recurse -Filter 'wix' `
+                    (Join-Path $HOME '.xlings\data\xpkgs') -ErrorAction SilentlyContinue |
+                  Select-Object -First 1
+          if (-not $root) { throw 'xim:wix was not provisioned' }
+          $wix = Get-ChildItem -Recurse -Filter 'wix.exe' $root.FullName | Select-Object -First 1
+          if (-not $wix) { throw "wix.exe not found under $($root.FullName)" }
+          Write-Host "wix.exe at $($wix.FullName)"
+          & $wix.FullName --version
+          foreach ($lib in @('balutil.lib', 'dutil.lib', 'mbanative.dll')) {
+            if (-not (Get-ChildItem -Recurse -Filter $lib $root.FullName)) {
+              throw "the payload is missing $lib"
+            }
+          }
+          Write-Host 'wix.exe, balutil.lib, dutil.lib and mbanative.dll are all present'
+
       - name: Assert the Windows executable carries its version resource
         if: runner.os == 'Windows'
         shell: pwsh
@@ -291,6 +313,28 @@ jobs:
       # [resources] is compiled only on PE, so this is the one job that can
       # observe it. The metadata all defaults from [package]; the manifest says
       # `icon = "assets/app.ico"` and nothing else.
+      # xim:wix is declared by the framework's manifest, so provisioning it is
+      # part of `mcpp build` on Windows. Assert the tool is actually there and
+      # runs: `wix --version` failing is how a missing .NET 6 runtime shows up,
+      # and that is a different problem from a missing payload.
+      - name: Assert the WiX toolset is provisioned
+        shell: pwsh
+        run: |
+          $root = Get-ChildItem -Directory -Recurse -Filter 'wix' `
+                    (Join-Path $HOME '.xlings\data\xpkgs') -ErrorAction SilentlyContinue |
+                  Select-Object -First 1
+          if (-not $root) { throw 'xim:wix was not provisioned' }
+          $wix = Get-ChildItem -Recurse -Filter 'wix.exe' $root.FullName | Select-Object -First 1
+          if (-not $wix) { throw "wix.exe not found under $($root.FullName)" }
+          Write-Host "wix.exe at $($wix.FullName)"
+          & $wix.FullName --version
+          foreach ($lib in @('balutil.lib', 'dutil.lib', 'mbanative.dll')) {
+            if (-not (Get-ChildItem -Recurse -Filter $lib $root.FullName)) {
+              throw "the payload is missing $lib"
+            }
+          }
+          Write-Host 'wix.exe, balutil.lib, dutil.lib and mbanative.dll are all present'
+
       - name: Assert the Windows executable carries its version resource
         if: runner.os == 'Windows'
         shell: pwsh
@@ -379,6 +423,28 @@ jobs:
       # [resources] is compiled only on PE, so this is the one job that can
       # observe it. The metadata all defaults from [package]; the manifest says
       # `icon = "assets/app.ico"` and nothing else.
+      # xim:wix is declared by the framework's manifest, so provisioning it is
+      # part of `mcpp build` on Windows. Assert the tool is actually there and
+      # runs: `wix --version` failing is how a missing .NET 6 runtime shows up,
+      # and that is a different problem from a missing payload.
+      - name: Assert the WiX toolset is provisioned
+        shell: pwsh
+        run: |
+          $root = Get-ChildItem -Directory -Recurse -Filter 'wix' `
+                    (Join-Path $HOME '.xlings\data\xpkgs') -ErrorAction SilentlyContinue |
+                  Select-Object -First 1
+          if (-not $root) { throw 'xim:wix was not provisioned' }
+          $wix = Get-ChildItem -Recurse -Filter 'wix.exe' $root.FullName | Select-Object -First 1
+          if (-not $wix) { throw "wix.exe not found under $($root.FullName)" }
+          Write-Host "wix.exe at $($wix.FullName)"
+          & $wix.FullName --version
+          foreach ($lib in @('balutil.lib', 'dutil.lib', 'mbanative.dll')) {
+            if (-not (Get-ChildItem -Recurse -Filter $lib $root.FullName)) {
+              throw "the payload is missing $lib"
+            }
+          }
+          Write-Host 'wix.exe, balutil.lib, dutil.lib and mbanative.dll are all present'
+
       - name: Assert the Windows executable carries its version resource
         if: runner.os == 'Windows'
         shell: pwsh

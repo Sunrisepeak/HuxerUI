@@ -17,6 +17,7 @@ void check(bool condition, std::string_view what) {
 using huxerui::rules::sources::matches;
 using huxerui::rules::sources::needs_codegen;
 using huxerui::rules::sources::identifier;
+using huxerui::rules::sources::wix_paths;
 using huxerui::rules::sources::without_entry;
 
 void glob_single_star_stays_within_one_segment() {
@@ -72,9 +73,25 @@ void package_names_become_identifiers() {
     check(identifier("") == "resources", "an empty name still yields an identifier");
 }
 
+void wix_layout_matches_what_the_package_installs() {
+    const auto paths = wix_paths("/x/wix");
+    // The three payloads keep their own upstream shapes; these are the paths
+    // xim:wix's own post-install anchors check for.
+    check(paths.tool == "/x/wix/tool/tools/net6.0/any/wix.exe", "wix.exe path");
+    check(paths.bootstrapper_lib == "/x/wix/bootstrapper/build/native/v14/x64/balutil.lib",
+          "balutil.lib path");
+    check(paths.dutil_lib == "/x/wix/dutil/build/native/v14/x64/dutil.lib", "dutil.lib path");
+    check(paths.bootstrapper_runtime ==
+              "/x/wix/bootstrapper/runtimes/win-x64/native/mbanative.dll",
+          "mbanative.dll path");
+    check(paths.bootstrapper_include.ends_with("/build/native/include"), "bootstrapper include");
+    check(paths.dutil_include.ends_with("/build/native/include"), "dutil include");
+}
+
 } // namespace
 
 int main() {
+    wix_layout_matches_what_the_package_installs();
     package_names_become_identifiers();
     glob_single_star_stays_within_one_segment();
     glob_double_star_crosses_separators();

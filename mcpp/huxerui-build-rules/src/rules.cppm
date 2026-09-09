@@ -99,6 +99,20 @@ inline std::string host_tool(std::string_view tool) {
     return {};
 }
 
+// ------------------------------------------------------------- WiX toolset --
+// Where the Windows installer's tool and libraries are, or empty when the
+// payload is not installed -- which is every non-Windows build, and a Windows
+// build whose project never asked for an installer.
+//
+// The paths themselves are composed in huxerui.rules.sources so they are unit
+// tested: a wrong one shows up on Windows only, at link time, as a missing
+// .lib.
+inline huxerui::rules::sources::wix_layout wix() {
+    const std::string root = mcpp::xpkg_dir("xim", "wix");
+    if (root.empty()) return {};
+    return huxerui::rules::sources::wix_paths(root);
+}
+
 // ------------------------------------------------------------------ globs --
 namespace detail {
 
