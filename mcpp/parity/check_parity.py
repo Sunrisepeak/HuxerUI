@@ -175,6 +175,48 @@ def check_standard(m: dict) -> None:
              f"mcpp.toml says {mcpp_standard}")
 
 
+def check_package_template() -> None:
+    """templates/app/ is an mcpp package template; keep it instantiable.
+
+    mcpp renders `**.in` with a closed token vocabulary and copies everything
+    else verbatim, so an unknown token is a failure at `mcpp new` time -- on the
+    user's machine, not here. The tree is small enough to check exactly.
+    """
+    root = ROOT / "templates" / "app"
+    if not root.is_dir():
+        fail("templates/app is missing")
+        return
+    known = {"project.name", "project.namespace", "project.qualifiedName",
+             "template.package.namespace", "template.package.name",
+             "template.package.selector", "template.package.version",
+             "template.name", "self.name", "self.version"}
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(ROOT)
+        text = path.read_text(errors="replace")
+        tokens = set(re.findall(r"\{\{([^}]*)\}\}", text))
+        if path.suffix != ".in" and tokens:
+            fail(f"{rel} carries {{{{...}}}} tokens but is not a .in file, so "
+                 f"mcpp copies it verbatim")
+        for token in sorted(tokens - known):
+            fail(f"{rel} uses unknown template token '{{{{{token}}}}}'")
+    meta = root / "template.toml"
+    if not meta.is_file():
+        fail("templates/app/template.toml is missing")
+        return
+    with meta.open("rb") as handle:
+        declared = tomllib.load(handle).get("template", {})
+    if not declared.get("description"):
+        fail("templates/app/template.toml declares no description")
+    # The composable must not live in the entry file: huxerui.rules leaves the
+    # target's entry alone, so a composable there is never transformed.
+    entry = root / "src" / "main.cpp.in"
+    if entry.is_file() and "[[huxerui::composable]]" in entry.read_text():
+        fail("templates/app/src/main.cpp.in marks a composable in the target's "
+             "entry, which huxerui.rules never transforms")
+
+
 def check_module_shell() -> None:
     """modules/huxerui.cppm is generated; a new public header must reach it."""
     import subprocess
@@ -190,6 +232,7 @@ def main() -> int:
     check_standard(m)
     check_core_sources(m)
     check_module_shell()
+    check_package_template()
     for cmake_file, selector in PLATFORMS.items():
         check_platform(m, cmake_file, selector)
 

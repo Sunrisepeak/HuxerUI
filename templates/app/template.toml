@@ -1,0 +1,16 @@
+[template]
+description = "A HuxerUI desktop application: `import huxerui;`, composables and packaged resources"
+default     = true
+post_message = """
+Built with:   mcpp build
+Run with:     mcpp run
+
+The page is in src/main.cpp. It uses `import huxerui;` rather than
+#include <huxerui/huxerui.h>; both name the same entities, and the module is
+what HuxerUI ships for consumers that want it.
+
+build.mcpp calls huxerui::rules::configure(), which schedules the composable
+transform and the resource compiler as build-graph edges. Everything else --
+the platform link interface, the scope macros, the GTK stack on Linux --
+arrives through the huxerui dependency.
+"""

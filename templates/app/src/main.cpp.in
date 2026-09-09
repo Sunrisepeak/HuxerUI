@@ -1,0 +1,28 @@
+// The entry file. It holds main() and the application root, and NOTHING that
+// hcg has to rewrite: `huxerui.rules` leaves the target's entry alone, because
+// a build program can add a source but cannot replace one -- a transformed copy
+// of this file would link beside the original as `multiple definition of main`.
+//
+// Composables therefore live in their own translation units. counter.cpp is
+// the example.
+
+import huxerui;
+
+#include "counter.h"
+
+using namespace huxerui;
+
+View App() {
+  return Column {
+    Text("{{project.name}}", TextRole::Title),
+    Divider(),
+    Counter(),
+  }.With(Padding(32.0F), Spacing(16.0F));
+}
+
+const Application application{
+    App,
+    {.window = {.title = "{{project.name}}", .initial_size = {560.0F, 360.0F}}},
+};
+
+int main() { return RunApplication(); }
