@@ -153,7 +153,15 @@ jobs:
         run: |
           echo '#include <huxerui/huxerui.h>' > /tmp/header_only.cpp
           echo 'int main() { return 0; }' >> /tmp/header_only.cpp
-          gxx=$(find "$HOME/.mcpp" "$HOME/.xlings" -name 'g++' -path '*gcc*' 2>/dev/null | head -1)
-          test -n "$gxx" || { echo "no payload g++ found"; exit 1; }
+          # Pick a g++ that actually runs: the payload store also holds
+          # symlinks and wrappers, and taking the first `find` hit produced
+          # exit 127 rather than a diagnosis.
+          gxx=""
+          for candidate in $(find "$HOME/.mcpp" "$HOME/.xlings" \
+                                  -type f -name 'g++' -perm -u+x 2>/dev/null); do
+            if "$candidate" --version >/dev/null 2>&1; then gxx="$candidate"; break; fi
+          done
+          test -n "$gxx" || { echo "no runnable payload g++ found"; exit 1; }
+          echo "using $gxx"
           "$gxx" -std=c++20 -fsyntax-only -Iinclude /tmp/header_only.cpp
           echo "#include <huxerui/huxerui.h> still compiles"
