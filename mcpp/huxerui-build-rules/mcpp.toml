@@ -12,6 +12,13 @@ version     = "0.3.0"
 description = "mcpp build rules for HuxerUI: composable codegen and resource compilation"
 license     = "Apache-2.0"
 
+# The pure half, split out so `mcpp test` can cover it: this package imports
+# mcpp and therefore cannot be built outside a build program's compile.
+# A rule declares an inner rule in its OWN build-dependencies; the consumer may
+# not import it, which is why nothing needs `reexport` here.
+[build-dependencies]
+huxerui-source-select = { path = "../huxerui-source-select", host-module = true }
+
 [lib]
 # The module this package publishes is `huxerui.rules`; the package name is
 # `huxerui-build-rules`, which is not a legal C++ module name and does not have to be.

@@ -1,14 +1,16 @@
-// The entry file. It holds main() and the application root, and NOTHING that
-// hcg has to rewrite: `huxerui.rules` leaves the target's entry alone, because
-// a build program can add a source but cannot replace one -- a transformed copy
-// of this file would link beside the original as `multiple definition of main`.
+// The entry translation unit. It holds main() and the application root, and
+// NOTHING that hcg has to rewrite: huxerui.rules leaves the target's entry
+// alone, because a build program can add a source but cannot replace one -- a
+// transformed copy of this file would link beside the original as
+// `multiple definition of main`.
 //
-// Composables therefore live in their own translation units. counter.cpp is
-// the example.
+// Composables therefore live in their own module units. src/counter.cppm is
+// the example, and the project has no header files at all.
+
+#include <typeinfo>
 
 import huxerui;
-
-#include "counter.h"
+import counter;
 
 using namespace huxerui;
 

@@ -132,6 +132,14 @@ jobs:
       # build.mcpp is one call; everything else -- GTK on the link line, the
       # composable transform, the resource packages -- arrives through the
       # dependency edge.
+      # The pure half of the build rules -- glob matching, the composable
+      # pre-filter, the resource-namespace sanitiser. Split into its own
+      # package precisely so `mcpp test` can reach it: huxerui-build-rules
+      # imports mcpp and only exists inside a build program's compile.
+      - name: Unit-test the build rules
+        working-directory: mcpp/huxerui-source-select
+        run: mcpp test
+
       - name: Build the example application
         working-directory: examples/mcpp_demo
         run: mcpp build
@@ -317,4 +325,6 @@ jobs:
 
       - name: Run them
         working-directory: build
-        run: ctest -R '^(HuxerUICodegenTests|HuxerUICliTests)$' --output-on-failure
+        run: |
+          ctest --output-on-failure \
+            -R '^(HuxerUICodegenTests|HuxerUICliTests|HuxerUIMcppToolingTests)$'

@@ -25,9 +25,11 @@ TEST_CASE("HuxerUICliCreatesMcppProjects") {
   REQUIRE(std::filesystem::is_regular_file(project / "mcpp.toml"));
   REQUIRE(std::filesystem::is_regular_file(project / "build.mcpp"));
   REQUIRE(std::filesystem::is_regular_file(project / "src/main.cpp"));
-  // The composable lives outside the entry: huxerui.rules never transforms the
-  // target's entry, so a composable there would never be rewritten.
-  REQUIRE(std::filesystem::is_regular_file(project / "src/counter.cpp"));
+  // The composable lives outside the entry, in a MODULE interface unit:
+  // huxerui.rules never transforms the target's entry, and an mcpp project is
+  // module-style throughout.
+  REQUIRE(std::filesystem::is_regular_file(project / "src/counter.cppm"));
+  REQUIRE_FALSE(std::filesystem::exists(project / "src/counter.h"));
 
   // An mcpp project has no CMake and no platform shells.
   REQUIRE_FALSE(std::filesystem::exists(project / "CMakeLists.txt"));
@@ -46,6 +48,8 @@ TEST_CASE("HuxerUICliCreatesMcppProjects") {
   REQUIRE(manifest.find("{{") == std::string::npos);
 
   REQUIRE(Read(project / "src/main.cpp").find("import huxerui;") != std::string::npos);
+  REQUIRE(Read(project / "src/main.cpp").find("import counter;") != std::string::npos);
+  REQUIRE(Read(project / "src/counter.cppm").find("export module counter;") != std::string::npos);
 }
 
 TEST_CASE("HuxerUICliRejectsUnsupportedBuildSystems") {

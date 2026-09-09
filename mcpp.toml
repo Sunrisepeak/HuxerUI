@@ -6,7 +6,8 @@
 # and `mcpp/README.md` for how to drive it.
 
 [workspace]
-members = ["mcpp/huxerui-build-rules", "tools/codegen", "tools/resource_compiler"]
+members = ["mcpp/huxerui-build-rules", "mcpp/huxerui-source-select",
+           "tools/codegen", "tools/resource_compiler"]
 
 [package]
 name        = "huxerui"

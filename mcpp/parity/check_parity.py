@@ -216,6 +216,25 @@ def check_package_template() -> None:
         fail("templates/app/src/main.cpp.in marks a composable in the target's "
              "entry, which huxerui.rules never transforms")
 
+    # An mcpp project is module-style: no headers, and the composable lives in a
+    # module interface unit.
+    headers = [p.relative_to(ROOT) for p in root.rglob("*.h")] + \
+              [p.relative_to(ROOT) for p in root.rglob("*.hpp")]
+    for header in headers:
+        fail(f"{header}: an mcpp project is module-style and should carry no headers")
+    modules = list(root.rglob("*.cppm"))
+    if not modules:
+        fail("templates/app declares no module interface unit; the project it "
+             "generates would not be module-style")
+    for module in modules:
+        text = module.read_text()
+        # `-include` prepends before `module;`, which is ill-formed, so
+        # huxerui.rules does not force includes on a package with module units:
+        # the unit carries them in its own global module fragment.
+        if "typeid" not in text and "UseState" in text and "#include <typeinfo>" not in text:
+            fail(f"{module.relative_to(ROOT)} instantiates typeid through "
+                 f"UseState but its global module fragment omits <typeinfo>")
+
 
 def check_module_shell() -> None:
     """modules/huxerui.cppm is generated; a new public header must reach it."""

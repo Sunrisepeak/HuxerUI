@@ -18,6 +18,7 @@ export module huxerui.rules;
 // c++20 because that is the SDK ABI baseline. So no std::println here.
 import std;
 import mcpp;
+import huxerui.rules.sources;
 
 export namespace huxerui::rules {
 
@@ -101,52 +102,15 @@ inline std::string host_tool(std::string_view tool) {
 // ------------------------------------------------------------------ globs --
 namespace detail {
 
-// Minimal glob over `**`, `*` and literal segments -- enough for the source
-// patterns a manifest writes, and no more.
-inline bool match_here(std::string_view pat, std::string_view text) {
-    std::size_t p = 0, t = 0, star = std::string_view::npos, mark = 0;
-    while (t < text.size()) {
-        if (p < pat.size() && (pat[p] == '?' || pat[p] == text[t])) { ++p; ++t; }
-        else if (p < pat.size() && pat[p] == '*') { star = p++; mark = t; }
-        else if (star != std::string_view::npos) { p = star + 1; t = ++mark; }
-        else return false;
-    }
-    while (p < pat.size() && pat[p] == '*') ++p;
-    return p == pat.size();
-}
-
 inline void collect(const std::filesystem::path& root, std::string_view pattern,
                     std::vector<std::string>& out) {
     std::error_code ec;
-    const bool recursive = pattern.find("**") != std::string_view::npos;
-    auto consider = [&](const std::filesystem::path& f) {
-        const std::string rel =
-            std::filesystem::relative(f, root, ec).generic_string();
-        if (ec) return;
-        std::string pat(pattern);
-        // `**/` and `*/` are both handled by the flat matcher once `/` is not
-        // special; that is sufficient because every pattern here is anchored.
-        std::string flat;
-        for (std::size_t i = 0; i < pat.size(); ++i) {
-            if (pat[i] == '*' && i + 1 < pat.size() && pat[i + 1] == '*') {
-                flat += '*'; ++i;
-                if (i + 1 < pat.size() && pat[i + 1] == '/') ++i;
-                continue;
-            }
-            flat += pat[i];
-        }
-        if (match_here(flat, rel)) out.push_back(rel);
-    };
-    if (recursive) {
-        for (auto it = std::filesystem::recursive_directory_iterator(root, ec);
-             it != std::filesystem::recursive_directory_iterator(); ++it) {
-            if (it->is_regular_file(ec)) consider(it->path());
-        }
-    } else {
-        for (auto it = std::filesystem::recursive_directory_iterator(root, ec);
-             it != std::filesystem::recursive_directory_iterator(); ++it) {
-            if (it->is_regular_file(ec)) consider(it->path());
-        }
+    for (auto it = std::filesystem::recursive_directory_iterator(root, ec);
+         it != std::filesystem::recursive_directory_iterator(); ++it) {
+        if (!it->is_regular_file(ec)) continue;
+        const std::string rel = std::filesystem::relative(it->path(), root, ec).generic_string();
+        if (ec) continue;
+        if (huxerui::rules::sources::matches(pattern, rel)) out.push_back(rel);
     }
     std::ranges::sort(out);
     out.erase(std::ranges::unique(out).begin(), out.end());
@@ -164,13 +128,7 @@ inline std::string read_file(const std::filesystem::path& p) {
 // ---------------------------------------------------------------- codegen --
 namespace detail {
 
-// The same pre-filter cmake/HuxerUICodegen.cmake applies with file(READ) +
-// string(FIND): a source with neither marker gets no transform edge at all.
-// Without it every source in the project would grow a needless graph node.
-inline bool needs_codegen(const std::string& text) {
-    return text.find("[[huxerui::composable]]") != std::string::npos
-        || text.find("Use") != std::string::npos;
-}
+using huxerui::rules::sources::needs_codegen;
 
 // cmake/HuxerUICodegen.cmake ends by suppressing the diagnostic that
 // [[huxerui::composable]] provokes, because no compiler knows the attribute.
@@ -264,9 +222,12 @@ inline std::vector<edge> plan_resources(const options& opt) {
     }
 
     if (!opt.resources.empty()) {
+        // The package name is not necessarily a C++ identifier; hrc requires
+        // one for the generated accessors.
         const std::string ns =
-            opt.resource_namespace.empty() ? std::string(mcpp::package_name())
-                                           : opt.resource_namespace;
+            opt.resource_namespace.empty()
+                ? huxerui::rules::sources::identifier(mcpp::package_name())
+                : opt.resource_namespace;
         // ABSOLUTE. An action's command runs with the BUILD directory as its
         // working directory, not the package root, so a relative root reaches
         // hrc as "resource root is not a directory: resources".
@@ -338,6 +299,31 @@ inline bool configure(options opt = {}) {
         return false;
     }
 
+    // A MODULE INTERFACE UNIT CANNOT RECEIVE A FORCED INCLUDE, so this is
+    // conditional rather than unconditional.
+    //
+    // `-include` prepends the header before the first line of the translation
+    // unit, and a module interface must open with `module;` or `export module`.
+    // Measured on gcc 16.1.0, even a unit that opens with a global module
+    // fragment:
+    //
+    //     error: module-declaration only permitted as first declaration,
+    //            or ending a global module fragment
+    //
+    // A package with module interface units therefore writes its own includes
+    // in the global module fragment, which is where a module unit's includes
+    // belong anyway. A package without them keeps the clean form, which is the
+    // whole point of forcing the include: `import huxerui;` has to be the only
+    // difference from `#include <huxerui/huxerui.h>`.
+    std::vector<std::string> selected = opt.sources;
+    if (selected.empty()) {
+        detail::collect(mcpp::manifest_dir(), "src/**/*.cpp", selected);
+        detail::collect(mcpp::manifest_dir(), "src/**/*.cppm", selected);
+    }
+    selected = huxerui::rules::sources::without_entry(selected, opt.entry);
+    const bool has_module_interface = std::ranges::any_of(
+        selected, [](const std::string& source) { return source.ends_with(".cppm"); });
+
     // `import huxerui;` needs <typeinfo> in the IMPORTING translation unit.
     //
     // GCC's `typeid` check is per-TU: it asks whether <typeinfo> was included
@@ -371,7 +357,9 @@ inline bool configure(options opt = {}) {
         root + "/mcpp/huxerui-build-rules/include/huxerui_scope_prelude.h";
     const bool msvc =
         std::string_view(mcpp::compiler()).find("msvc") != std::string_view::npos;
-    if (msvc) {
+    if (has_module_interface) {
+        // Nothing forced; the module units carry it themselves.
+    } else if (msvc) {
         mcpp::cxxflag("/FItypeinfo");
         mcpp::cxxflag(("/FI" + prelude).c_str());
     } else {
@@ -385,6 +373,7 @@ inline bool configure(options opt = {}) {
     // Re-run when the SET of sources or resources changes; the edges below
     // track content.
     mcpp::rerun_if_changed_glob("src/**/*.cpp");
+    mcpp::rerun_if_changed_glob("src/**/*.cppm");
     if (!opt.resources.empty()) {
         mcpp::rerun_if_changed_glob((opt.resources + "/**").c_str());
     }
@@ -392,12 +381,7 @@ inline bool configure(options opt = {}) {
     std::vector<edge> edges;
 
     if (opt.codegen) {
-        std::vector<std::string> sources = opt.sources;
-        if (sources.empty()) {
-            detail::collect(mcpp::manifest_dir(), "src/**/*.cpp", sources);
-        }
-        // The entry is mcpp's to compile; everything else this rule selects.
-        std::erase(sources, opt.entry);
+        const std::vector<std::string>& sources = selected;
 
         // THE MANIFEST MUST SAY `sources = []`, AND THIS IS WHY.
         //
