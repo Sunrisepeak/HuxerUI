@@ -18,6 +18,8 @@ on:
       - 'src/**'
       - 'include/**'
       - 'platform/linux/**'
+      - 'platform/windows/**'
+      - 'platform/macos/**'
       - 'resources/**'
       - 'cmake/platform/**'
       - 'cmake/HuxerUIBuild.cmake'
@@ -31,6 +33,8 @@ on:
       - 'src/**'
       - 'include/**'
       - 'platform/linux/**'
+      - 'platform/windows/**'
+      - 'platform/macos/**'
       - 'resources/**'
       - 'cmake/platform/**'
       - 'cmake/HuxerUIBuild.cmake'
@@ -158,3 +162,94 @@ jobs:
           g++ --version | head -1
           g++ -std=c++20 -fsyntax-only -Iinclude /tmp/header_only.cpp
           echo "#include <huxerui/huxerui.h> still compiles"
+
+  macos:
+    name: mcpp build (macos arm64)
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      # No payload closure here: AppKit and the twelve other frameworks come
+      # from the machine's SDK, which is what `aarch64-macos` means in mcpp's
+      # target table. Only Linux declares [xlings.workspace] entries.
+      - name: Cache xlings and mcpp
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.xlings
+            ~/.mcpp
+          key: mcpp-${{ runner.os }}-${{ runner.arch }}-v2-${{ env.MCPP_VERSION }}-${{ hashFiles('mcpp.toml') }}
+          restore-keys: |
+            mcpp-${{ runner.os }}-${{ runner.arch }}-v2-${{ env.MCPP_VERSION }}-
+            mcpp-${{ runner.os }}-${{ runner.arch }}-v2-
+
+      - name: Install xlings and mcpp
+        run: |
+          if [ ! -x "$HOME/.xlings/bin/xlings" ]; then
+            curl -fsSL https://d2learn.org/xlings-install.sh | bash
+          fi
+          echo "$HOME/.xlings/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
+
+      - name: Select the pinned mcpp
+        run: |
+          xlings install "mcpp@${MCPP_VERSION}" -y
+          mcpp --version
+
+      # 25 Objective-C++ sources compiled with -fobjc-arc, and the frameworks
+      # from the top-level [runtime] table -- which the engine renders only for
+      # Mach-O, so the manifest states them once and unconditionally.
+      - name: Build the framework
+        run: mcpp build
+
+      - name: Build the example application
+        working-directory: examples/mcpp_demo
+        run: mcpp build
+
+  windows:
+    name: mcpp build (windows x86_64)
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      # mcpp locates MSVC on the machine for x86_64-windows-msvc; the
+      # developer environment is what makes the Windows SDK headers and the
+      # eighteen system import libraries reachable.
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+
+      - name: Cache xlings and mcpp
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.xlings
+            ~/.mcpp
+          key: mcpp-${{ runner.os }}-${{ runner.arch }}-v2-${{ env.MCPP_VERSION }}-${{ hashFiles('mcpp.toml') }}
+          restore-keys: |
+            mcpp-${{ runner.os }}-${{ runner.arch }}-v2-${{ env.MCPP_VERSION }}-
+            mcpp-${{ runner.os }}-${{ runner.arch }}-v2-
+
+      - name: Install xlings and mcpp
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "$HOME\.xlings")) {
+            irm https://d2learn.org/xlings-install.ps1.txt | iex
+          }
+          "$HOME\.xlings\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          "$HOME\.xlings\subos\current\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: Select the pinned mcpp
+        shell: pwsh
+        run: |
+          xlings install "mcpp@$env:MCPP_VERSION" -y
+          mcpp --version
+
+      - name: Build the framework
+        shell: pwsh
+        run: mcpp build
+
+      - name: Build the example application
+        shell: pwsh
+        working-directory: examples/mcpp_demo
+        run: mcpp build
