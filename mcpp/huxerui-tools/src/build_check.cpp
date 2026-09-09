@@ -274,12 +274,20 @@ void check_package_template(const std::filesystem::path& root) {
 int main(int argc, char** argv) {
     std::filesystem::path root = std::filesystem::current_path();
     if (argc > 2 && std::string_view(argv[1]) == "--root") root = argv[2];
-    while (!std::filesystem::exists(root / "mcpp.toml") && root.has_parent_path() &&
-           root.parent_path() != root) {
+    // BOTH files, not just the manifest. `mcpp run` starts in the tools
+    // package, whose own mcpp.toml would end the walk one directory in --
+    // observed in CI as "no HuxerUI tree above the working directory" from a
+    // checkout that plainly had one.
+    const auto is_root = [](const std::filesystem::path& p) {
+        return std::filesystem::exists(p / "mcpp.toml") &&
+               std::filesystem::exists(p / "CMakeLists.txt");
+    };
+    while (!is_root(root) && root.has_parent_path() && root.parent_path() != root) {
         root = root.parent_path();
     }
-    if (!std::filesystem::exists(root / "CMakeLists.txt")) {
-        std::cerr << "huxerui-build-check: no HuxerUI tree above the working directory\n";
+    if (!is_root(root)) {
+        std::cerr << "huxerui-build-check: no HuxerUI tree (mcpp.toml + CMakeLists.txt) above "
+                     "the working directory\n";
         return 1;
     }
 
