@@ -158,8 +158,10 @@ defines  = ["UNICODE", "_UNICODE", "NOMINMAX", "WIN32_LEAN_AND_MEAN",
 # `[toolchain] windows = "msvc"` would put both build systems on one compiler
 # and was tried; mcpp 2026.9.8.1 then hands the host module's BMI to cl.exe in
 # clang's `name=path` spelling and the link fails with
-# `LNK1104: cannot open file 'huxerui.rules=...ifc'`. Revisit when that is
-# fixed upstream.
+# `LNK1104: cannot open file 'huxerui.rules=...ifc'`. NOT RE-TESTED on the
+# 2026.9.10.2 this repository now pins -- the observation above is from 9.8.1
+# and the bug may already be gone. Retry `windows = "msvc"` before treating
+# this paragraph as current.
 
 # The WiX toolset, for projects that build a Windows installer. It is an
 # xlings payload rather than a NuGet restore inside this repository: WiX is a

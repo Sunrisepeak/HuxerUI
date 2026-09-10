@@ -62,7 +62,7 @@ permissions:
 env:
   # Pinned rather than latest: an mcpp release changes build behaviour, and a
   # green PR should stay green until someone chooses to move this line.
-  MCPP_VERSION: '2026.9.8.1'
+  MCPP_VERSION: '2026.9.10.2'
   XLINGS_NON_INTERACTIVE: '1'
 
 defaults:
@@ -195,9 +195,13 @@ jobs:
       - name: Assert the composable transform ran and is macro-free
         working-directory: examples/mcpp_demo
         run: |
-          # The demo is module-style, so the transformed unit is a .cppm.
-          generated=$(find target -path '*hcg*' \( -name '*.cpp' -o -name '*.cppm' \) | head -1)
-          test -n "$generated" || { echo "hcg produced no transformed source"; exit 1; }
+          # Name the unit rather than taking the first match. hcg's output
+          # directory ACCUMULATES -- renaming a source leaves its old
+          # transformed copy behind -- so `find ... | head -1` asserts on
+          # whichever file the directory happens to yield first. That is green
+          # on a fresh runner and wrong in any tree that has been built before.
+          generated=$(find target -path '*hcg*' -name '*app.cppm' | head -1)
+          test -n "$generated" || { echo "hcg did not transform src/app.cppm"; exit 1; }
           grep -q 'return ::huxerui::Scope(' "$generated" \
             || { echo "transformed source lacks the composable scope"; exit 1; }
           # A generated module interface must still declare itself, or the
