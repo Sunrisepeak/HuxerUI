@@ -838,6 +838,10 @@ inline bool configure(options opt = {}) {
     // members themselves, and a host module's declaration reaches every
     // build program it is compiled into -- which is why an application
     // declares none of them.
+    // A library provides no format: it has no launcher to package, and a
+    // member it asked would only decline (`no launcher in the staged tree`)
+    // beside the application's own answer.
+    if (!application) return true;
     const std::string dist_os  = mcpp::target_os();
     const std::string dist_env = mcpp::target_env();
     const auto target_or = [&](const std::string& named) { return named.empty() ? opt.target : named; };

@@ -377,6 +377,32 @@ APK, a notarised `.app`, an AndroidX dependency or an iOS device build goes
 through the Gradle and Xcode shells the CMake path keeps, which the mcpp path
 does not replace and does not touch.
 
+**A library's resources stay with the library.** `configure()` in a library's
+build program compiles `.resources` for the library's own accessor header and
+deploys nothing; the application's package merges the builtin and its own
+resources only. Merging a dependency's would need the application's build
+program to enumerate its HuxerUI library dependencies, which mcpp offers no
+channel for. Lib-Live2D's string catalogue is the one case today and is not
+read by its code.
+
+**The iOS simulator row does not link a real application.** mcpp composes
+the row from its llvm payload's libc++ headers and the SDK's `libc++.dylib`,
+and links no compiler-rt builtins for it: `std::atomic::wait` in
+`src/io/stream.cpp` references `__atomic_notify_all_global_table`, which
+Apple's libc++ does not export, and every `@available` in
+`platform/ios/uikit_accessibility.mm` references `__isPlatformVersionAtLeast`
+from `libclang_rt.iossim.a`, which is not on the link line. The framework
+compiles; the example's link fails. Both are the engine's row to fix, and CI
+reports them until it does.
+
+**On macOS, a deployed directory is beside the executable, not a resource.**
+dist-apple copies the staged tree into `Contents/MacOS/`, so
+`NSBundle` resource lookups (`URLForResource:subdirectory:`) do not find
+what `mcpp::deploy` placed; HuxerUI's own AppKit adapter falls back to the
+executable's directory, and a library relying on `NSBundle` — Cubism's Metal
+shader loader reads `FrameworkMetallibs/` that way — needs dist-apple to
+learn a resource destination. The iOS bundle is flat and unaffected.
+
 **`xim:android-platform` is declared twice.** dist-apk pins 35-r2 and the
 rule package 36-r2 (§7); every Android build prints mcpp's two-versions
 warning and uses 36-r2. The pin — and the recipe entry it needs in
