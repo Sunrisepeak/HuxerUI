@@ -11,6 +11,12 @@ struct CompileOptions {
   std::filesystem::path output;
   std::string resource_namespace;
   std::string header_name{};
+  // Where to report the files this compilation read, and which output the
+  // report is about. Empty means no report, which is the CMake path: it
+  // enumerates the resource tree itself. A build program that cannot afford
+  // that enumeration asks for both instead -- see Compile().
+  std::filesystem::path depfile{};
+  std::filesystem::path depfile_target{};
 };
 
 struct MergeOptions {

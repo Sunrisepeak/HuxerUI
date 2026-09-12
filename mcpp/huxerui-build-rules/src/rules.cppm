@@ -43,6 +43,17 @@ struct installer_options {
     [[nodiscard]] bool requested() const { return !target.empty(); }
 };
 
+// What an application must state to get an AppImage, and nothing it could have
+// been asked for twice. The Windows counterpart is installer_options above.
+struct appimage_options {
+    std::string target;         // the [targets.*] bin to package; enables the rule
+    std::string display_name;   // default: the package name
+    std::string icon;           // a .png, relative to the manifest; default assets/app.png
+    std::string categories;     // freedesktop categories; default "Utility"
+
+    [[nodiscard]] bool requested() const { return !target.empty(); }
+};
+
 struct options {
     std::vector<std::string> sources;             // default: src/**/*.cpp
     // The bin target's entry, which mcpp compiles separately from `sources`.
@@ -57,6 +68,7 @@ struct options {
     std::string              bundle_name;         // = BUNDLE_NAME
     std::string              bundle_identifier;   // = BUNDLE_IDENTIFIER
     installer_options        installer;           // Windows MSI; empty = none
+    appimage_options         appimage;            // Linux AppImage; empty = none
 };
 
 // A planned build-graph edge, handed back so a caller that needs to adjust one
@@ -75,6 +87,13 @@ struct edge {
     // for an ordinary generated source.
     std::string              provides;
     std::vector<std::string> imports;
+    // Where the command reports the files it read. An action's `inputs` are
+    // fixed before the command runs and travel through a fixed-size buffer;
+    // a depfile is neither, so a command that reads a whole directory tree
+    // says so here instead of enumerating it. NEVER also an output: ninja
+    // consumes and deletes the file, so an edge that promised it would be
+    // permanently dirty.
+    std::string              depfile;
 };
 
 // ------------------------------------------------------------ SDK locating --
@@ -245,12 +264,17 @@ inline std::vector<edge> plan_resources(const options& opt) {
     std::vector<std::string> packages;
 
     if (std::filesystem::exists(builtin_src)) {
-        std::vector<std::string> inputs{ hrc };
-        std::error_code ec;
-        for (auto it = std::filesystem::recursive_directory_iterator(builtin_src, ec);
-             it != std::filesystem::recursive_directory_iterator(); ++it) {
-            if (it->is_regular_file(ec)) inputs.push_back(it->path().string());
-        }
+        // THE RESOURCE FILES ARE NOT ENUMERATED HERE, AND THAT IS THE FIX FOR
+        // HuxerUI#130. `mcpp::action` carries its inputs through a fixed 8192
+        // byte buffer, and these 44 paths each carry the dependency's unpack
+        // prefix -- measured at 8131 bytes from a checkout 149 characters
+        // deep, which overflowed by about 45 bytes and made whether a consumer
+        // could build depend on how deep their project sat on disk. hrc
+        // reports what it read through a depfile instead: ninja folds that in
+        // after the first run, so per-file incrementality survives with one
+        // declared input rather than 44.
+        const std::string dep = odir + "/builtin.d";
+        const std::string header = odir + "/builtin/include/huxerui_builtin_resources.h";
         out.push_back(edge{
             .id          = "hrc:builtin",
             .role        = "source",
@@ -258,10 +282,12 @@ inline std::vector<edge> plan_resources(const options& opt) {
             .command     = { hrc, "--root", builtin_src,
                              "--output", odir + "/builtin",
                              "--namespace", "huxerui",
-                             "--header-name", "huxerui_builtin_resources.h" },
-            .inputs      = inputs,
-            .outputs     = { odir + "/builtin/include/huxerui_builtin_resources.h",
+                             "--header-name", "huxerui_builtin_resources.h",
+                             "--depfile", dep, "--depfile-target", header },
+            .inputs      = { hrc },
+            .outputs     = { header,
                              odir + "/builtin/package/huxerui/resources.bin" },
+            .depfile     = dep,
         });
         packages.push_back(odir + "/builtin/package");
     }
@@ -278,21 +304,22 @@ inline std::vector<edge> plan_resources(const options& opt) {
         // hrc as "resource root is not a directory: resources".
         const std::string app_src =
             (std::filesystem::path(mcpp::manifest_dir()) / opt.resources).string();
-        std::vector<std::string> inputs{ hrc };
-        std::error_code ec;
-        for (auto it = std::filesystem::recursive_directory_iterator(app_src, ec);
-             it != std::filesystem::recursive_directory_iterator(); ++it) {
-            if (it->is_regular_file(ec)) inputs.push_back(it->path().string());
-        }
+        // Same shape as hrc:builtin above, and for the same reason: an
+        // application's own resource tree is unbounded, so enumerating it puts
+        // the 8192 byte ceiling between the project and its own build.
+        const std::string dep = odir + "/app.d";
+        const std::string bin = odir + "/app/package/huxerui/resources.bin";
         out.push_back(edge{
             .id          = "hrc:app",
             .role        = "source",
             .description = "application resources " + opt.resources,
             .command     = { hrc, "--root", app_src,
                              "--output", odir + "/app",
-                             "--namespace", ns },
-            .inputs      = inputs,
-            .outputs     = { odir + "/app/package/huxerui/resources.bin" },
+                             "--namespace", ns,
+                             "--depfile", dep, "--depfile-target", bin },
+            .inputs      = { hrc },
+            .outputs     = { bin },
+            .depfile     = dep,
         });
         packages.push_back(odir + "/app/package");
     }
@@ -330,6 +357,7 @@ inline bool submit(std::span<const edge> edges) {
         for (const std::string& o : e.outputs) a.output(o.c_str());
         if (!e.provides.empty()) a.provides(e.provides.c_str());
         for (const std::string& i : e.imports) a.imports(i.c_str());
+        if (!e.depfile.empty()) a.depfile = e.depfile.c_str();
         a.submit();
     }
     return true;
@@ -348,6 +376,11 @@ inline bool submit(std::span<const edge> edges) {
 // Silent on every non-Windows target and on a project that asked for nothing.
 inline bool plan_installer(const options& opt, std::vector<edge>& out) {
     if (!opt.installer.requested()) return true;
+    // DECLARED IN configure(), SUBMITTED HERE. `mcpp pack --format msi` is what
+    // asks for an installer; a plain `mcpp build` gets none, which is what lets
+    // mcpp report this action as the distributable the request introduced
+    // rather than as an edge that was there anyway.
+    if (std::string_view(mcpp::pack_format()) != "msi") return true;
     if (std::string_view(mcpp::target_os()) != "windows") return true;
 
     const installer_options& in = opt.installer;
@@ -446,6 +479,109 @@ inline bool plan_installer(const options& opt, std::vector<edge>& out) {
                        }),
         .inputs      = { "${mcpp.target_file:" + in.target + "}", wxs_out },
         .outputs     = { msi },
+    });
+    return true;
+}
+
+// -------------------------------------------------------------- AppImage --
+// The Linux AppImage, built by appimagetool from the xim:appimagetool payload.
+//
+// Unlike the MSI this one reads `${mcpp.stage_dir}`: an AppDir is the staged
+// bundle -- bin/, lib/, relocatable -- plus AppRun, a .desktop and an icon. The
+// engine stages that tree only under `mcpp pack`, which is the other reason
+// this is a pack-format provider rather than a build-time action.
+inline bool plan_appimage(const options& opt, std::vector<edge>& out) {
+    if (!opt.appimage.requested()) return true;
+    if (std::string_view(mcpp::pack_format()) != "appimage") return true;
+    if (std::string_view(mcpp::target_os()) != "linux") return true;
+
+    const appimage_options& in = opt.appimage;
+
+    const std::string payload = mcpp::xpkg_dir("xim", "appimagetool");
+    if (payload.empty()) {
+        // Same rule the WiX lookup follows: `xpkg_dir` answers for what the
+        // BUILDING package declared, so the application declares the tool it
+        // runs even though the framework declares one too.
+        std::cerr << "huxerui.rules: the xim:appimagetool payload is not visible to this "
+                     "build program. Add it to this package's manifest:\n\n"
+                     "    [xlings.workspace]\n"
+                     "    \"xim:appimagetool\" = { linux = \"1.9.1\" }\n\n";
+        return false;
+    }
+    const auto layout = huxerui::rules::sources::appimage_paths(payload, mcpp::target_arch());
+
+    const std::string manifest = std::string(mcpp::manifest_dir());
+    const std::string icon = in.icon.empty() ? std::string("assets/app.png") : in.icon;
+    const std::filesystem::path icon_path = std::filesystem::path(manifest) / icon;
+    // A .ico is the Windows icon and appimagetool does not read one; an AppDir
+    // carries <stem>.png at its root. Refusing here beats an AppImage that
+    // builds and shows no icon.
+    if (icon_path.extension() != ".png") {
+        std::cerr << "huxerui.rules: appimage.icon must be a .png (an AppDir carries one at "
+                     "its root); got '" << icon << "'\n";
+        return false;
+    }
+    if (!std::filesystem::exists(icon_path)) {
+        std::cerr << "huxerui.rules: appimage icon is missing: " << icon_path.string() << "\n";
+        return false;
+    }
+
+    const std::string display = in.display_name.empty() ? std::string(mcpp::package_name())
+                                                        : in.display_name;
+    const std::string categories = in.categories.empty() ? std::string("Utility") : in.categories;
+
+    std::string error;
+    const std::string desktop_text = huxerui::rules::sources::appdir_desktop(
+        display, in.target, icon_path.stem().string(), categories, error);
+    if (!error.empty()) {
+        std::cerr << "huxerui.rules: the desktop entry is invalid: " << error << "\n";
+        return false;
+    }
+
+    const std::string odir = std::string(mcpp::out_dir()) + "/appimage";
+    std::error_code ec;
+    std::filesystem::create_directories(odir, ec);
+    const std::string desktop_out = odir + "/" + in.target + ".desktop";
+    {
+        std::ofstream file(desktop_out, std::ios::binary | std::ios::trunc);
+        if (!file) {
+            std::cerr << "huxerui.rules: cannot write " << desktop_out << "\n";
+            return false;
+        }
+        file << desktop_text;
+    }
+
+    // The version comes from [package] rather than from an option the project
+    // restates: a second copy drifts with nothing able to detect it.
+    const std::string version = std::string(mcpp::package_version());
+    const std::string out_file =
+        odir + "/" + display + (version.empty() ? "" : "-" + version) + ".AppImage";
+    const std::string assemble = sdk_root() + "/mcpp/huxerui-build-rules/dist/appimage.sh";
+    if (!std::filesystem::exists(assemble)) {
+        std::cerr << "huxerui.rules: cannot find the AppImage helper: " << assemble << "\n";
+        return false;
+    }
+    mcpp::rerun_if_changed(assemble.c_str());
+
+    out.push_back(edge{
+        .id          = "appimage",
+        .role        = "artifact",
+        .description = "linux appimage (" + display + ".AppImage)",
+        .command     = huxerui::rules::sources::appimage_arguments({
+                           .assemble   = assemble,
+                           .tool       = layout.tool,
+                           .runtime    = layout.runtime,
+                           .stage_dir  = "${mcpp.stage_dir}",
+                           .appdir     = odir + "/" + in.target + ".AppDir",
+                           .desktop    = desktop_out,
+                           .icon       = icon_path.string(),
+                           // Named, not harvested, exactly as the MSI names it.
+                           .executable = "${mcpp.target_file:" + in.target + "}",
+                           .out        = out_file,
+                       }),
+        .inputs      = { "${mcpp.target_file:" + in.target + "}", desktop_out,
+                         icon_path.string() },
+        .outputs     = { out_file },
     });
     return true;
 }
@@ -601,7 +737,15 @@ inline bool configure(options opt = {}) {
     }
     edges.insert(edges.end(), rs.begin(), rs.end());
 
+    // DECLARE UNCONDITIONALLY, SUBMIT CONDITIONALLY. This runs on every build,
+    // including one that asked for no format at all -- which is what lets mcpp
+    // answer `mcpp pack --format bogus` with the formats this graph provides.
+    // The actions themselves are gated on `pack_format()` inside each planner.
+    if (opt.installer.requested()) mcpp::provides_pack_format("msi");
+    if (opt.appimage.requested())  mcpp::provides_pack_format("appimage");
+
     if (!plan_installer(opt, edges)) return false;
+    if (!plan_appimage(opt, edges)) return false;
 
     return submit(edges);
 }
@@ -622,12 +766,8 @@ inline bool builtin_resources() {
 
     mcpp::rerun_if_changed_glob("resources/**");
 
-    std::vector<std::string> inputs{ hrc };
-    std::error_code ec;
-    for (auto it = std::filesystem::recursive_directory_iterator(src, ec);
-         it != std::filesystem::recursive_directory_iterator(); ++it) {
-        if (it->is_regular_file(ec)) inputs.push_back(it->path().string());
-    }
+    const std::string dep    = odir + "/builtin.d";
+    const std::string header = odir + "/builtin/include/huxerui_builtin_resources.h";
 
     edge e{
         .id          = "hrc:builtin",
@@ -636,10 +776,12 @@ inline bool builtin_resources() {
         .command     = { hrc, "--root", src,
                          "--output", odir + "/builtin",
                          "--namespace", "huxerui",
-                         "--header-name", "huxerui_builtin_resources.h" },
-        .inputs      = inputs,
-        .outputs     = { odir + "/builtin/include/huxerui_builtin_resources.h",
+                         "--header-name", "huxerui_builtin_resources.h",
+                         "--depfile", dep, "--depfile-target", header },
+        .inputs      = { hrc },
+        .outputs     = { header,
                          odir + "/builtin/package/huxerui/resources.bin" },
+        .depfile     = dep,
     };
     mcpp::include_dir((odir + "/builtin/include").c_str());
     return submit(std::span<const edge>(&e, 1));

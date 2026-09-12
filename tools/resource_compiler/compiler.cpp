@@ -1023,6 +1023,50 @@ void Publish(
 
 } // namespace
 
+// The files a compilation read, in the make syntax ninja parses.
+//
+// Written from the resource root rather than from the discovered entries: a
+// file the root holds but this compiler skips -- an unsupported extension, a
+// stray editor backup -- still has to rebuild the package when it appears or
+// changes, because whether it is skipped is this program's answer and may
+// change with it. Only a space and a backslash need escaping in that syntax.
+void WriteDepfile(const CompileOptions& options) {
+  const auto escape = [](const std::string& value) {
+    std::string out;
+    for (const char character : value) {
+      if (character == ' ' || character == '\\') {
+        out.push_back('\\');
+      }
+      out.push_back(character);
+    }
+    return out;
+  };
+
+  std::vector<std::filesystem::path> read;
+  std::error_code error;
+  for (std::filesystem::recursive_directory_iterator iterator(options.root, error);
+       iterator != std::filesystem::recursive_directory_iterator();
+       ++iterator) {
+    if (iterator->is_regular_file(error)) {
+      read.push_back(iterator->path());
+    }
+  }
+  std::ranges::sort(read);
+
+  std::string text = escape(Utf8PathString(options.depfile_target)) + ':';
+  for (const std::filesystem::path& path : read) {
+    text += " \\\n  " + escape(Utf8PathString(path));
+  }
+  text += '\n';
+
+  std::filesystem::create_directories(options.depfile.parent_path(), error);
+  std::ofstream stream(options.depfile, std::ios::binary | std::ios::trunc);
+  if (!stream) {
+    throw std::runtime_error("cannot write the resource depfile: " + options.depfile.string());
+  }
+  stream << text;
+}
+
 void Compile(const CompileOptions& options) {
   if (!std::filesystem::is_directory(options.root)) {
     throw std::runtime_error("resource root is not a directory: " + options.root.string());
@@ -1042,6 +1086,9 @@ void Compile(const CompileOptions& options) {
     throw std::runtime_error("resource root does not contain any supported resources: " + options.root.string());
   }
   Publish(options.output, entries, {options.resource_namespace}, options.header_name);
+  if (!options.depfile.empty()) {
+    WriteDepfile(options);
+  }
 }
 
 void Merge(const MergeOptions& options) {

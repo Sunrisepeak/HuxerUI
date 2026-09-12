@@ -384,7 +384,20 @@ struct NodeExtensionHandle {
   std::size_t extension_index = 0;
   const ModifierDescriptor* descriptor = nullptr;
 
-  bool operator==(const NodeExtensionHandle&) const = default;
+  // Written out rather than defaulted, and it must stay that way while
+  // microsoft/STL#6294 is open. A defaulted operator== on this padding-free
+  // 24-byte type answers clang's __is_trivially_equality_comparable with 1,
+  // which admits it to the MSVC STL's vectorized std::find; that helper
+  // implements 1-, 2-, 4- and 8-byte elements only and fails the compile
+  // inside <xutility> with `static assertion failed: unexpected size`. The
+  // guard and the helper disagree, and only clang reaches the guard, so the
+  // combination that breaks is clang plus MSVC STL 14.51 -- which is mcpp's
+  // default Windows toolchain. Hit-test routes hold a handful of handles, so
+  // losing the vectorized path costs nothing measurable here.
+  bool operator==(const NodeExtensionHandle& other) const {
+    return node_identity == other.node_identity && extension_index == other.extension_index &&
+        descriptor == other.descriptor;
+  }
 };
 
 struct ModifierSpec {

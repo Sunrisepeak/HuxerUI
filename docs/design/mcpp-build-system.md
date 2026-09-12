@@ -205,7 +205,7 @@ either: `CMAKE_CXX_STANDARD_LIBRARIES` adds kernel32, gdi32, winspool, uuid and
 comdlg32 implicitly, and mcpp links exactly what the manifest names. Omitting
 them surfaces at the link as `undefined symbol: CreateDIBSection`.
 
-Windows application templates and examples select the GUI subsystem and `mainCRTStartup` with MSVC-compatible linker directives in their `main.cpp` entry, preserving CRT initialization and the portable `main()` signature without creating a console. This selection belongs to the entry object: mcpp currently has no per-target link flags, and package-level `ldflags` or `link-flag` directives also reach tests and consumers. `huxerui.rules::configure()` therefore does not emit these flags, since component libraries use it too. CMake makes the equivalent selection on each application target in `huxerui_add_app`.
+Windows application templates and examples select the GUI subsystem with `[targets.<name>] windows_subsystem = "windows"` (mcpp 2026.9.12.2+, mcpp-community/mcpp#618), which preserves CRT initialization and the portable `main()` signature without creating a console. mcpp renders `/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup` on the MSVC ABI and `-mwindows` on the GNU one, and nothing at all on ELF and Mach-O. It is a per-target field rather than a package-level `ldflags` or `link-flag` entry because those channels also reach tests and consumers; `huxerui.rules::configure()` therefore still emits no such flag, since component libraries use it too. Until that mcpp release the same selection was made with `#pragma comment(linker, ...)` in each entry source, which only ever worked on the MSVC ABI. CMake makes the equivalent selection on each application target in `huxerui_add_app`.
 
 **macOS.** `.mm` is a first-class source kind but is not in the default glob,
 so `platform/macos/*.mm` is listed explicitly. `frameworks` is a **top-level**
@@ -213,9 +213,19 @@ so `platform/macos/*.mm` is listed explicitly. `frameworks` is a **top-level**
 `[target.macos.runtime] frameworks` entry is ignored, failing at link on macOS
 alone. Unconditional is correct: the engine renders it only for Mach-O.
 
-## 7. The Windows installer
+## 7. Distribution formats
 
-An application asks for an MSI in its build program, and gets one:
+`mcpp pack` owns the mechanism and the two universal shapes, `tar` and `dir`;
+every other format lives in a package that declares it and is reached with
+`mcpp pack --format <name>` (mcpp 2026.9.11.1+). `huxerui.rules` is that
+package for two of them:
+
+| Format | Platform | Tool | Declared by the application as |
+|---|---|---|---|
+| `msi` | Windows | WiX, from `xim:wix` | `.installer = { … }` |
+| `appimage` | Linux | appimagetool, from `xim:appimagetool` | `.appimage = { … }` |
+
+An application asks for an MSI in its build program:
 
 ```cpp
 huxerui::rules::configure({
@@ -235,6 +245,40 @@ huxerui::rules::configure({
 "xim:wix" = { windows = "5.0.2" }
 ```
 
+and builds it with `mcpp pack --format msi`. An AppImage is the same shape:
+
+```cpp
+huxerui::rules::configure({
+    .appimage = { .target = "myapp", .icon = "assets/app.png" },
+});
+```
+
+```toml
+[xlings.workspace]
+"xim:appimagetool" = { linux = "1.9.1" }
+```
+
+**Declared unconditionally, submitted conditionally.** The rule calls
+`mcpp::provides_pack_format(...)` for each format the application configured,
+on every build — that is what lets `mcpp pack --format bogus` list what this
+graph actually provides. The action itself is submitted only when
+`mcpp::pack_format()` names that format, so a plain `mcpp build` produces no
+installer and no AppImage. Before mcpp 2026.9.11.1 the MSI had no such channel
+and was built by every Windows `mcpp build`; that is the behaviour change here.
+
+**The AppImage needs a PNG.** `assets/app.ico` is the Windows icon; an AppDir
+carries `<stem>.png` at its root and a `.desktop` whose `Icon=` is that stem.
+The rule refuses with that sentence when the configured icon is missing, rather
+than producing an AppImage with no icon. It always passes `--runtime-file` from
+the payload: appimagetool otherwise downloads its runtime stub on every
+invocation, and a build that reaches the network is neither reproducible nor
+usable offline.
+
+**macOS has no format here.** A `.app` or `.dmg` would be a third provider, and
+the ecosystem has no packaging payload for it yet — `xim` carries `wix` and
+`appimagetool` and nothing for Apple. The mechanism is the same one when it
+does.
+
 That line is not redundant with the framework's. `xpkg_dir` answers from
 `MCPP_XPKG_*_DIR`, which mcpp sets for what the **building** package declared;
 a dependency's declaration provisions the payload — the log says
@@ -249,7 +293,11 @@ are the other case.
 The rule renders the MSI definition it ships
 (`mcpp/huxerui-build-rules/wix/Package.wxs.in`) into the build directory and
 submits **one** action, `role = "artifact"` — whose inputs are link outputs, so
-ninja sequences it after the link with no phase machinery.
+ninja sequences it after the link with no phase machinery. The AppImage
+provider adds a second such action, which additionally reads
+`${mcpp.stage_dir}`: an AppDir is the staged bundle plus `AppRun`, the
+`.desktop` and the icon, assembled by the helper the rule package ships at
+`mcpp/huxerui-build-rules/dist/appimage.sh`.
 
 Three things make it one action rather than several:
 
@@ -269,7 +317,10 @@ Three things make it one action rather than several:
 
 CI reads the MSI's `File` table rather than judging the installer by its size:
 an installer that carries nothing and one that carries the wrong file are both
-plausible sizes, and only the table says which file is in it.
+plausible sizes, and only the table says which file is in it. The AppImage path
+asserts the same class of failure from inside its helper, which refuses an
+output under 1 MiB — appimagetool exits 0 for an AppDir whose program never
+arrived, and stderr on a successful build is discarded.
 
 Silent on Linux and macOS: the rule returns before it reads anything when the
 target is not Windows.
@@ -280,6 +331,33 @@ MSI in a WiX **bootstrapper application**, which is a second HuxerUI program —
 and ten locales, linking `balutil.lib` and `dutil.lib` from the same payload.
 `wix_paths()` already resolves those, so nothing structural is missing; it is
 unbuilt, not blocked.
+
+## 7a. The thread-model flag, and why it stays where it is
+
+`[build] dialect_cxxflags = ["-pthread"]` in `mcpp.toml` is a workaround with a
+sharp reason: clang records the thread model in the BMI it writes and refuses a
+module whose importer disagrees, so `-pthread` has to colour every translation
+unit in the graph rather than this package's own.
+
+mcpp 2026.9.12.2 adds the typed form of exactly that: `[target.<selector>.abi]
+threads = true` on the **root** manifest, which the engine applies to the
+standard library module prebuild, the dependency scan, every translation unit
+and the link, and folds into the dependency cache key. A dependency states what
+it needs with `[package] requires_abi = { threads = true }` and is refused
+before compilation when the root does not satisfy it.
+
+**It is not adopted here yet, and the reason is the direction of the refusal.**
+Only the root manifest sets the switch, and for an application HuxerUI is not
+the root — the application is. Declaring `requires_abi` on this package would
+therefore refuse every existing application that has not added an `[target…abi]`
+section of its own, including ones built from templates published before this
+release. The current `dialect_cxxflags` line reaches those builds without
+asking anything of them.
+
+The migration is a coordinated one: templates and examples gain the root-side
+switch first, and `requires_abi` goes on this package only once a release can
+require it of consumers. Recorded here so the next reader does not re-derive
+whether the typed key exists.
 
 ## 8. Verification
 

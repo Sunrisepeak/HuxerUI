@@ -318,6 +318,63 @@ void test_render_wxs() {
     check(!error.empty(), "an unterminated token is an error");
 }
 
+void test_appimage_paths() {
+    using huxerui::rules::sources::appimage_paths;
+    const auto layout = appimage_paths("/xpkgs/appimagetool/1.9.1", "x86_64");
+    check(layout.tool == "/xpkgs/appimagetool/1.9.1/appimagetool", "the tool is at the payload root");
+    // Without this file appimagetool fetches a runtime from a GitHub release on
+    // every invocation, which makes the build require the network.
+    check(layout.runtime == "/xpkgs/appimagetool/1.9.1/runtime-x86_64",
+          "the runtime stub is named per arch");
+    check(appimage_paths("/p", "aarch64").runtime == "/p/runtime-aarch64",
+          "aarch64 names its own stub");
+}
+
+void test_appdir_desktop() {
+    using huxerui::rules::sources::appdir_desktop;
+    std::string error;
+    const std::string text = appdir_desktop("Sample App", "sample", "sample", "Utility", error);
+    check(error.empty(), "a complete field set renders");
+    check(text.starts_with("[Desktop Entry]\n"), "the group header comes first");
+    check(text.find("\nName=Sample App\n") != std::string::npos, "the display name is the Name");
+    check(text.find("\nExec=sample\n") != std::string::npos, "Exec names the program");
+    // appimagetool looks for <stem>.png at the AppDir root, so a suffix here
+    // produces an AppImage with no icon and no diagnostic.
+    check(text.find("\nIcon=sample\n") != std::string::npos, "Icon is the stem");
+    check(text.find("\nCategories=Utility;\n") != std::string::npos,
+          "categories end with a semicolon");
+
+    error.clear();
+    appdir_desktop("Sample\nExec=/bin/sh", "sample", "sample", "Utility", error);
+    check(!error.empty(), "a newline in a field is refused, not written");
+
+    error.clear();
+    appdir_desktop("", "sample", "sample", "Utility", error);
+    check(!error.empty(), "an empty field is refused");
+}
+
+void test_appimage_arguments() {
+    using huxerui::rules::sources::appimage_arguments;
+    const auto argv = appimage_arguments({
+        .assemble   = "/sdk/dist/appimage.sh",
+        .tool       = "/xpkgs/appimagetool",
+        .runtime    = "/xpkgs/runtime-x86_64",
+        .stage_dir  = "/build/stage",
+        .appdir     = "/build/out/appimage/App.AppDir",
+        .desktop    = "/build/out/appimage/app.desktop",
+        .icon       = "/app/assets/app.png",
+        .executable = "/build/bin/app",
+        .out        = "/build/out/appimage/App.AppImage",
+    });
+    check(argv.size() == 9, "every field reaches the helper");
+    check(argv.front() == "/sdk/dist/appimage.sh", "the helper comes first");
+    check(argv[1] == "/xpkgs/appimagetool", "then the tool");
+    check(argv[2] == "/xpkgs/runtime-x86_64", "then the runtime stub");
+    // Named, not harvested -- the same rule the MSI follows.
+    check(argv[7] == "/build/bin/app", "the program is named exactly");
+    check(argv.back() == "/build/out/appimage/App.AppImage", "the AppImage is last");
+}
+
 int main() {
     header_scan_finds_namespace_scope_declarations();
     header_scan_sees_past_an_attribute();
@@ -339,6 +396,9 @@ int main() {
     test_upgrade_code();
     test_msi_arguments();
     test_render_wxs();
+    test_appimage_paths();
+    test_appdir_desktop();
+    test_appimage_arguments();
     if (failures != 0) {
         std::cerr << failures << " check(s) failed\n";
         return 1;

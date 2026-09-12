@@ -41,11 +41,20 @@ constexpr std::string_view kLinuxPayloads[] = {
 // location, which is what makes a relocatable payload store work at all.
 std::string pkg_config_libdir() {
     std::string dirs;
-    std::size_t found = 0;
+    // A payload enumerated here but not declared in mcpp.toml resolves to an
+    // empty directory, and skipping it silently is what hid graphite2 for a
+    // release: PKG_CONFIG_LIBDIR replaces the search path outright, so the
+    // omission is felt only once some .pc actually Requires the missing
+    // package -- as `Package 'graphite2' was not found in the pkg-config
+    // search path`, naming neither this list nor the manifest. Collect the
+    // names instead, and say which ones.
+    std::vector<std::string> undeclared;
     for (std::string_view name : kLinuxPayloads) {
         const std::string root = mcpp::xpkg_dir("xim", std::string(name).c_str());
-        if (root.empty()) continue;
-        ++found;
+        if (root.empty()) {
+            undeclared.emplace_back(name);
+            continue;
+        }
         // xorgproto and friends install their .pc under share/, not lib/.
         for (const char* sub : { "/lib/pkgconfig", "/share/pkgconfig", "/lib64/pkgconfig" }) {
             const std::string d = root + sub;
@@ -54,11 +63,14 @@ std::string pkg_config_libdir() {
             dirs += d;
         }
     }
-    if (found != std::size(kLinuxPayloads)) {
-        std::cerr << "huxerui: " << (std::size(kLinuxPayloads) - found)
-                  << " of " << std::size(kLinuxPayloads)
-                  << " xlings payloads did not resolve; check "
-                     "[target.'cfg(linux)'.xlings.workspace] in mcpp.toml\n";
+    if (!undeclared.empty()) {
+        std::cerr << "huxerui: " << undeclared.size() << " of "
+                  << std::size(kLinuxPayloads)
+                  << " xlings payloads did not resolve:";
+        for (const std::string& name : undeclared) std::cerr << ' ' << name;
+        std::cerr << "\n         declare each as \"xim:<name>\" in "
+                     "[target.'cfg(linux)'.xlings.workspace] of mcpp.toml, or drop it "
+                     "from kLinuxPayloads here.\n";
     }
     return dirs;
 }

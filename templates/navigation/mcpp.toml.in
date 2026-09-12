@@ -22,6 +22,16 @@ standard = "c++23"
 [targets.{{project.name}}]
 kind = "bin"
 main = "src/main.cpp"
+# The GUI subsystem, and the portable `int main()` that keeps it.
+#
+# Without this a double-clicked executable opens a console window behind the
+# application. The keys are here rather than in the entry source because the
+# correct linker flags depend on the ABI -- MSVC takes `/SUBSYSTEM:WINDOWS`
+# with `/ENTRY:mainCRTStartup`, MinGW takes `-mwindows` -- and they reach this
+# executable's link only, never the test binaries or a consumer. Requires
+# mcpp 2026.9.12.2+. On Linux and macOS they render nothing and the artifact
+# is byte-identical.
+windows_subsystem = "windows"
 
 [build]
 # huxerui.rules owns the source selection: a build program can ADD a source but

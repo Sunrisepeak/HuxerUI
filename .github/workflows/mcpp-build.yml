@@ -106,7 +106,7 @@ permissions:
 env:
   # Pinned rather than latest: an mcpp release changes build behaviour, and a
   # green PR should stay green until someone chooses to move this line.
-  MCPP_VERSION: '2026.9.10.2'
+  MCPP_VERSION: '2026.9.12.2'
   # The Linux clang leg. Pinned for the same reason mcpp is: a toolchain
   # release changes what compiles, and a green PR should stay green until
   # someone moves this line. Windows and macOS already build with clang --
@@ -545,10 +545,16 @@ jobs:
           if (-not $info.FileVersion) { throw 'the executable carries no version resource' }
 
       # The installer, built by huxerui.rules through the WiX toolset the
-      # framework declares as an xlings payload. `role = "artifact"` is what
-      # sequences it after the link -- its input is the executable above -- and
-      # `bindpath.Application=bin` is what lets it harvest the link directory
-      # without a staging step.
+      # framework declares as an xlings payload. It is a `mcpp pack --format`
+      # provider (mcpp 2026.9.11.1+), so a plain `mcpp build` above produces no
+      # MSI and this step asks for one; `role = "artifact"` is what sequences it
+      # after the link, and the program is named rather than harvested.
+      - name: Build the MSI
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: mcpp/examples/02-module-units
+        run: mcpp pack --format msi
+
       - name: Assert the MSI was produced
         if: runner.os == 'Windows'
         shell: pwsh
