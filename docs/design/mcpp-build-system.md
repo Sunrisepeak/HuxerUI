@@ -182,6 +182,20 @@ which keeps the host out entirely. They are declared on the **target** axis
 (`[target.'cfg(linux)'.xlings.workspace]`) because they are what the produced
 code is compiled and linked against.
 
+### The table is declared twice, and a library calls the rule
+
+`xpkg_dir` answers only for payloads the *building* package declared, and a
+host module's `[xlings.workspace]` counts as that package's own. So the same
+37 entries appear under `mcpp/huxerui-build-rules/mcpp.toml` — the rule
+package is a host module compiled into every application's and library's
+build program — and `huxerui::rules::linux_gtk(link)` runs the pkg-config
+probe wherever it is called: the framework's `build.mcpp` calls it with
+`link` (the `-l`/`-L` half reaches every consumer's final link), and a
+library whose own sources include GTK headers calls it without, because the
+`-I` half of a dependency's probe colours the dependency's translation units
+only. Lib-Live2D's GL surface is that library, and its manifest declares no
+GTK. `huxerui-build-check` fails when the two tables differ.
+
 ### Dialect flags belong to the whole graph
 
 `pkg-config --cflags gtk4` also emits `-pthread -msse -msse2 -mfpmath=sse`. A

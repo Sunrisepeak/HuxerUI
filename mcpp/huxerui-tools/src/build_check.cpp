@@ -282,6 +282,43 @@ void check_one_template(const std::filesystem::path& root,
     }
 }
 
+// The Linux payload table is declared twice on purpose -- at the root for the
+// artifact, in the rule package so that a consumer's build program can resolve
+// it (`huxerui::rules::linux_gtk`) -- and this is what keeps the two copies
+// one table.
+std::map<std::string, std::string> linux_payloads(const toml::table& manifest) {
+    std::map<std::string, std::string> out;
+    const toml::node_view<const toml::node> section =
+        manifest["target"]["cfg(all(linux, not(env = \"android\")))"]["xlings"]["workspace"];
+    if (const toml::table* table = section.as_table()) {
+        for (const auto& [key, value] : *table) {
+            if (const auto version = value.value<std::string>()) out.emplace(std::string(key.str()), *version);
+        }
+    }
+    return out;
+}
+
+void check_linux_payloads(const std::filesystem::path& root, const toml::table& manifest) {
+    toml::table rules;
+    try {
+        rules = toml::parse_file((root / "mcpp/huxerui-build-rules/mcpp.toml").string());
+    } catch (const toml::parse_error& error) {
+        fail(std::string("mcpp/huxerui-build-rules/mcpp.toml does not parse: ") + std::string(error.description()));
+        return;
+    }
+    const auto artifact = linux_payloads(manifest);
+    const auto rule     = linux_payloads(rules);
+    if (artifact.empty()) fail("mcpp.toml declares no Linux payloads under [target.'cfg(all(linux, not(env = \"android\")))'.xlings.workspace]");
+    for (const auto& [name, version] : artifact) {
+        const auto it = rule.find(name);
+        if (it == rule.end()) fail("mcpp/huxerui-build-rules/mcpp.toml lacks " + name + " = \"" + version + "\" (declared at the root)");
+        else if (it->second != version) fail(name + " is " + version + " at the root and " + it->second + " in mcpp/huxerui-build-rules/mcpp.toml");
+    }
+    for (const auto& [name, version] : rule) {
+        if (!artifact.contains(name)) fail("mcpp.toml lacks " + name + " = \"" + version + "\" (declared in mcpp/huxerui-build-rules/mcpp.toml)");
+    }
+}
+
 void check_package_template(const std::filesystem::path& root) {
     const std::filesystem::path templates = root / "templates";
     if (!std::filesystem::is_directory(templates)) { fail("templates/ is missing"); return; }
@@ -359,6 +396,7 @@ int main(int argc, char** argv) {
     check_platform(root, manifest, "Android.cmake", "cfg(env = \"android\")");
     check_platform(root, manifest, "IOS.cmake", "cfg(os = \"ios\")");
     check_platform(root, manifest, "Web.cmake", "cfg(os = \"emscripten\")");
+    check_linux_payloads(root, manifest);
     check_package_template(root);
 
     if (!failures.empty()) {
