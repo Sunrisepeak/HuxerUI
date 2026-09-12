@@ -18,6 +18,9 @@ export module huxerui.rules;
 // c++20 because that is the SDK ABI baseline. So no std::println here.
 import std;
 import mcpp;
+import mcpp.dist.wix;
+import mcpp.dist.appimage;
+import mcpp.dist.apple;
 import huxerui.rules.sources;
 
 export namespace huxerui::rules {
@@ -26,30 +29,43 @@ export namespace huxerui::rules {
 // Field-for-field the arguments of huxerui_add_app() in cmake/HuxerUIApp.cmake,
 // so the two spellings of "an application" can be reviewed side by side.
 // What an application must state to get a Windows installer, and nothing it
-// could have been asked for twice.
-//
-// `mcpp` tells a build program the package NAME but not its version, so the
-// version is stated here rather than guessed. The upgrade code has to be a
-// stable GUID chosen once per product: a new one on every release makes every
-// release a separate installed product.
+// could have been asked for twice. The format itself is `mcpp:plugins`'
+// `dist-wix`; this is the HuxerUI-side spelling of its options, so an
+// application's build program reads like huxerui_add_app() in
+// cmake/HuxerUIApp.cmake. Every field but `target` is optional: the member
+// derives the version from [package], the manufacturer from the authors or
+// the namespace, and the upgrade code deterministically from the package
+// identity -- a stable GUID chosen once per product, which is exactly what
+// a derived value is.
 struct installer_options {
-    std::string target;         // the [targets.*] bin to install; enables the rule
-    std::string version;        // "1.2.3"
-    std::string upgrade_code;   // a GUID, stable for the life of the product
-    std::string manufacturer;   // default: the package namespace, else its name
-    std::string display_name;   // default: the package name
-    std::string icon;           // .ico, relative to the manifest; default assets/app.ico
+    std::string target;         // the [targets.*] app to install; enables the rule
+    std::string version;        // default: [package] version, made MSI-shaped
+    std::string upgrade_code;   // default: derived from namespace + name
+    std::string manufacturer;   // default: the first author, else the namespace
+    std::string display_name;   // default: the target name
 
     [[nodiscard]] bool requested() const { return !target.empty(); }
 };
 
-// What an application must state to get an AppImage, and nothing it could have
-// been asked for twice. The Windows counterpart is installer_options above.
+// What an application must state to get an AppImage; `dist-appimage` does the
+// rest. The Windows counterpart is installer_options above.
 struct appimage_options {
-    std::string target;         // the [targets.*] bin to package; enables the rule
-    std::string display_name;   // default: the package name
-    std::string icon;           // a .png, relative to the manifest; default assets/app.png
-    std::string categories;     // freedesktop categories; default "Utility"
+    std::string target;                  // the [targets.*] app to package; enables the rule
+    std::string display_name;            // default: the target name
+    std::string icon;                    // a .png, relative to the manifest
+    std::vector<std::string> categories; // freedesktop categories; default "Utility"
+
+    [[nodiscard]] bool requested() const { return !target.empty(); }
+};
+
+// What an application must state to get a `.app` bundle on macOS and iOS;
+// `dist-apple` does the rest. On macOS `icon` is one `.icns` file; on iOS it
+// is a DIRECTORY of flat PNGs, which the member lists under CFBundleIcons.
+struct apple_options {
+    std::string target;         // the [targets.*] app to bundle; enables the rule
+    std::string display_name;   // CFBundleName; default: the target name
+    std::string bundle_id;      // CFBundleIdentifier; default: derived from namespace + name
+    std::string icon;           // .icns (macOS) or a directory of .png (iOS), relative to the manifest
 
     [[nodiscard]] bool requested() const { return !target.empty(); }
 };
@@ -69,6 +85,7 @@ struct options {
     std::string              bundle_identifier;   // = BUNDLE_IDENTIFIER
     installer_options        installer;           // Windows MSI; empty = none
     appimage_options         appimage;            // Linux AppImage; empty = none
+    apple_options            apple;               // macOS / iOS .app; empty = none
 };
 
 // A planned build-graph edge, handed back so a caller that needs to adjust one
@@ -141,20 +158,6 @@ inline std::string host_tool(std::string_view tool) {
     if (tool == "hrc")
         return mcpp::dep_bin("huxerui-resource-compiler", "hrc");
     return {};
-}
-
-// ------------------------------------------------------------- WiX toolset --
-// Where the Windows installer's tool and libraries are, or empty when the
-// payload is not installed -- which is every non-Windows build, and a Windows
-// build whose project never asked for an installer.
-//
-// The paths themselves are composed in huxerui.rules.sources so they are unit
-// tested: a wrong one shows up on Windows only, at link time, as a missing
-// .lib.
-inline huxerui::rules::sources::wix_layout wix() {
-    const std::string root = mcpp::xpkg_dir("xim", "wix");
-    if (root.empty()) return {};
-    return huxerui::rules::sources::wix_paths(root);
 }
 
 // ------------------------------------------------------------------ globs --
@@ -363,229 +366,6 @@ inline bool submit(std::span<const edge> edges) {
     return true;
 }
 
-// ------------------------------------------------------------- installer --
-// The Windows MSI, built by the WiX toolset from the xim:wix payload.
-//
-// One action, and it is a `role = "artifact"` one: its input is the link
-// output, which is what sequences it after the link without any phase
-// machinery. There is no staging step -- `bindpath.Application` is the
-// relative path `bin`, which is the directory ninja links into and the
-// directory this action's working directory contains, and HuxerUI's compiled
-// resources are linked INTO the executable rather than carried beside it.
-//
-// Silent on every non-Windows target and on a project that asked for nothing.
-inline bool plan_installer(const options& opt, std::vector<edge>& out) {
-    if (!opt.installer.requested()) return true;
-    // DECLARED IN configure(), SUBMITTED HERE. `mcpp pack --format msi` is what
-    // asks for an installer; a plain `mcpp build` gets none, which is what lets
-    // mcpp report this action as the distributable the request introduced
-    // rather than as an edge that was there anyway.
-    if (std::string_view(mcpp::pack_format()) != "msi") return true;
-    if (std::string_view(mcpp::target_os()) != "windows") return true;
-
-    const installer_options& in = opt.installer;
-    if (!huxerui::rules::sources::is_upgrade_code(in.upgrade_code)) {
-        std::cerr << "huxerui.rules: installer.upgrade_code must be a GUID "
-                     "(8-4-4-4-12 hex digits); got '" << in.upgrade_code << "'\n";
-        return false;
-    }
-    if (in.version.empty()) {
-        std::cerr << "huxerui.rules: installer.version is required -- mcpp does not "
-                     "tell a build program the package version\n";
-        return false;
-    }
-
-    const auto layout = wix();
-    if (layout.tool.empty()) {
-        // `xpkg_dir` answers from `MCPP_XPKG_*_DIR`, which mcpp sets for what
-        // the BUILDING package declared. A dependency's declaration provisions
-        // the payload -- the framework's does, and the log says so -- but does
-        // not reach this build program, so an application that wants an
-        // installer names the tool it runs.
-        std::cerr << "huxerui.rules: the xim:wix payload is not visible to this build "
-                     "program. Add it to this package's manifest:\n\n"
-                     "    [xlings.workspace]\n"
-                     "    \"xim:wix\" = { windows = \"5.0.2\" }\n\n";
-        return false;
-    }
-
-    const std::string manifest = std::string(mcpp::manifest_dir());
-    const std::string odir     = std::string(mcpp::out_dir()) + "/wix";
-    const std::string icon     = in.icon.empty() ? std::string("assets/app.ico") : in.icon;
-    const std::string display  = in.display_name.empty() ? std::string(mcpp::package_name())
-                                                         : in.display_name;
-    std::string maker = in.manufacturer;
-    if (maker.empty()) {
-        maker = std::string(mcpp::package_namespace());
-        if (maker.empty()) maker = std::string(mcpp::package_name());
-    }
-
-    const std::filesystem::path icon_path = std::filesystem::path(manifest) / icon;
-    if (!std::filesystem::exists(icon_path)) {
-        std::cerr << "huxerui.rules: installer icon is missing: " << icon_path.string() << "\n";
-        return false;
-    }
-
-    // Read the definition the rule package ships, render it, and write it where
-    // the action will read it. build.mcpp runs before ninja, so this is a plain
-    // file write rather than another edge.
-    const std::string tmpl_path = sdk_root() + "/mcpp/huxerui-build-rules/wix/Package.wxs.in";
-    std::ifstream tmpl(tmpl_path, std::ios::binary);
-    if (!tmpl) {
-        std::cerr << "huxerui.rules: cannot read " << tmpl_path << "\n";
-        return false;
-    }
-    const std::string text{std::istreambuf_iterator<char>(tmpl), std::istreambuf_iterator<char>()};
-
-    std::string error;
-    const std::string wxs = huxerui::rules::sources::render_wxs(text, {
-        {"DISPLAY_NAME",  display},
-        {"MANUFACTURER",  maker},
-        {"VERSION",       in.version},
-        {"UPGRADE_CODE",  in.upgrade_code},
-        {"ICON",          std::filesystem::path(icon).filename().string()},
-        {"TARGET_FILE",   in.target + ".exe"},
-    }, error);
-    if (!error.empty()) {
-        std::cerr << "huxerui.rules: " << tmpl_path << ": " << error << "\n";
-        return false;
-    }
-
-    std::error_code ec;
-    std::filesystem::create_directories(odir, ec);
-    const std::string wxs_out = odir + "/Package.wxs";
-    {
-        std::ofstream file(wxs_out, std::ios::binary | std::ios::trunc);
-        if (!file) { std::cerr << "huxerui.rules: cannot write " << wxs_out << "\n"; return false; }
-        file << wxs;
-    }
-    mcpp::rerun_if_changed(tmpl_path.c_str());
-
-    const std::string msi = odir + "/" + display + "-" + in.version + ".msi";
-    out.push_back(edge{
-        .id          = "wix:msi",
-        .role        = "artifact",
-        .description = "windows installer (" + display + ".msi)",
-        .command     = huxerui::rules::sources::msi_arguments({
-                           .wix         = layout.tool,
-                           .package_wxs = wxs_out,
-                           .project_dir = icon_path.parent_path().string(),
-                           .out         = msi,
-                           // `${mcpp.target_file:<name>}` is what mcpp expands
-                           // to the link output; a build program is told
-                           // neither the triple nor the fingerprint. An unknown
-                           // target name is refused rather than left empty.
-                           .executable  = "${mcpp.target_file:" + in.target + "}",
-                       }),
-        .inputs      = { "${mcpp.target_file:" + in.target + "}", wxs_out },
-        .outputs     = { msi },
-    });
-    return true;
-}
-
-// -------------------------------------------------------------- AppImage --
-// The Linux AppImage, built by appimagetool from the xim:appimagetool payload.
-//
-// Unlike the MSI this one reads `${mcpp.stage_dir}`: an AppDir is the staged
-// bundle -- bin/, lib/, relocatable -- plus AppRun, a .desktop and an icon. The
-// engine stages that tree only under `mcpp pack`, which is the other reason
-// this is a pack-format provider rather than a build-time action.
-inline bool plan_appimage(const options& opt, std::vector<edge>& out) {
-    if (!opt.appimage.requested()) return true;
-    if (std::string_view(mcpp::pack_format()) != "appimage") return true;
-    if (std::string_view(mcpp::target_os()) != "linux") return true;
-
-    const appimage_options& in = opt.appimage;
-
-    const std::string payload = mcpp::xpkg_dir("xim", "appimagetool");
-    if (payload.empty()) {
-        // Same rule the WiX lookup follows: `xpkg_dir` answers for what the
-        // BUILDING package declared, so the application declares the tool it
-        // runs even though the framework declares one too.
-        std::cerr << "huxerui.rules: the xim:appimagetool payload is not visible to this "
-                     "build program. Add it to this package's manifest:\n\n"
-                     "    [xlings.workspace]\n"
-                     "    \"xim:appimagetool\" = { linux = \"1.9.1\" }\n\n";
-        return false;
-    }
-    const auto layout = huxerui::rules::sources::appimage_paths(payload, mcpp::target_arch());
-
-    const std::string manifest = std::string(mcpp::manifest_dir());
-    const std::string icon = in.icon.empty() ? std::string("assets/app.png") : in.icon;
-    const std::filesystem::path icon_path = std::filesystem::path(manifest) / icon;
-    // A .ico is the Windows icon and appimagetool does not read one; an AppDir
-    // carries <stem>.png at its root. Refusing here beats an AppImage that
-    // builds and shows no icon.
-    if (icon_path.extension() != ".png") {
-        std::cerr << "huxerui.rules: appimage.icon must be a .png (an AppDir carries one at "
-                     "its root); got '" << icon << "'\n";
-        return false;
-    }
-    if (!std::filesystem::exists(icon_path)) {
-        std::cerr << "huxerui.rules: appimage icon is missing: " << icon_path.string() << "\n";
-        return false;
-    }
-
-    const std::string display = in.display_name.empty() ? std::string(mcpp::package_name())
-                                                        : in.display_name;
-    const std::string categories = in.categories.empty() ? std::string("Utility") : in.categories;
-
-    std::string error;
-    const std::string desktop_text = huxerui::rules::sources::appdir_desktop(
-        display, in.target, icon_path.stem().string(), categories, error);
-    if (!error.empty()) {
-        std::cerr << "huxerui.rules: the desktop entry is invalid: " << error << "\n";
-        return false;
-    }
-
-    const std::string odir = std::string(mcpp::out_dir()) + "/appimage";
-    std::error_code ec;
-    std::filesystem::create_directories(odir, ec);
-    const std::string desktop_out = odir + "/" + in.target + ".desktop";
-    {
-        std::ofstream file(desktop_out, std::ios::binary | std::ios::trunc);
-        if (!file) {
-            std::cerr << "huxerui.rules: cannot write " << desktop_out << "\n";
-            return false;
-        }
-        file << desktop_text;
-    }
-
-    // The version comes from [package] rather than from an option the project
-    // restates: a second copy drifts with nothing able to detect it.
-    const std::string version = std::string(mcpp::package_version());
-    const std::string out_file =
-        odir + "/" + display + (version.empty() ? "" : "-" + version) + ".AppImage";
-    const std::string assemble = sdk_root() + "/mcpp/huxerui-build-rules/dist/appimage.sh";
-    if (!std::filesystem::exists(assemble)) {
-        std::cerr << "huxerui.rules: cannot find the AppImage helper: " << assemble << "\n";
-        return false;
-    }
-    mcpp::rerun_if_changed(assemble.c_str());
-
-    out.push_back(edge{
-        .id          = "appimage",
-        .role        = "artifact",
-        .description = "linux appimage (" + display + ".AppImage)",
-        .command     = huxerui::rules::sources::appimage_arguments({
-                           .assemble   = assemble,
-                           .tool       = layout.tool,
-                           .runtime    = layout.runtime,
-                           .stage_dir  = "${mcpp.stage_dir}",
-                           .appdir     = odir + "/" + in.target + ".AppDir",
-                           .desktop    = desktop_out,
-                           .icon       = icon_path.string(),
-                           // Named, not harvested, exactly as the MSI names it.
-                           .executable = "${mcpp.target_file:" + in.target + "}",
-                           .out        = out_file,
-                       }),
-        .inputs      = { "${mcpp.target_file:" + in.target + "}", desktop_out,
-                         icon_path.string() },
-        .outputs     = { out_file },
-    });
-    return true;
-}
-
 // -------------------------------------------------------------- configure --
 // One call for the common case. Returns false only on a condition that should
 // stop the build; a missing optional input is reported and tolerated.
@@ -737,17 +517,43 @@ inline bool configure(options opt = {}) {
     }
     edges.insert(edges.end(), rs.begin(), rs.end());
 
-    // DECLARE UNCONDITIONALLY, SUBMIT CONDITIONALLY. This runs on every build,
-    // including one that asked for no format at all -- which is what lets mcpp
-    // answer `mcpp pack --format bogus` with the formats this graph provides.
-    // The actions themselves are gated on `pack_format()` inside each planner.
-    if (opt.installer.requested()) mcpp::provides_pack_format("msi");
-    if (opt.appimage.requested())  mcpp::provides_pack_format("appimage");
+    if (!submit(edges)) return false;
 
-    if (!plan_installer(opt, edges)) return false;
-    if (!plan_appimage(opt, edges)) return false;
-
-    return submit(edges);
+    // The distribution formats are `mcpp:plugins`' dist members, reached
+    // through this package's own build-dependency; each one declares its
+    // format unconditionally and submits its action only under
+    // `mcpp pack --format <name>` on the row it serves, so calling them on
+    // every build is the contract rather than a cost. The payloads they run
+    // (xim:wix, xim:appimagetool, ...) are declared by the members themselves,
+    // and a host module's declaration reaches every build program it is
+    // compiled into -- which is why an application declares none of them.
+    if (opt.installer.requested()) {
+        mcpp::dist::wix::options w;
+        w.target       = opt.installer.target;
+        w.product_name = opt.installer.display_name;
+        w.manufacturer = opt.installer.manufacturer;
+        w.version      = opt.installer.version;
+        w.upgrade_code = opt.installer.upgrade_code;
+        if (!mcpp::dist::wix::generate(w)) return false;
+    }
+    if (opt.appimage.requested()) {
+        mcpp::dist::appimage::options a;
+        a.target     = opt.appimage.target;
+        a.app_name   = opt.appimage.display_name;
+        a.icon       = opt.appimage.icon;
+        a.categories = opt.appimage.categories;
+        a.terminal   = false;
+        if (!mcpp::dist::appimage::generate(a)) return false;
+    }
+    if (opt.apple.requested()) {
+        mcpp::dist::apple::options a;
+        a.target    = opt.apple.target;
+        a.app_name  = opt.apple.display_name;
+        a.bundle_id = opt.apple.bundle_id;
+        a.icon      = opt.apple.icon;
+        if (!mcpp::dist::apple::generate(a)) return false;
+    }
+    return true;
 }
 
 // The framework's own build needs only the builtin resource header: 11 of its

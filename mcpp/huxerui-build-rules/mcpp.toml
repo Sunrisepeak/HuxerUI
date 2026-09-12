@@ -19,6 +19,19 @@ license     = "MIT"
 [build-dependencies]
 huxerui-source-select = { path = "../huxerui-source-select", host-module = true }
 
+# The distribution formats -- msi, appimage, app, apk, web -- are members of
+# `mcpp:plugins`, imported by rules.cppm and reached through this edge. The
+# members declare the payloads they run on their own feature axes, and a host
+# module's declaration reaches every build program it is compiled into, so
+# neither this package nor an application names xim:wix or xim:appimagetool.
+#
+# The v0.9.0 tag rather than an index version: 0.9.0 carries dist-apk's
+# manifest template and Java roots, which the Android rule needs, and
+# dist-web's portable copy; it is not in mcpp-index yet. Switch to
+# `version = "0.9"` once it is.
+[build-dependencies.mcpp]
+plugins = { git = "https://github.com/mcpp-community/mcpp-plugins.git", tag = "v0.9.0", features = ["dist-wix", "dist-appimage", "dist-apple", "dist-apk", "dist-web"], host-module = true }
+
 [lib]
 # The module this package publishes is `huxerui.rules`; the package name is
 # `huxerui-build-rules`, which is not a legal C++ module name and does not have to be.

@@ -23,7 +23,6 @@ using huxerui::rules::sources::public_names;
 using huxerui::rules::sources::scan_module_interface;
 using huxerui::rules::sources::strip_noncode;
 using huxerui::rules::sources::umbrella_includes;
-using huxerui::rules::sources::wix_paths;
 using huxerui::rules::sources::without_entry;
 
 void glob_single_star_stays_within_one_segment() {
@@ -77,21 +76,6 @@ void package_names_become_identifiers() {
     check(identifier("my.app") == "my_app", "a dot becomes an underscore");
     check(identifier("2fast") == "_2fast", "a leading digit is prefixed");
     check(identifier("") == "resources", "an empty name still yields an identifier");
-}
-
-void wix_layout_matches_what_the_package_installs() {
-    const auto paths = wix_paths("/x/wix");
-    // The three payloads keep their own upstream shapes; these are the paths
-    // xim:wix's own post-install anchors check for.
-    check(paths.tool == "/x/wix/tool/tools/net6.0/any/wix.exe", "wix.exe path");
-    check(paths.bootstrapper_lib == "/x/wix/bootstrapper/build/native/v14/x64/balutil.lib",
-          "balutil.lib path");
-    check(paths.dutil_lib == "/x/wix/dutil/build/native/v14/x64/dutil.lib", "dutil.lib path");
-    check(paths.bootstrapper_runtime ==
-              "/x/wix/bootstrapper/runtimes/win-x64/native/mbanative.dll",
-          "mbanative.dll path");
-    check(paths.bootstrapper_include.ends_with("/build/native/include"), "bootstrapper include");
-    check(paths.dutil_include.ends_with("/build/native/include"), "dutil include");
 }
 
 void module_interface_is_read_from_the_source() {
@@ -264,117 +248,6 @@ void umbrella_includes_are_read_in_order() {
 
 // ------------------------------------------------------------- installer --
 
-void test_upgrade_code() {
-    using huxerui::rules::sources::is_upgrade_code;
-    check(is_upgrade_code("6F2B4C1E-9A3D-4F58-8B27-1D0E5A7C93B4"), "a GUID is accepted");
-    check(is_upgrade_code("6f2b4c1e-9a3d-4f58-8b27-1d0e5a7c93b4"), "lower case is a GUID too");
-    check(!is_upgrade_code(""), "empty is not a GUID");
-    check(!is_upgrade_code("not-a-guid"), "a word is not a GUID");
-    // The failure this guards is silent: WiX takes a malformed code literally
-    // and the MSI then never upgrades in place.
-    check(!is_upgrade_code("6F2B4C1E9A3D4F588B271D0E5A7C93B4"), "dashes are required");
-    check(!is_upgrade_code("6F2B4C1E-9A3D-4F58-8B27-1D0E5A7C93B"), "35 characters is not a GUID");
-    check(!is_upgrade_code("6F2B4C1E-9A3D-4F58-8B27-1D0E5A7C93BG"), "G is not a hex digit");
-}
-
-void test_msi_arguments() {
-    using huxerui::rules::sources::msi_arguments;
-    const auto argv = msi_arguments({
-        .wix         = "C:/wix/wix.exe",
-        .package_wxs = "C:/build/out/wix/Package.wxs",
-        .project_dir = "C:/app/assets",
-        .out         = "C:/build/out/wix/App.msi",
-        .executable  = "bin/App.exe",
-    });
-    check(argv.front() == "C:/wix/wix.exe", "the tool comes first");
-    check(argv[1] == "build", "then the verb");
-    const auto has = [&](std::string_view v) {
-        return std::ranges::find(argv, v) != argv.end();
-    };
-    // Named, not harvested: a directory bindpath that resolves to nothing
-    // produces a valid empty installer and says nothing about it.
-    check(has("Executable=bin/App.exe"), "the program is named exactly");
-    check(!has("Application=bin"), "no directory is harvested");
-    check(has("Project=C:/app/assets"), "the icon directory is bound absolute");
-    check(has("-arch") && has("x64"), "the architecture is stated");
-    check(argv[argv.size() - 2] == "-out", "-out is next to last");
-    check(argv.back() == "C:/build/out/wix/App.msi", "the msi is last");
-}
-
-void test_render_wxs() {
-    using huxerui::rules::sources::render_wxs;
-    std::string error;
-    const std::string out = render_wxs("<Package Name=\"@@DISPLAY_NAME@@\" Version=\"@@VERSION@@\" />",
-                                       {{"DISPLAY_NAME", "Sample"}, {"VERSION", "1.2.3"}}, error);
-    check(error.empty(), "a complete token set renders");
-    check(out == "<Package Name=\"Sample\" Version=\"1.2.3\" />", "both tokens are replaced");
-
-    error.clear();
-    render_wxs("@@NOPE@@", {{"DISPLAY_NAME", "Sample"}}, error);
-    check(error.find("NOPE") != std::string::npos, "an unknown token is named, not copied");
-
-    error.clear();
-    render_wxs("@@UNTERMINATED", {}, error);
-    check(!error.empty(), "an unterminated token is an error");
-}
-
-void test_appimage_paths() {
-    using huxerui::rules::sources::appimage_paths;
-    const auto layout = appimage_paths("/xpkgs/appimagetool/1.9.1", "x86_64");
-    check(layout.tool == "/xpkgs/appimagetool/1.9.1/appimagetool", "the tool is at the payload root");
-    // Without this file appimagetool fetches a runtime from a GitHub release on
-    // every invocation, which makes the build require the network.
-    check(layout.runtime == "/xpkgs/appimagetool/1.9.1/runtime-x86_64",
-          "the runtime stub is named per arch");
-    check(appimage_paths("/p", "aarch64").runtime == "/p/runtime-aarch64",
-          "aarch64 names its own stub");
-}
-
-void test_appdir_desktop() {
-    using huxerui::rules::sources::appdir_desktop;
-    std::string error;
-    const std::string text = appdir_desktop("Sample App", "sample", "sample", "Utility", error);
-    check(error.empty(), "a complete field set renders");
-    check(text.starts_with("[Desktop Entry]\n"), "the group header comes first");
-    check(text.find("\nName=Sample App\n") != std::string::npos, "the display name is the Name");
-    check(text.find("\nExec=sample\n") != std::string::npos, "Exec names the program");
-    // appimagetool looks for <stem>.png at the AppDir root, so a suffix here
-    // produces an AppImage with no icon and no diagnostic.
-    check(text.find("\nIcon=sample\n") != std::string::npos, "Icon is the stem");
-    check(text.find("\nCategories=Utility;\n") != std::string::npos,
-          "categories end with a semicolon");
-
-    error.clear();
-    appdir_desktop("Sample\nExec=/bin/sh", "sample", "sample", "Utility", error);
-    check(!error.empty(), "a newline in a field is refused, not written");
-
-    error.clear();
-    appdir_desktop("", "sample", "sample", "Utility", error);
-    check(!error.empty(), "an empty field is refused");
-}
-
-void test_appimage_arguments() {
-    using huxerui::rules::sources::appimage_arguments;
-    const auto argv = appimage_arguments({
-        .assemble   = "/sdk/dist/appimage.sh",
-        .tool       = "/xpkgs/appimagetool",
-        .runtime    = "/xpkgs/runtime-x86_64",
-        .stage_dir  = "/build/stage",
-        .appdir     = "/build/out/appimage/App.AppDir",
-        .desktop    = "/build/out/appimage/app.desktop",
-        .icon       = "/app/assets/app.png",
-        .executable = "/build/bin/app",
-        .out        = "/build/out/appimage/App.AppImage",
-    });
-    check(argv.size() == 9, "every field reaches the helper");
-    check(argv.front() == "/sdk/dist/appimage.sh", "the helper comes first");
-    check(argv[1] == "/xpkgs/appimagetool", "then the tool");
-    check(argv[2] == "/xpkgs/runtime-x86_64", "then the runtime stub");
-    // Named, not harvested -- the same rule the MSI follows.
-    check(argv[7] == "/build/bin/app", "the program is named exactly");
-    check(argv.back() == "/build/out/appimage/App.AppImage", "the AppImage is last");
-}
-
 int main() {
     header_scan_finds_namespace_scope_declarations();
     header_scan_sees_past_an_attribute();
@@ -386,19 +259,12 @@ int main() {
     macro_definitions_come_out_verbatim();
     umbrella_includes_are_read_in_order();
     module_interface_is_read_from_the_source();
-    wix_layout_matches_what_the_package_installs();
     package_names_become_identifiers();
     glob_single_star_stays_within_one_segment();
     glob_double_star_crosses_separators();
     glob_anchors_at_both_ends();
     codegen_prefilter_matches_the_cmake_rule();
     entry_is_excluded_from_the_transform_set();
-    test_upgrade_code();
-    test_msi_arguments();
-    test_render_wxs();
-    test_appimage_paths();
-    test_appdir_desktop();
-    test_appimage_arguments();
     if (failures != 0) {
         std::cerr << failures << " check(s) failed\n";
         return 1;
