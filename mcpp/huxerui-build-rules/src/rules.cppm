@@ -75,6 +75,13 @@ struct edge {
     // for an ordinary generated source.
     std::string              provides;
     std::vector<std::string> imports;
+    // Where the command reports the files it read. An action's `inputs` are
+    // fixed before the command runs and travel through a fixed-size buffer;
+    // a depfile is neither, so a command that reads a whole directory tree
+    // says so here instead of enumerating it. NEVER also an output: ninja
+    // consumes and deletes the file, so an edge that promised it would be
+    // permanently dirty.
+    std::string              depfile;
 };
 
 // ------------------------------------------------------------ SDK locating --
@@ -245,12 +252,17 @@ inline std::vector<edge> plan_resources(const options& opt) {
     std::vector<std::string> packages;
 
     if (std::filesystem::exists(builtin_src)) {
-        std::vector<std::string> inputs{ hrc };
-        std::error_code ec;
-        for (auto it = std::filesystem::recursive_directory_iterator(builtin_src, ec);
-             it != std::filesystem::recursive_directory_iterator(); ++it) {
-            if (it->is_regular_file(ec)) inputs.push_back(it->path().string());
-        }
+        // THE RESOURCE FILES ARE NOT ENUMERATED HERE, AND THAT IS THE FIX FOR
+        // HuxerUI#130. `mcpp::action` carries its inputs through a fixed 8192
+        // byte buffer, and these 44 paths each carry the dependency's unpack
+        // prefix -- measured at 8131 bytes from a checkout 149 characters
+        // deep, which overflowed by about 45 bytes and made whether a consumer
+        // could build depend on how deep their project sat on disk. hrc
+        // reports what it read through a depfile instead: ninja folds that in
+        // after the first run, so per-file incrementality survives with one
+        // declared input rather than 44.
+        const std::string dep = odir + "/builtin.d";
+        const std::string header = odir + "/builtin/include/huxerui_builtin_resources.h";
         out.push_back(edge{
             .id          = "hrc:builtin",
             .role        = "source",
@@ -258,10 +270,12 @@ inline std::vector<edge> plan_resources(const options& opt) {
             .command     = { hrc, "--root", builtin_src,
                              "--output", odir + "/builtin",
                              "--namespace", "huxerui",
-                             "--header-name", "huxerui_builtin_resources.h" },
-            .inputs      = inputs,
-            .outputs     = { odir + "/builtin/include/huxerui_builtin_resources.h",
+                             "--header-name", "huxerui_builtin_resources.h",
+                             "--depfile", dep, "--depfile-target", header },
+            .inputs      = { hrc },
+            .outputs     = { header,
                              odir + "/builtin/package/huxerui/resources.bin" },
+            .depfile     = dep,
         });
         packages.push_back(odir + "/builtin/package");
     }
@@ -278,21 +292,22 @@ inline std::vector<edge> plan_resources(const options& opt) {
         // hrc as "resource root is not a directory: resources".
         const std::string app_src =
             (std::filesystem::path(mcpp::manifest_dir()) / opt.resources).string();
-        std::vector<std::string> inputs{ hrc };
-        std::error_code ec;
-        for (auto it = std::filesystem::recursive_directory_iterator(app_src, ec);
-             it != std::filesystem::recursive_directory_iterator(); ++it) {
-            if (it->is_regular_file(ec)) inputs.push_back(it->path().string());
-        }
+        // Same shape as hrc:builtin above, and for the same reason: an
+        // application's own resource tree is unbounded, so enumerating it puts
+        // the 8192 byte ceiling between the project and its own build.
+        const std::string dep = odir + "/app.d";
+        const std::string bin = odir + "/app/package/huxerui/resources.bin";
         out.push_back(edge{
             .id          = "hrc:app",
             .role        = "source",
             .description = "application resources " + opt.resources,
             .command     = { hrc, "--root", app_src,
                              "--output", odir + "/app",
-                             "--namespace", ns },
-            .inputs      = inputs,
-            .outputs     = { odir + "/app/package/huxerui/resources.bin" },
+                             "--namespace", ns,
+                             "--depfile", dep, "--depfile-target", bin },
+            .inputs      = { hrc },
+            .outputs     = { bin },
+            .depfile     = dep,
         });
         packages.push_back(odir + "/app/package");
     }
@@ -330,6 +345,7 @@ inline bool submit(std::span<const edge> edges) {
         for (const std::string& o : e.outputs) a.output(o.c_str());
         if (!e.provides.empty()) a.provides(e.provides.c_str());
         for (const std::string& i : e.imports) a.imports(i.c_str());
+        if (!e.depfile.empty()) a.depfile = e.depfile.c_str();
         a.submit();
     }
     return true;
@@ -622,12 +638,8 @@ inline bool builtin_resources() {
 
     mcpp::rerun_if_changed_glob("resources/**");
 
-    std::vector<std::string> inputs{ hrc };
-    std::error_code ec;
-    for (auto it = std::filesystem::recursive_directory_iterator(src, ec);
-         it != std::filesystem::recursive_directory_iterator(); ++it) {
-        if (it->is_regular_file(ec)) inputs.push_back(it->path().string());
-    }
+    const std::string dep    = odir + "/builtin.d";
+    const std::string header = odir + "/builtin/include/huxerui_builtin_resources.h";
 
     edge e{
         .id          = "hrc:builtin",
@@ -636,10 +648,12 @@ inline bool builtin_resources() {
         .command     = { hrc, "--root", src,
                          "--output", odir + "/builtin",
                          "--namespace", "huxerui",
-                         "--header-name", "huxerui_builtin_resources.h" },
-        .inputs      = inputs,
-        .outputs     = { odir + "/builtin/include/huxerui_builtin_resources.h",
+                         "--header-name", "huxerui_builtin_resources.h",
+                         "--depfile", dep, "--depfile-target", header },
+        .inputs      = { hrc },
+        .outputs     = { header,
                          odir + "/builtin/package/huxerui/resources.bin" },
+        .depfile     = dep,
     };
     mcpp::include_dir((odir + "/builtin/include").c_str());
     return submit(std::span<const edge>(&e, 1));
