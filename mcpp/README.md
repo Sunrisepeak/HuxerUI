@@ -91,6 +91,17 @@ consumer is given `dep_dir()`, the dependency's *source* root -- and inventing
 one would mean writing into a package root that may be read-only. 44 files /
 196 KB, incrementally cached; the alternatives are enumerated in the plan.
 
+## Distribution formats
+
+`mcpp pack --format msi` builds the Windows installer and
+`mcpp pack --format appimage` the Linux AppImage; both come from
+`huxerui.rules`, which declares them to mcpp and submits the action only for
+the format that was asked for. A plain `mcpp build` produces neither. An
+application states what it wants in `configure({ .installer = {…} })` /
+`configure({ .appimage = {…} })` and declares the matching payload —
+`xim:wix` or `xim:appimagetool` — in its own `[xlings.workspace]`. See
+[Distribution formats](../docs/design/mcpp-build-system.md#7-distribution-formats).
+
 ## Packaging
 
 ```bash

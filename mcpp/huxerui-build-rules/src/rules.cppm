@@ -43,6 +43,17 @@ struct installer_options {
     [[nodiscard]] bool requested() const { return !target.empty(); }
 };
 
+// What an application must state to get an AppImage, and nothing it could have
+// been asked for twice. The Windows counterpart is installer_options above.
+struct appimage_options {
+    std::string target;         // the [targets.*] bin to package; enables the rule
+    std::string display_name;   // default: the package name
+    std::string icon;           // a .png, relative to the manifest; default assets/app.png
+    std::string categories;     // freedesktop categories; default "Utility"
+
+    [[nodiscard]] bool requested() const { return !target.empty(); }
+};
+
 struct options {
     std::vector<std::string> sources;             // default: src/**/*.cpp
     // The bin target's entry, which mcpp compiles separately from `sources`.
@@ -57,6 +68,7 @@ struct options {
     std::string              bundle_name;         // = BUNDLE_NAME
     std::string              bundle_identifier;   // = BUNDLE_IDENTIFIER
     installer_options        installer;           // Windows MSI; empty = none
+    appimage_options         appimage;            // Linux AppImage; empty = none
 };
 
 // A planned build-graph edge, handed back so a caller that needs to adjust one
@@ -364,6 +376,11 @@ inline bool submit(std::span<const edge> edges) {
 // Silent on every non-Windows target and on a project that asked for nothing.
 inline bool plan_installer(const options& opt, std::vector<edge>& out) {
     if (!opt.installer.requested()) return true;
+    // DECLARED IN configure(), SUBMITTED HERE. `mcpp pack --format msi` is what
+    // asks for an installer; a plain `mcpp build` gets none, which is what lets
+    // mcpp report this action as the distributable the request introduced
+    // rather than as an edge that was there anyway.
+    if (std::string_view(mcpp::pack_format()) != "msi") return true;
     if (std::string_view(mcpp::target_os()) != "windows") return true;
 
     const installer_options& in = opt.installer;
@@ -462,6 +479,109 @@ inline bool plan_installer(const options& opt, std::vector<edge>& out) {
                        }),
         .inputs      = { "${mcpp.target_file:" + in.target + "}", wxs_out },
         .outputs     = { msi },
+    });
+    return true;
+}
+
+// -------------------------------------------------------------- AppImage --
+// The Linux AppImage, built by appimagetool from the xim:appimagetool payload.
+//
+// Unlike the MSI this one reads `${mcpp.stage_dir}`: an AppDir is the staged
+// bundle -- bin/, lib/, relocatable -- plus AppRun, a .desktop and an icon. The
+// engine stages that tree only under `mcpp pack`, which is the other reason
+// this is a pack-format provider rather than a build-time action.
+inline bool plan_appimage(const options& opt, std::vector<edge>& out) {
+    if (!opt.appimage.requested()) return true;
+    if (std::string_view(mcpp::pack_format()) != "appimage") return true;
+    if (std::string_view(mcpp::target_os()) != "linux") return true;
+
+    const appimage_options& in = opt.appimage;
+
+    const std::string payload = mcpp::xpkg_dir("xim", "appimagetool");
+    if (payload.empty()) {
+        // Same rule the WiX lookup follows: `xpkg_dir` answers for what the
+        // BUILDING package declared, so the application declares the tool it
+        // runs even though the framework declares one too.
+        std::cerr << "huxerui.rules: the xim:appimagetool payload is not visible to this "
+                     "build program. Add it to this package's manifest:\n\n"
+                     "    [xlings.workspace]\n"
+                     "    \"xim:appimagetool\" = { linux = \"1.9.1\" }\n\n";
+        return false;
+    }
+    const auto layout = huxerui::rules::sources::appimage_paths(payload, mcpp::target_arch());
+
+    const std::string manifest = std::string(mcpp::manifest_dir());
+    const std::string icon = in.icon.empty() ? std::string("assets/app.png") : in.icon;
+    const std::filesystem::path icon_path = std::filesystem::path(manifest) / icon;
+    // A .ico is the Windows icon and appimagetool does not read one; an AppDir
+    // carries <stem>.png at its root. Refusing here beats an AppImage that
+    // builds and shows no icon.
+    if (icon_path.extension() != ".png") {
+        std::cerr << "huxerui.rules: appimage.icon must be a .png (an AppDir carries one at "
+                     "its root); got '" << icon << "'\n";
+        return false;
+    }
+    if (!std::filesystem::exists(icon_path)) {
+        std::cerr << "huxerui.rules: appimage icon is missing: " << icon_path.string() << "\n";
+        return false;
+    }
+
+    const std::string display = in.display_name.empty() ? std::string(mcpp::package_name())
+                                                        : in.display_name;
+    const std::string categories = in.categories.empty() ? std::string("Utility") : in.categories;
+
+    std::string error;
+    const std::string desktop_text = huxerui::rules::sources::appdir_desktop(
+        display, in.target, icon_path.stem().string(), categories, error);
+    if (!error.empty()) {
+        std::cerr << "huxerui.rules: the desktop entry is invalid: " << error << "\n";
+        return false;
+    }
+
+    const std::string odir = std::string(mcpp::out_dir()) + "/appimage";
+    std::error_code ec;
+    std::filesystem::create_directories(odir, ec);
+    const std::string desktop_out = odir + "/" + in.target + ".desktop";
+    {
+        std::ofstream file(desktop_out, std::ios::binary | std::ios::trunc);
+        if (!file) {
+            std::cerr << "huxerui.rules: cannot write " << desktop_out << "\n";
+            return false;
+        }
+        file << desktop_text;
+    }
+
+    // The version comes from [package] rather than from an option the project
+    // restates: a second copy drifts with nothing able to detect it.
+    const std::string version = std::string(mcpp::package_version());
+    const std::string out_file =
+        odir + "/" + display + (version.empty() ? "" : "-" + version) + ".AppImage";
+    const std::string assemble = sdk_root() + "/mcpp/huxerui-build-rules/dist/appimage.sh";
+    if (!std::filesystem::exists(assemble)) {
+        std::cerr << "huxerui.rules: cannot find the AppImage helper: " << assemble << "\n";
+        return false;
+    }
+    mcpp::rerun_if_changed(assemble.c_str());
+
+    out.push_back(edge{
+        .id          = "appimage",
+        .role        = "artifact",
+        .description = "linux appimage (" + display + ".AppImage)",
+        .command     = huxerui::rules::sources::appimage_arguments({
+                           .assemble   = assemble,
+                           .tool       = layout.tool,
+                           .runtime    = layout.runtime,
+                           .stage_dir  = "${mcpp.stage_dir}",
+                           .appdir     = odir + "/" + in.target + ".AppDir",
+                           .desktop    = desktop_out,
+                           .icon       = icon_path.string(),
+                           // Named, not harvested, exactly as the MSI names it.
+                           .executable = "${mcpp.target_file:" + in.target + "}",
+                           .out        = out_file,
+                       }),
+        .inputs      = { "${mcpp.target_file:" + in.target + "}", desktop_out,
+                         icon_path.string() },
+        .outputs     = { out_file },
     });
     return true;
 }
@@ -617,7 +737,15 @@ inline bool configure(options opt = {}) {
     }
     edges.insert(edges.end(), rs.begin(), rs.end());
 
+    // DECLARE UNCONDITIONALLY, SUBMIT CONDITIONALLY. This runs on every build,
+    // including one that asked for no format at all -- which is what lets mcpp
+    // answer `mcpp pack --format bogus` with the formats this graph provides.
+    // The actions themselves are gated on `pack_format()` inside each planner.
+    if (opt.installer.requested()) mcpp::provides_pack_format("msi");
+    if (opt.appimage.requested())  mcpp::provides_pack_format("appimage");
+
     if (!plan_installer(opt, edges)) return false;
+    if (!plan_appimage(opt, edges)) return false;
 
     return submit(edges);
 }

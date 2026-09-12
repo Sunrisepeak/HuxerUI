@@ -267,6 +267,80 @@ struct msi_inputs {
     };
 }
 
+// -------------------------------------------------------------- AppImage --
+//
+// Here rather than in the rule for the reason the WiX paths are: these are the
+// shapes a wrong value breaks on a machine that is not on the way to the
+// discovery -- an AppImage that builds and carries nothing looks exactly like
+// one that works until someone runs it.
+
+struct appimage_layout {
+    std::string tool;      // appimagetool, a single binary
+    std::string runtime;   // the type-2 runtime stub, carved out by the payload
+};
+
+// The payload installs both files at its root under fixed names: the recipe
+// renames the downloaded arch-specific AppImage to a bare `appimagetool` and
+// carves `runtime-<arch>` out of it. The stub matters because appimagetool
+// DOWNLOADS one per invocation unless `--runtime-file` names a local copy, and
+// a build that reaches the network is neither reproducible nor usable offline.
+[[nodiscard]] inline appimage_layout appimage_paths(std::string_view root,
+                                                    std::string_view arch) {
+    const std::string r(root);
+    return appimage_layout{
+        .tool    = r + "/appimagetool",
+        .runtime = r + "/runtime-" + std::string(arch),
+    };
+}
+
+// The `.desktop` an AppDir has to carry. appimagetool refuses an AppDir
+// without one, and reads `Icon=` to find the icon file at the AppDir root --
+// so the value is the icon's STEM, never a path or a filename with a suffix.
+[[nodiscard]] inline std::string appdir_desktop(std::string_view display_name,
+                                                std::string_view exec_name,
+                                                std::string_view icon_stem,
+                                                std::string_view categories,
+                                                std::string& error) {
+    // A newline would end the key and make the next line a desktop-entry key
+    // of its own, which is a silent way to produce a file that parses and says
+    // something else.
+    for (std::string_view value : { display_name, exec_name, icon_stem, categories }) {
+        if (value.empty()) { error = "a desktop entry field is empty"; return {}; }
+        if (value.find('\n') != std::string_view::npos) {
+            error = "a desktop entry field contains a newline"; return {};
+        }
+    }
+    std::string out = "[Desktop Entry]\n";
+    out += "Type=Application\n";
+    out += "Name=" + std::string(display_name) + "\n";
+    out += "Exec=" + std::string(exec_name) + "\n";
+    out += "Icon=" + std::string(icon_stem) + "\n";
+    out += "Categories=" + std::string(categories) + ";\n";
+    out += "Terminal=false\n";
+    return out;
+}
+
+struct appimage_inputs {
+    std::string assemble;     // the helper the rule package ships
+    std::string tool;         // appimagetool
+    std::string runtime;      // the runtime stub, passed as --runtime-file
+    std::string stage_dir;    // what `mcpp pack` staged
+    std::string appdir;       // where the AppDir is assembled
+    std::string desktop;      // the rendered .desktop, absolute
+    std::string icon;         // a .png, absolute
+    std::string executable;   // the linked program, as mcpp names it
+    std::string out;          // the .AppImage to write, absolute
+};
+
+// The argv. Fixed positional order, because an action's command is an argv
+// with no shell assumed and the helper reads them by position.
+[[nodiscard]] inline std::vector<std::string> appimage_arguments(const appimage_inputs& in) {
+    return {
+        in.assemble, in.tool, in.runtime, in.stage_dir, in.appdir,
+        in.desktop, in.icon, in.executable, in.out,
+    };
+}
+
 // ------------------------------------------------------------ CMake reading --
 //
 // The body of a `set(VAR ...)` list, tokenised.
