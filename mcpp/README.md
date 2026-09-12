@@ -91,16 +91,49 @@ consumer is given `dep_dir()`, the dependency's *source* root -- and inventing
 one would mean writing into a package root that may be read-only. 44 files /
 196 KB, incrementally cached; the alternatives are enumerated in the plan.
 
+## Six platforms, one manifest
+
+The framework's `mcpp.toml` carries one section per target row, and an
+application builds for any of them by naming the row:
+
+```bash
+mcpp build --target x86_64-linux-gnu            # or aarch64-macos, x86_64-windows-msvc
+mcpp build --target wasm32-emscripten
+mcpp build --target aarch64-ios-sim
+mcpp build --target x86_64-linux-android
+```
+
+NDK, emsdk, JDK, simulator and emulator tooling are xlings payloads mcpp
+installs on first use; iOS additionally needs Xcode on the machine, because
+Apple's SDK is located rather than installed. **Floor: mcpp 2026.9.13.1 and
+`mcpp:plugins` 0.9.0** — the manifest keys this build relies on
+(`kind = "app"`, `mcpp::deploy`, per-target `frameworks`, `abi.exceptions`,
+`requires_abi` on the target axis) do not exist or are silently ignored below
+that, and the templates say so in a comment.
+
 ## Distribution formats
 
-`mcpp pack --format msi` builds the Windows installer and
-`mcpp pack --format appimage` the Linux AppImage; both come from
-`huxerui.rules`, which declares them to mcpp and submits the action only for
-the format that was asked for. A plain `mcpp build` produces neither. An
-application states what it wants in `configure({ .installer = {…} })` /
-`configure({ .appimage = {…} })` and declares the matching payload —
-`xim:wix` or `xim:appimagetool` — in its own `[xlings.workspace]`. See
-[Distribution formats](../docs/design/mcpp-build-system.md#7-distribution-formats).
+`mcpp pack --format <name>` produces what a user installs, and `mcpp run
+--target <row> --format <name>` packages and runs it where it runs:
+
+| Row | Format | Runs through |
+|---|---|---|
+| Windows | `msi` | — |
+| Linux | `appimage` | — |
+| macOS, iOS simulator | `app` | `simctl-run` (iOS) |
+| Android | `apk` | `adb-run` |
+| Web | `web` (a static directory) | any static HTTP server |
+
+Every format is a member of `mcpp:plugins` reached through `huxerui.rules`,
+which provides each one on the row it serves without being asked: a fresh
+project packs every format with nothing but `.target` in its build program,
+and `configure({ .installer, .appimage, .apple, .android, .web })` only
+changes what a format produces. The members declare the payloads they run, so
+an application declares none.
+See [Distribution formats](../docs/design/mcpp-build-system.md#7-distribution-formats).
+
+A smoke run — `HUXERUI_SMOKE_EXIT_MS=3000 mcpp run` — exits 0 after the delay
+once the application has started, which is what CI asserts on each row.
 
 ## Packaging
 
