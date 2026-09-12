@@ -169,6 +169,45 @@ struct module_interface {
 
 // The layout `xim:wix` installs, expressed once.
 //
+// --------------------------------------------------------------- resources --
+//
+// The package paths hrc will write for a resource root, predicted before it
+// runs. `mcpp::deploy` copies one declared output at a time and a copy edge
+// has to name its input, so the rule declares every payload as an output of
+// the hrc action and deploys each one; this is the mapping tools/resource_
+// compiler/compiler.cpp's Discover() applies, kept as short as it is there so
+// the two cannot drift far: images keep their relative path except that an
+// SVG is compiled to `.huxv`, raw files keep theirs, strings live only in the
+// index, and the index is always `huxerui/resources.bin`.
+[[nodiscard]] inline std::vector<std::string> resource_outputs(const std::filesystem::path& root,
+                                                               std::string_view ns) {
+    std::vector<std::string> out;
+    std::error_code ec;
+    const auto walk = [&](const char* sub, auto&& accept) {
+        const std::filesystem::path dir = root / sub;
+        if (!std::filesystem::is_directory(dir, ec)) return;
+        for (auto it = std::filesystem::recursive_directory_iterator(dir, ec);
+             it != std::filesystem::recursive_directory_iterator(); ++it) {
+            if (!it->is_regular_file(ec)) continue;
+            std::filesystem::path rel = std::filesystem::relative(it->path(), dir, ec);
+            if (ec) continue;
+            if (auto packaged = accept(rel); packaged)
+                out.push_back("huxerui/" + std::string(ns) + "/" + sub + "/" + packaged->generic_string());
+        }
+    };
+    walk("images", [](std::filesystem::path rel) -> std::optional<std::filesystem::path> {
+        std::string ext = rel.extension().string();
+        for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (ext == ".svg") return rel.replace_extension(".huxv");
+        if (ext == ".png" || ext == ".jpg" || ext == ".jpeg") return rel;
+        return std::nullopt;
+    });
+    walk("raw", [](std::filesystem::path rel) -> std::optional<std::filesystem::path> { return rel; });
+    std::ranges::sort(out);
+    out.push_back("huxerui/resources.bin");
+    return out;
+}
+
 // ------------------------------------------------------------ CMake reading --
 //
 // The body of a `set(VAR ...)` list, tokenised.

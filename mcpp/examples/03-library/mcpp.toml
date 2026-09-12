@@ -12,6 +12,7 @@
 name        = "huxerui-example-library"
 version     = "0.1.0"
 standard    = "c++23"
+platforms = ["linux", "windows", "macos", "ios", "android", "emscripten"]
 description = "An application importing a HuxerUI component library"
 
 # Two edges, and only one of them is named by this application's own code.
@@ -22,7 +23,10 @@ huxerui        = { path = "../../.." }
 example-widgets = { path = "widgets" }
 
 [targets.huxerui_example_library]
-kind = "bin"
+# `app`, not `bin`: the thing a user launches, which every row supplies its own
+# file for -- an executable on the desktop rows, a `.js` launcher on the Web,
+# and on Android the shared object the Java host loads (mcpp 2026.9.12.3+).
+kind = "app"
 main = "src/main.cpp"
 # The GUI subsystem, and the portable `int main()` that keeps it.
 #
@@ -36,4 +40,23 @@ main = "src/main.cpp"
 windows_subsystem = "windows"
 
 [build]
+ios_deployment_target = "15.0"
 sources = []
+
+# THE ARTIFACT'S EXCEPTION MODEL. Only a root manifest may state it, and
+# HuxerUI requires it on the Web, where Emscripten's default is off; an
+# application writes this section once.
+[target.'cfg(os = "emscripten")'.abi]
+exceptions = true
+
+# The rows that run somewhere other than the build machine, and the program
+# that gets the artifact there: `adb-run` from xim:android-platform-tools,
+# `simctl-run` from xim:apple-simulator-tools. `mcpp run --target <row>
+# --format apk|app` packages first and hands the runner the result.
+[target.x86_64-linux-android]
+min_api_level = 23
+runner = ["adb-run"]
+[target.aarch64-linux-android]
+min_api_level = 23
+[target.aarch64-ios-sim]
+runner = ["simctl-run"]

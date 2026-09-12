@@ -11,6 +11,7 @@
 name     = "{{project.name}}"
 version  = "0.1.0"
 standard = "c++23"
+platforms = ["linux", "windows", "macos", "ios", "android", "emscripten"]
 
 # The EXACT package identity, not a bare name: namespace omission means
 # `mcpplibs` only, and mcpp's bare-name fallback is deprecated
@@ -36,3 +37,8 @@ path = "src/component.cppm"
 # cannot replace one, so a package that also globbed src/**/*.cpp would link
 # both the original and the transformed copy of every composable.
 sources = []
+
+# A library states the exception model it needs on the Web; the application
+# that links it is the root that sets it.
+[target.'cfg(os = "emscripten")']
+requires_abi = { exceptions = true }

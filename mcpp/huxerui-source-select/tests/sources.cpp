@@ -248,6 +248,34 @@ void umbrella_includes_are_read_in_order() {
 
 // ------------------------------------------------------------- installer --
 
+void resource_outputs_predict_what_hrc_writes() {
+    using huxerui::rules::sources::resource_outputs;
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() / "huxerui-resource-outputs-test";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "images" / "nested");
+    std::filesystem::create_directories(root / "raw" / "models");
+    std::filesystem::create_directories(root / "strings");
+    for (const char* f : { "images/check.svg", "images/logo.png", "images/nested/photo.JPG",
+                           "images/notes.txt", "raw/models/a.moc3", "strings/default.properties" }) {
+        std::ofstream(root / f) << "x";
+    }
+    const auto out = resource_outputs(root, "app");
+    const auto has = [&](std::string_view p) { return std::ranges::find(out, p) != out.end(); };
+    // hrc compiles an SVG to .huxv and keeps every other image's name.
+    check(has("huxerui/app/images/check.huxv"), "an svg becomes a .huxv");
+    check(has("huxerui/app/images/logo.png"), "a png keeps its name");
+    check(has("huxerui/app/images/nested/photo.JPG"), "a nested raster keeps its path and case");
+    check(!has("huxerui/app/images/notes.txt"), "a non-image under images/ is not a payload");
+    check(has("huxerui/app/raw/models/a.moc3"), "a raw file keeps its path");
+    // Strings are index entries, not files; the index itself is always last.
+    check(!std::ranges::any_of(out, [](const std::string& p) { return p.find("/strings/") != std::string::npos; }),
+          "strings produce no payload");
+    check(out.back() == "huxerui/resources.bin", "the index is the last output");
+    check(out.size() == 5, "exactly the four payloads and the index");
+    std::filesystem::remove_all(root);
+}
+
 int main() {
     header_scan_finds_namespace_scope_declarations();
     header_scan_sees_past_an_attribute();
@@ -265,6 +293,7 @@ int main() {
     glob_anchors_at_both_ends();
     codegen_prefilter_matches_the_cmake_rule();
     entry_is_excluded_from_the_transform_set();
+    resource_outputs_predict_what_hrc_writes();
     if (failures != 0) {
         std::cerr << failures << " check(s) failed\n";
         return 1;

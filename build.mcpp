@@ -132,7 +132,24 @@ bool probe(std::string_view module_spec, const std::string& libdir) {
 int main() {
     if (!huxerui::rules::builtin_resources()) return 1;
 
+    // The Web link. The two JavaScript preludes are compiled into the launcher
+    // by emcc and reach every consumer's link through link_flag; they are
+    // named by absolute path because a link runs in the build directory, not
+    // here. Everything else the row needs is in mcpp.toml's emscripten section.
+    if (std::string_view(mcpp::target_os()) == "emscripten") {
+        const std::string root = mcpp::manifest_dir();
+        for (const char* js : { "/platform/web/web_platform_registry.js", "/platform/web/web_file.js" }) {
+            const std::string path = root + js;
+            mcpp::link_flag("--pre-js");
+            mcpp::link_flag(path.c_str());
+            mcpp::rerun_if_changed(path.c_str());
+        }
+        return 0;
+    }
+
+    // Android is `os = "linux"` with `env = "android"`, and its GTK is nobody's.
     if (std::string_view(mcpp::target_os()) != "linux") return 0;
+    if (std::string_view(mcpp::target_env()) == "android") return 0;
 
     const std::string libdir = pkg_config_libdir();
     if (libdir.empty()) {

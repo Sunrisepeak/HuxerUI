@@ -25,14 +25,22 @@ huxerui-source-select = { path = "../huxerui-source-select", host-module = true 
 # module's declaration reaches every build program it is compiled into, so
 # neither this package nor an application names xim:wix or xim:appimagetool.
 #
-# The v0.9.0 tag rather than an index version: 0.9.0 carries dist-apk's
-# manifest template and Java roots, which the Android rule needs, and
-# dist-web's portable copy; it is not in mcpp-index yet. Switch to
-# `version = "0.9"` once it is.
+# 0.9.0 is the floor: it carries dist-apk's manifest template and Java roots,
+# which the Android rule needs, and dist-web's portable copy.
 [build-dependencies.mcpp]
-plugins = { git = "https://github.com/mcpp-community/mcpp-plugins.git", tag = "v0.9.0", features = ["dist-wix", "dist-appimage", "dist-apple", "dist-apk", "dist-web"], host-module = true }
+plugins = { version = "0.9.0", features = ["dist-wix", "dist-appimage", "dist-apple", "dist-apk", "dist-web"], host-module = true }
 
 [lib]
 # The module this package publishes is `huxerui.rules`; the package name is
 # `huxerui-build-rules`, which is not a legal C++ module name and does not have to be.
 path = "src/rules.cppm"
+
+# THE API LEVEL THE JAVA HOST COMPILES AGAINST. dist-apk pins `android.jar`
+# at 35-r2 on its own feature axis; platform/android's Java uses API 36
+# (`Build.VERSION_CODES.BAKLAVA`, the accessibility CHECKED_STATE_* set),
+# which is the compileSdk platform/android/gradle.properties states for the
+# Gradle build. This pin overrides the member's for every build program the
+# rule module is compiled into, so `javac -cp android.jar` sees the same API
+# surface both build systems compile against.
+[target.'cfg(env = "android")'.xlings.workspace]
+"xim:android-platform" = "36-r2"

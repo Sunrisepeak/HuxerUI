@@ -136,7 +136,7 @@ void check_platform(const std::filesystem::path& root, const toml::table& manife
     // --- libraries ---------------------------------------------------------
     const std::vector<std::string> cmake_libraries =
         sources::cmake_list(text, "HUXERUI_PLATFORM_LINK_LIBRARIES");
-    if (selector == "windows") {
+    if (selector == "windows" || selector == "cfg(env = \"android\")") {
         std::set<std::string> declared;
         if (const toml::table* runtime = (*target)["runtime"].as_table()) {
             for (const std::string& v : string_array(*runtime, "libraries")) declared.insert(v);
@@ -159,9 +159,14 @@ void check_platform(const std::filesystem::path& root, const toml::table& manife
         if (!missing.empty())
             fail(std::string(cmake_file) + ": libraries missing from [target.windows.runtime]: " +
                  join(missing));
-    } else if (selector == "macos") {
+    } else if (selector == "macos" || selector == "cfg(os = \"ios\")") {
+        // The shared frameworks are top-level; the ones only one SDK has sit
+        // under the target's own runtime table, which appends.
         std::set<std::string> declared;
         if (const toml::table* runtime = manifest["runtime"].as_table()) {
+            for (const std::string& v : string_array(*runtime, "frameworks")) declared.insert(v);
+        }
+        if (const toml::table* runtime = (*target)["runtime"].as_table()) {
             for (const std::string& v : string_array(*runtime, "frameworks")) declared.insert(v);
         }
         std::string ldflags;
@@ -348,9 +353,12 @@ int main(int argc, char** argv) {
 
     check_standard(root, manifest);
     check_core_sources(root, manifest);
-    check_platform(root, manifest, "Linux.cmake", "cfg(linux)");
+    check_platform(root, manifest, "Linux.cmake", "cfg(all(linux, not(env = \"android\")))");
     check_platform(root, manifest, "Windows.cmake", "windows");
     check_platform(root, manifest, "MacOS.cmake", "macos");
+    check_platform(root, manifest, "Android.cmake", "cfg(env = \"android\")");
+    check_platform(root, manifest, "IOS.cmake", "cfg(os = \"ios\")");
+    check_platform(root, manifest, "Web.cmake", "cfg(os = \"emscripten\")");
     check_package_template(root);
 
     if (!failures.empty()) {

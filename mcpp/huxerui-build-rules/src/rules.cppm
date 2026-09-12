@@ -21,6 +21,8 @@ import mcpp;
 import mcpp.dist.wix;
 import mcpp.dist.appimage;
 import mcpp.dist.apple;
+import mcpp.dist.web;
+import mcpp.dist.apk;
 import huxerui.rules.sources;
 
 export namespace huxerui::rules {
@@ -32,45 +34,64 @@ export namespace huxerui::rules {
 // could have been asked for twice. The format itself is `mcpp:plugins`'
 // `dist-wix`; this is the HuxerUI-side spelling of its options, so an
 // application's build program reads like huxerui_add_app() in
-// cmake/HuxerUIApp.cmake. Every field but `target` is optional: the member
-// derives the version from [package], the manufacturer from the authors or
-// the namespace, and the upgrade code deterministically from the package
-// identity -- a stable GUID chosen once per product, which is exactly what
-// a derived value is.
+// cmake/HuxerUIApp.cmake. Every field is optional: the member derives the
+// version from [package], the manufacturer from the authors or the namespace,
+// and the upgrade code deterministically from the package identity -- a
+// stable GUID chosen once per product, which is exactly what a derived value
+// is. The format is provided on every Windows build; these only change it.
 struct installer_options {
-    std::string target;         // the [targets.*] app to install; enables the rule
+    std::string target;         // the [targets.*] app to install; default: options::target
     std::string version;        // default: [package] version, made MSI-shaped
     std::string upgrade_code;   // default: derived from namespace + name
     std::string manufacturer;   // default: the first author, else the namespace
     std::string display_name;   // default: the target name
-
-    [[nodiscard]] bool requested() const { return !target.empty(); }
 };
 
-// What an application must state to get an AppImage; `dist-appimage` does the
-// rest. The Windows counterpart is installer_options above.
+// What an application may state about its AppImage; `dist-appimage` does the
+// rest, with a placeholder icon when none is named. The Windows counterpart
+// is installer_options above.
 struct appimage_options {
-    std::string target;                  // the [targets.*] app to package; enables the rule
+    std::string target;                  // the [targets.*] app to package; default: options::target
     std::string display_name;            // default: the target name
     std::string icon;                    // a .png, relative to the manifest
     std::vector<std::string> categories; // freedesktop categories; default "Utility"
-
-    [[nodiscard]] bool requested() const { return !target.empty(); }
 };
 
-// What an application must state to get a `.app` bundle on macOS and iOS;
+// What an application may state about its `.app` bundle on macOS and iOS;
 // `dist-apple` does the rest. On macOS `icon` is one `.icns` file; on iOS it
 // is a DIRECTORY of flat PNGs, which the member lists under CFBundleIcons.
 struct apple_options {
-    std::string target;         // the [targets.*] app to bundle; enables the rule
+    std::string target;         // the [targets.*] app to bundle; default: options::target
     std::string display_name;   // CFBundleName; default: the target name
     std::string bundle_id;      // CFBundleIdentifier; default: derived from namespace + name
     std::string icon;           // .icns (macOS) or a directory of .png (iOS), relative to the manifest
+};
 
-    [[nodiscard]] bool requested() const { return !target.empty(); }
+// The page `mcpp pack --format web` writes beside the launcher. Every HuxerUI
+// application is a Web application when built for wasm32-emscripten, so the
+// format is always provided; these only replace the page the rule ships.
+struct web_options {
+    std::string template_file;  // package-root-relative; `{{name}}` and `{{title}}` are substituted
+    std::string title;          // <title>; default: the package name
+};
+
+// What an application may state about its APK; every field has a default that
+// `dist-apk` or this rule derives, so a template application states nothing.
+struct android_options {
+    std::string application_id;     // manifest package; default: <namespace>.<name>
+    std::string label;              // android:label; default: the package name
+    std::string activity;           // the launcher Activity; default: org.huxerui.HuxerUIActivity
+    std::string java;               // a directory of the application's own Java, relative to the manifest; default: android/java when present
+    std::string res;                // an aapt2 `res/` directory, relative to the manifest; default: android/res when present
+    std::string manifest_template;  // replaces the manifest the rule ships, relative to the manifest
 };
 
 struct options {
+    // The `app` target this build program serves. Names the `<target>.resources`
+    // directory the desktop runtime reads beside the executable, and is the
+    // target every dist member packages. Empty means the package name, which
+    // is the target `mcpp pack` selects by convention.
+    std::string              target;
     std::vector<std::string> sources;             // default: src/**/*.cpp
     // The bin target's entry, which mcpp compiles separately from `sources`.
     // It is EXCLUDED from the transform set: a build program can add sources
@@ -83,9 +104,14 @@ struct options {
     std::string              resource_namespace;  // = RESOURCE_NAMESPACE
     std::string              bundle_name;         // = BUNDLE_NAME
     std::string              bundle_identifier;   // = BUNDLE_IDENTIFIER
-    installer_options        installer;           // Windows MSI; empty = none
-    appimage_options         appimage;            // Linux AppImage; empty = none
-    apple_options            apple;               // macOS / iOS .app; empty = none
+    // The distribution formats. Each is provided on the row it serves with
+    // nothing stated -- `mcpp pack --format msi|appimage|app|web|apk` works
+    // on a fresh project -- and these only change what it produces.
+    installer_options        installer;           // Windows MSI
+    appimage_options         appimage;            // Linux AppImage
+    apple_options            apple;               // macOS / iOS .app
+    web_options              web;                 // the Web page
+    android_options          android;             // the APK
 };
 
 // A planned build-graph edge, handed back so a caller that needs to adjust one
@@ -278,6 +304,13 @@ inline std::vector<edge> plan_resources(const options& opt) {
         // declared input rather than 44.
         const std::string dep = odir + "/builtin.d";
         const std::string header = odir + "/builtin/include/huxerui_builtin_resources.h";
+        // EVERY PAYLOAD IS A DECLARED OUTPUT (mcpp 2026.9.13.1 lifted the
+        // 8192-byte ceiling on the list): each one is deployed beside the
+        // executable below, and a copy edge has to name a declared output to
+        // be ordered after the command that writes it.
+        std::vector<std::string> outputs{ header };
+        for (const std::string& p : huxerui::rules::sources::resource_outputs(builtin_src, "huxerui"))
+            outputs.push_back(odir + "/builtin/package/" + p);
         out.push_back(edge{
             .id          = "hrc:builtin",
             .role        = "source",
@@ -288,8 +321,7 @@ inline std::vector<edge> plan_resources(const options& opt) {
                              "--header-name", "huxerui_builtin_resources.h",
                              "--depfile", dep, "--depfile-target", header },
             .inputs      = { hrc },
-            .outputs     = { header,
-                             odir + "/builtin/package/huxerui/resources.bin" },
+            .outputs     = outputs,
             .depfile     = dep,
         });
         packages.push_back(odir + "/builtin/package");
@@ -312,6 +344,9 @@ inline std::vector<edge> plan_resources(const options& opt) {
         // the 8192 byte ceiling between the project and its own build.
         const std::string dep = odir + "/app.d";
         const std::string bin = odir + "/app/package/huxerui/resources.bin";
+        std::vector<std::string> outputs;
+        for (const std::string& p : huxerui::rules::sources::resource_outputs(app_src, ns))
+            outputs.push_back(odir + "/app/package/" + p);
         out.push_back(edge{
             .id          = "hrc:app",
             .role        = "source",
@@ -321,21 +356,42 @@ inline std::vector<edge> plan_resources(const options& opt) {
                              "--namespace", ns,
                              "--depfile", dep, "--depfile-target", bin },
             .inputs      = { hrc },
-            .outputs     = { bin },
+            .outputs     = outputs,
             .depfile     = dep,
         });
         packages.push_back(odir + "/app/package");
     }
 
+    // The package the runtime reads: the merge of both when the application
+    // has resources, the builtin package alone otherwise. `hrc merge` writes
+    // under `<output>/package/`, exactly as `hrc` does -- the previous edge
+    // declared `final/huxerui/resources.bin`, a path hrc never wrote, so the
+    // merge stayed dirty on every build.
+    std::string package_dir = packages.front();
+    std::vector<std::string> package_paths;
     if (packages.size() > 1) {
+        package_dir = odir + "/final/package";
+        std::set<std::string> merged;
+        for (const std::string& p : huxerui::rules::sources::resource_outputs(builtin_src, "huxerui"))
+            merged.insert(p);
+        if (!opt.resources.empty()) {
+            const std::string ns = opt.resource_namespace.empty()
+                ? huxerui::rules::sources::identifier(mcpp::package_name()) : opt.resource_namespace;
+            const std::string app_src =
+                (std::filesystem::path(mcpp::manifest_dir()) / opt.resources).string();
+            for (const std::string& p : huxerui::rules::sources::resource_outputs(app_src, ns))
+                merged.insert(p);
+        }
+        package_paths.assign(merged.begin(), merged.end());
         edge merge{
             .id          = "hrc:merge",
             .role        = "source",
             .description = "merge huxerui resource packages",
             .command     = { hrc, "merge" },
             .inputs      = {},
-            .outputs     = { odir + "/final/huxerui/resources.bin" },
+            .outputs     = {},
         };
+        for (const std::string& p : package_paths) merge.outputs.push_back(package_dir + "/" + p);
         for (const std::string& p : packages) {
             merge.command.push_back("--input");
             merge.command.push_back(p);
@@ -344,6 +400,33 @@ inline std::vector<edge> plan_resources(const options& opt) {
         merge.command.push_back("--output");
         merge.command.push_back(odir + "/final");
         out.push_back(std::move(merge));
+    } else {
+        package_paths = huxerui::rules::sources::resource_outputs(builtin_src, "huxerui");
+    }
+
+    // WHERE THE RUNTIME READS THE PACKAGE, on each row, relative to the
+    // executable: `<name>.resources/` on Linux and Windows
+    // (linux_adapter.cpp, win32_adapter.cpp), `HuxerUI/` beside the
+    // executable on macOS and iOS (appkit_adapter.mm, uikit_adapter.mm), the
+    // APK's `assets/` on Android -- dist-apk maps the deployed tree there --
+    // and Emscripten's MEMFS root on the Web, which is a link-time preload
+    // rather than a copy. `mcpp::deploy` is one file at a time and its `to`
+    // is a directory, so each package path is placed under its own dirname.
+    const std::string os  = mcpp::target_os();
+    const std::string env = mcpp::target_env();
+    if (os == "emscripten") {
+        mcpp::link_flag("--preload-file");
+        mcpp::link_flag((package_dir + "@/").c_str());
+    } else {
+        const std::string name = opt.target.empty() ? std::string(mcpp::package_name()) : opt.target;
+        const std::string root = env == "android" ? std::string(".")
+                               : (os == "macos" || os == "ios") ? std::string("HuxerUI")
+                               : name + ".resources";
+        for (const std::string& p : package_paths) {
+            const std::string dir = std::filesystem::path(p).parent_path().generic_string();
+            const std::string to = root == "." ? dir : (dir.empty() ? root : root + "/" + dir);
+            mcpp::deploy((package_dir + "/" + p).c_str(), to.c_str());
+        }
     }
     return out;
 }
@@ -364,6 +447,22 @@ inline bool submit(std::span<const edge> edges) {
         a.submit();
     }
     return true;
+}
+
+// ------------------------------------------------------------ dist members --
+// A member's plan says why it does not apply, on stderr -- which mcpp
+// discards when the build program succeeds. When the format the member
+// provides is the one `mcpp pack` asked for, that reason is the whole
+// diagnosis, so it is repeated through `mcpp::warning`, the channel that is
+// shown; on every other build the member is quiet and so is this.
+template <class Plan>
+bool run_member(const char* format, const Plan& plan, bool (*submit)(const Plan&)) {
+    if (!plan.applies && std::string_view(mcpp::pack_format()) == format) {
+        std::string message = std::string("huxerui.rules: dist-") + format + " declined this build";
+        if (!plan.reason.empty()) message += ": " + plan.reason;
+        mcpp::warning(message.c_str());
+    }
+    return submit(plan);
 }
 
 // -------------------------------------------------------------- configure --
@@ -520,38 +619,117 @@ inline bool configure(options opt = {}) {
     if (!submit(edges)) return false;
 
     // The distribution formats are `mcpp:plugins`' dist members, reached
-    // through this package's own build-dependency; each one declares its
-    // format unconditionally and submits its action only under
-    // `mcpp pack --format <name>` on the row it serves, so calling them on
-    // every build is the contract rather than a cost. The payloads they run
-    // (xim:wix, xim:appimagetool, ...) are declared by the members themselves,
-    // and a host module's declaration reaches every build program it is
-    // compiled into -- which is why an application declares none of them.
-    if (opt.installer.requested()) {
+    // through this package's own build-dependency. Each is provided on the
+    // row it serves and nowhere else, so `mcpp pack --format apk` on a Linux
+    // desktop build is an unknown format rather than a declined one; a
+    // member's plan is a no-op until `mcpp pack` names its format, so this
+    // costs an ordinary build nothing. The payloads they run (xim:wix,
+    // xim:appimagetool, the NDK's build tools, ...) are declared by the
+    // members themselves, and a host module's declaration reaches every
+    // build program it is compiled into -- which is why an application
+    // declares none of them.
+    const std::string dist_os  = mcpp::target_os();
+    const std::string dist_env = mcpp::target_env();
+    const auto target_or = [&](const std::string& named) { return named.empty() ? opt.target : named; };
+    if (dist_os == "windows") {
         mcpp::dist::wix::options w;
-        w.target       = opt.installer.target;
+        w.target       = target_or(opt.installer.target);
         w.product_name = opt.installer.display_name;
         w.manufacturer = opt.installer.manufacturer;
         w.version      = opt.installer.version;
         w.upgrade_code = opt.installer.upgrade_code;
-        if (!mcpp::dist::wix::generate(w)) return false;
+        mcpp::provides_pack_format("msi");
+        if (!run_member("msi", mcpp::dist::wix::plan_for(w), &mcpp::dist::wix::submit)) return false;
     }
-    if (opt.appimage.requested()) {
+    if (dist_os == "linux" && dist_env != "android") {
         mcpp::dist::appimage::options a;
-        a.target     = opt.appimage.target;
+        a.target     = target_or(opt.appimage.target);
         a.app_name   = opt.appimage.display_name;
         a.icon       = opt.appimage.icon;
         a.categories = opt.appimage.categories;
         a.terminal   = false;
-        if (!mcpp::dist::appimage::generate(a)) return false;
+        mcpp::provides_pack_format("appimage");
+        if (!run_member("appimage", mcpp::dist::appimage::plan_for(a), &mcpp::dist::appimage::submit)) return false;
     }
-    if (opt.apple.requested()) {
+    if (dist_os == "macos" || dist_os == "ios") {
         mcpp::dist::apple::options a;
-        a.target    = opt.apple.target;
+        a.target    = target_or(opt.apple.target);
         a.app_name  = opt.apple.display_name;
         a.bundle_id = opt.apple.bundle_id;
         a.icon      = opt.apple.icon;
-        if (!mcpp::dist::apple::generate(a)) return false;
+        mcpp::provides_pack_format("app");
+        if (!run_member("app", mcpp::dist::apple::plan_for(a), &mcpp::dist::apple::submit)) return false;
+    }
+    if (dist_os == "emscripten") {
+        // The page the rule ships calls the MODULARIZE factory
+        // the emscripten section exports and mounts the application; a
+        // project supplies its own to change the page, not the contract.
+        // `dist-web` joins the template path to the manifest directory, and
+        // an absolute path survives that join, which is how the rule's own
+        // template -- in the SDK, not the project -- reaches it.
+        mcpp::dist::web::options w;
+        w.target        = opt.target;
+        w.template_file = opt.web.template_file.empty()
+            ? root + "/mcpp/huxerui-build-rules/web/index.html.in" : opt.web.template_file;
+        w.title         = opt.web.title;
+        mcpp::provides_pack_format("web");
+        if (!run_member("web", mcpp::dist::web::plan_for(w), &mcpp::dist::web::submit)) return false;
+    }
+    if (dist_env == "android") {
+        // Level 1 of dist-apk with the framework's Java host as the first
+        // root and, when present, the
+        // application's own as the second; the Activity is the framework's
+        // unless the application names its own subclass.
+        const std::string manifest_dir = mcpp::manifest_dir();
+        const auto under_manifest = [&](const std::string& rel) {
+            return (std::filesystem::path(manifest_dir) / rel).string();
+        };
+        mcpp::dist::apk::options a;
+        a.target         = opt.target;
+        a.application_id = opt.android.application_id;
+        a.label          = opt.android.label;
+        a.activity       = opt.android.activity.empty() ? std::string("org.huxerui.HuxerUIActivity")
+                                                        : opt.android.activity;
+        a.java_sources   = { root + "/platform/android/huxerui/src/main/java" };
+        const std::string java = opt.android.java.empty() ? std::string("android/java") : opt.android.java;
+        if (std::filesystem::is_directory(under_manifest(java))) a.java_sources.push_back(under_manifest(java));
+        const std::string res = opt.android.res.empty() ? std::string("android/res") : opt.android.res;
+        if (std::filesystem::is_directory(under_manifest(res))) a.resources = under_manifest(res);
+        // The framework's Java root is a dependency's, so its rerun glob would
+        // match nothing; the list the rule package carries is what re-runs
+        // this program when a host file is added or removed.
+        mcpp::rerun_if_changed((root + "/mcpp/huxerui-build-rules/android/java-sources.txt").c_str());
+        if (!opt.android.manifest_template.empty()) {
+            a.manifest_template = under_manifest(opt.android.manifest_template);
+        } else {
+            // The shipped manifest names an icon only when there is a res/ to
+            // hold one: aapt2 refuses a reference to a resource that does not
+            // exist, and an application with no res/ is the common first state.
+            const std::string tmpl = root + "/mcpp/huxerui-build-rules/android/AndroidManifest.xml.in";
+            std::string text = detail::read_file(tmpl);
+            if (text.empty()) {
+                std::cerr << "huxerui.rules: cannot read " << tmpl << "\n";
+                return false;
+            }
+            const std::string icon = a.resources.empty() ? std::string()
+                : std::string("android:icon=\"@mipmap/ic_launcher\"\n        android:roundIcon=\"@mipmap/ic_launcher\"\n        ");
+            const std::size_t at = text.find("@@ICON@@");
+            if (at == std::string::npos) {
+                std::cerr << "huxerui.rules: " << tmpl << " no longer carries @@ICON@@\n";
+                return false;
+            }
+            text.replace(at, std::string("@@ICON@@").size(), icon);
+            const std::string rendered = std::string(mcpp::out_dir()) + "/android/AndroidManifest.xml.in";
+            std::error_code ec;
+            std::filesystem::create_directories(std::filesystem::path(rendered).parent_path(), ec);
+            std::ofstream file(rendered, std::ios::binary | std::ios::trunc);
+            if (!file) { std::cerr << "huxerui.rules: cannot write " << rendered << "\n"; return false; }
+            file << text;
+            mcpp::rerun_if_changed(tmpl.c_str());
+            a.manifest_template = rendered;
+        }
+        mcpp::provides_pack_format("apk");
+        if (!run_member("apk", mcpp::dist::apk::plan_for(a), &mcpp::dist::apk::submit)) return false;
     }
     return true;
 }
@@ -574,6 +752,9 @@ inline bool builtin_resources() {
 
     const std::string dep    = odir + "/builtin.d";
     const std::string header = odir + "/builtin/include/huxerui_builtin_resources.h";
+    std::vector<std::string> outputs{ header };
+    for (const std::string& p : huxerui::rules::sources::resource_outputs(src, "huxerui"))
+        outputs.push_back(odir + "/builtin/package/" + p);
 
     edge e{
         .id          = "hrc:builtin",
@@ -585,8 +766,7 @@ inline bool builtin_resources() {
                          "--header-name", "huxerui_builtin_resources.h",
                          "--depfile", dep, "--depfile-target", header },
         .inputs      = { hrc },
-        .outputs     = { header,
-                         odir + "/builtin/package/huxerui/resources.bin" },
+        .outputs     = outputs,
         .depfile     = dep,
     };
     mcpp::include_dir((odir + "/builtin/include").c_str());
