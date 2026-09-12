@@ -153,9 +153,13 @@ jobs:
           xlings install "mcpp@${MCPP_VERSION}" -y || true
 
       - name: Select the pinned mcpp
+        # A restored cache keeps whichever mcpp was active when it was saved;
+        # `xlings install` adds a version without switching to it.
         run: |
           xlings install "mcpp@${MCPP_VERSION}" -y
-          mcpp --version
+          xlings use mcpp "${MCPP_VERSION}"
+          mcpp --version | tee version.txt
+          grep -q "${MCPP_VERSION}" version.txt || { echo "mcpp ${MCPP_VERSION} is not the active mcpp"; exit 1; }
 
       # The tooling is built by mcpp rather than written in Python: a
       # repository that offers mcpp as a first-class build system should not
@@ -219,9 +223,13 @@ jobs:
           echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
 
       - name: Select the pinned mcpp
+        # A restored cache keeps whichever mcpp was active when it was saved;
+        # `xlings install` adds a version without switching to it.
         run: |
           xlings install "mcpp@${MCPP_VERSION}" -y
-          mcpp --version
+          xlings use mcpp "${MCPP_VERSION}"
+          mcpp --version | tee version.txt
+          grep -q "${MCPP_VERSION}" version.txt || { echo "mcpp ${MCPP_VERSION} is not the active mcpp"; exit 1; }
 
       # The framework: 67 core sources, platform/linux, the builtin resource
       # header (hrc) and the C++20 module shell. mcpp provisions the GTK
@@ -477,9 +485,13 @@ jobs:
           echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
 
       - name: Select the pinned mcpp
+        # A restored cache keeps whichever mcpp was active when it was saved;
+        # `xlings install` adds a version without switching to it.
         run: |
           xlings install "mcpp@${MCPP_VERSION}" -y
-          mcpp --version
+          xlings use mcpp "${MCPP_VERSION}"
+          mcpp --version | tee version.txt
+          grep -q "${MCPP_VERSION}" version.txt || { echo "mcpp ${MCPP_VERSION} is not the active mcpp"; exit 1; }
 
       # 25 Objective-C++ sources compiled with -fobjc-arc, and the frameworks
       # from the top-level [runtime] table -- which the engine renders only for
@@ -550,9 +562,13 @@ jobs:
           echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
 
       - name: Select the pinned mcpp
+        # A restored cache keeps whichever mcpp was active when it was saved;
+        # `xlings install` adds a version without switching to it.
         run: |
           xlings install "mcpp@${MCPP_VERSION}" -y
-          mcpp --version
+          xlings use mcpp "${MCPP_VERSION}"
+          mcpp --version | tee version.txt
+          grep -q "${MCPP_VERSION}" version.txt || { echo "mcpp ${MCPP_VERSION} is not the active mcpp"; exit 1; }
 
       - name: Build the example for the Web
         working-directory: mcpp/examples/01-import
@@ -605,9 +621,13 @@ jobs:
           echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
 
       - name: Select the pinned mcpp
+        # A restored cache keeps whichever mcpp was active when it was saved;
+        # `xlings install` adds a version without switching to it.
         run: |
           xlings install "mcpp@${MCPP_VERSION}" -y
-          mcpp --version
+          xlings use mcpp "${MCPP_VERSION}"
+          mcpp --version | tee version.txt
+          grep -q "${MCPP_VERSION}" version.txt || { echo "mcpp ${MCPP_VERSION} is not the active mcpp"; exit 1; }
 
       - name: Build the example for the simulator
         working-directory: mcpp/examples/01-import
@@ -663,9 +683,13 @@ jobs:
           echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
 
       - name: Select the pinned mcpp
+        # A restored cache keeps whichever mcpp was active when it was saved;
+        # `xlings install` adds a version without switching to it.
         run: |
           xlings install "mcpp@${MCPP_VERSION}" -y
-          mcpp --version
+          xlings use mcpp "${MCPP_VERSION}"
+          mcpp --version | tee version.txt
+          grep -q "${MCPP_VERSION}" version.txt || { echo "mcpp ${MCPP_VERSION} is not the active mcpp"; exit 1; }
 
       - name: Build the example for Android
         working-directory: mcpp/examples/01-import
@@ -856,9 +880,13 @@ jobs:
           xlings install "mcpp@${MCPP_VERSION}" -y || true
 
       - name: Select the pinned mcpp
+        # A restored cache keeps whichever mcpp was active when it was saved;
+        # `xlings install` adds a version without switching to it.
         run: |
           xlings install "mcpp@${MCPP_VERSION}" -y
-          mcpp --version
+          xlings use mcpp "${MCPP_VERSION}"
+          mcpp --version | tee version.txt
+          grep -q "${MCPP_VERSION}" version.txt || { echo "mcpp ${MCPP_VERSION} is not the active mcpp"; exit 1; }
 
       # The CLI is a CMake artifact; only its dependencies are needed here, not
       # the framework's.
