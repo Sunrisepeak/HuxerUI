@@ -21,8 +21,8 @@ version     = "0.3.0"
 # whole module graph, so this is imposed on every consumer too.
 standard    = "c++20"
 description = "HuxerUI declarative cross-platform UI framework"
-license     = "Apache-2.0"
-repo        = "https://github.com/Sunrisepeak/HuxerUI"
+license     = "MIT"
+repo        = "https://github.com/HuxerUI/HuxerUI"
 platforms   = ["linux", "windows", "macos"]
 
 # The public module. It lives outside `src/` because `src/` is private

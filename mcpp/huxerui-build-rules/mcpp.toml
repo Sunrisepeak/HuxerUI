@@ -10,7 +10,7 @@ name        = "huxerui-build-rules"
 namespace   = "huxerui"
 version     = "0.3.0"
 description = "mcpp build rules for HuxerUI: composable codegen and resource compilation"
-license     = "Apache-2.0"
+license     = "MIT"
 
 # The pure half, split out so `mcpp test` can cover it: this package imports
 # mcpp and therefore cannot be built outside a build program's compile.
