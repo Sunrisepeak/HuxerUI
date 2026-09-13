@@ -697,33 +697,6 @@ jobs:
           mcpp --version | tee version.txt
           grep -q "${MCPP_VERSION}" version.txt || { echo "mcpp ${MCPP_VERSION} is not the active mcpp"; exit 1; }
 
-      # TEMPORARY, until openxlings/xim-pkgindex#834 is merged and published:
-      # the synced index copy is given
-      # the recipe files and the index cache entries that make `xim:<name>`
-      # resolve. Delete this step when the index has them.
-      - name: Bridge recipes the xim index does not carry yet
-        run: |
-          mcpp index update
-          python3 - <<'PY'
-          import json, os, re, urllib.request
-          root = os.path.expanduser("~/.mcpp/registry/data/xim-pkgindex")
-          cache_path = os.path.join(root, ".xlings-index-cache.json")
-          cache = json.load(open(cache_path))
-          base = "https://raw.githubusercontent.com/Sunrisepeak/xim-pkgindex/feat/huxerui-mcpp-payloads/pkgs/"
-          for rel in ("a/android-platform.lua",):
-              text = urllib.request.urlopen(base + rel).read().decode()
-              name = re.search(r'^\s*name\s*=\s*"([^"]+)"', text, re.M).group(1)
-              desc = re.search(r'^\s*description\s*=\s*"([^"]*)"', text, re.M).group(1)
-              dest = os.path.join(root, "pkgs", rel)
-              os.makedirs(os.path.dirname(dest), exist_ok=True)
-              open(dest, "w").write(text)
-              key = "xim:" + name
-              cache["entries"][key] = {"canonical_name": key, "description": desc, "entry_key": key,
-                                       "identity": {"name": name, "namespace": "xim"}, "name": name,
-                                       "path": dest, "ref": "", "type": 0, "version": ""}
-              print("bridged", key)
-          json.dump(cache, open(cache_path, "w"), indent=1)
-          PY
 
       - name: Build the example for Android
         working-directory: mcpp/examples/01-import
@@ -920,33 +893,6 @@ jobs:
           mcpp --version | tee version.txt
           grep -q "${MCPP_VERSION}" version.txt || { echo "mcpp ${MCPP_VERSION} is not the active mcpp"; exit 1; }
 
-      # TEMPORARY, until openxlings/xim-pkgindex#834 is merged and published:
-      # the synced index copy is given
-      # the recipe files and the index cache entries that make `xim:<name>`
-      # resolve. Delete this step when the index has them.
-      - name: Bridge recipes the xim index does not carry yet
-        run: |
-          mcpp index update
-          python3 - <<'PY'
-          import json, os, re, urllib.request
-          root = os.path.expanduser("~/.mcpp/registry/data/xim-pkgindex")
-          cache_path = os.path.join(root, ".xlings-index-cache.json")
-          cache = json.load(open(cache_path))
-          base = "https://raw.githubusercontent.com/Sunrisepeak/xim-pkgindex/feat/huxerui-mcpp-payloads/pkgs/"
-          for rel in ("g/glew.lua",):
-              text = urllib.request.urlopen(base + rel).read().decode()
-              name = re.search(r'^\s*name\s*=\s*"([^"]+)"', text, re.M).group(1)
-              desc = re.search(r'^\s*description\s*=\s*"([^"]*)"', text, re.M).group(1)
-              dest = os.path.join(root, "pkgs", rel)
-              os.makedirs(os.path.dirname(dest), exist_ok=True)
-              open(dest, "w").write(text)
-              key = "xim:" + name
-              cache["entries"][key] = {"canonical_name": key, "description": desc, "entry_key": key,
-                                       "identity": {"name": name, "namespace": "xim"}, "name": name,
-                                       "path": dest, "ref": "", "type": 0, "version": ""}
-              print("bridged", key)
-          json.dump(cache, open(cache_path, "w"), indent=1)
-          PY
 
       # The CLI is a CMake artifact; only its dependencies are needed here, not
       # the framework's.
