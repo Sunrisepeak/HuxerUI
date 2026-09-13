@@ -702,12 +702,18 @@ jobs:
           apk=$(find target -name '*.apk' | grep -v base.apk | head -1)
           test -n "$apk" || { echo "dist-apk produced no APK"; exit 1; }
           unzip -Z1 "$apk" | tee contents.txt
-          for f in lib/x86_64/libhuxerui_example_import.so assets/huxerui/resources.bin classes.dex AndroidManifest.xml; do
+          # The launcher icon is the SDK's unless the application supplies android/res.
+          for f in lib/x86_64/libhuxerui_example_import.so assets/huxerui/resources.bin classes.dex AndroidManifest.xml \
+                   resources.arsc res/mipmap-anydpi-v26/ic_launcher.xml; do
             grep -qx "$f" contents.txt || { echo "the APK lacks $f"; exit 1; }
           done
           grep -qE '^META-INF/.*\.(RSA|EC)$' contents.txt || { echo "the APK is not signed"; exit 1; }
           apksigner=$(find ~/.mcpp/registry/data/xpkgs -name apksigner -type f | head -1)
           test -n "$apksigner" && "$apksigner" verify --print-certs "$apk" | head -3
+          aapt2=$(find ~/.mcpp/registry/data/xpkgs -name aapt2 -type f | head -1)
+          "$aapt2" dump badging "$apk" | tee badging.txt | grep -E "^(application:|targetSdkVersion)"
+          grep -q "^application-icon" badging.txt || { echo "the manifest names no launcher icon"; exit 1; }
+          grep -q "targetSdkVersion:'36'" badging.txt || { echo "targetSdkVersion is not 36"; exit 1; }
           echo "apk: $apk"
 
   windows:
