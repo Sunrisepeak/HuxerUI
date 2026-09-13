@@ -20,7 +20,8 @@ plugins = { version = "0.9.0", features = ["dist-wix", "dist-appimage", "dist-ap
 path = "src/dist.cppm"
 
 # The API level the Java host compiles against: platform/android's Java uses
-# API 36 (the compileSdk its Gradle build states), dist-apk pins 35-r2 on its
-# own axis, and the declaration nearer the artifact wins.
+# API 36 (the compileSdk its Gradle build states), dist-apk 0.9.0 pins 35-r2
+# on its own axis, and the declaration nearer the artifact wins. Drop this
+# once the floor is 0.9.1 (mcpp-plugins#21 pins 36-r2).
 [target.'cfg(env = "android")'.xlings.workspace]
 "xim:android-platform" = "36-r2"

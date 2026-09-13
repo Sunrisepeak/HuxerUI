@@ -439,12 +439,16 @@ directory and links it as an aapt2 overlay (`-R compiled.zip`, without
 define — `color/ic_launcher_background does not override an existing
 resource`. A primary `res/` therefore cannot be supplied through the member
 yet; the rule renders the manifest's icon attributes only when an
-application has one, and the templates ship none. The member's to fix.
+application has one, and the templates ship none. Fixed on the member's
+side in mcpp-community/mcpp-plugins#21 (0.9.1 links `res/` positionally, as
+the base); once that is released and indexed, the floor moves to 0.9.1 and
+the templates get their launcher icons back.
 
 **`xim:android-platform` is declared twice.** dist-apk pins 35-r2 and the
 rule package 36-r2 (§7); every Android build prints mcpp's two-versions
-warning and uses 36-r2. The pin — and the recipe entry it needs in
-xim-pkgindex — goes away when the member raises its own.
+warning and uses 36-r2. The pin goes away when the member's own reaches a
+release: mcpp-plugins#21 raises it to 36-r2 (the recipe is in xim-pkgindex
+since openxlings/xim-pkgindex#834).
 
 **A universal APK is one ABI at a time.** `mcpp pack` hands a format provider
 one staged tree for one target; an APK with `lib/arm64-v8a` and `lib/x86_64`

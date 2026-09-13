@@ -196,7 +196,8 @@ inline bool provide_formats(const formats& opt, const std::string& root) {
         // An application's res/, when it has one. dist-apk 0.9.0 links it as
         // an aapt2 overlay (`-R`, no `--auto-add-overlay`), which rejects any
         // resource the base does not already define -- so a launcher icon
-        // cannot be supplied this way yet, and the rule ships none.
+        // cannot be supplied this way yet, and the rule ships none. 0.9.1
+        // links it as the base (mcpp-plugins#21); the floor moves then.
         const std::string res = opt.android.res.empty() ? std::string("android/res") : opt.android.res;
         if (std::filesystem::is_directory(under_manifest(res))) a.resources = under_manifest(res);
         // The framework's Java root is a dependency's, so its rerun glob would
