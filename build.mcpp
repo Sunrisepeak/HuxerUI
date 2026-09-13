@@ -1,11 +1,12 @@
 // HuxerUI's own build program.
 //
-// Three jobs, and deliberately no fourth:
+// Four jobs, and deliberately no fifth:
 //
 //   1. The builtin resource header, which 11 of this project's translation
 //      units #include and which therefore cannot be deferred to a consumer.
 //   2. The Web link's JavaScript preludes, which need absolute paths.
-//   3. Linux platform dependencies, resolved entirely from xlings payloads by
+//   3. The iOS rows' compiler-rt builtins, which the engine does not link.
+//   4. Linux platform dependencies, resolved entirely from xlings payloads by
 //      the rule package's probe.
 //
 // There is NO composable codegen here: `grep -r '[[huxerui::composable]]' src/
@@ -31,6 +32,48 @@ int main() {
             mcpp::link_flag("--pre-js");
             mcpp::link_flag(path.c_str());
             mcpp::rerun_if_changed(path.c_str());
+        }
+        return 0;
+    }
+
+    // THE iOS ROWS LINK APPLE'S COMPILER-RT BUILTINS. `@available` compiles to
+    // a call to `__isPlatformVersionAtLeast`, which lives in compiler-rt's
+    // builtins archive for the platform (`libclang_rt.iossim.a`,
+    // `libclang_rt.ios.a`). The llvm payload mcpp builds the row with ships
+    // no builtins for iOS and the engine links none, so the program's link
+    // fails on the first `@available` (design §9). Xcode's toolchain always
+    // has the archive; it is located through xcrun and named on the link
+    // line, which reaches every consumer's link. The payload is tried first
+    // in case a future one carries it.
+    if (std::string_view(mcpp::target_os()) == "ios") {
+        const bool simulator = std::string_view(mcpp::target()).ends_with("-sim");
+        const std::string archive = simulator ? "libclang_rt.iossim.a" : "libclang_rt.ios.a";
+        const auto find_builtins = [&](const std::filesystem::path& toolchain) -> std::string {
+            std::error_code ec;
+            for (const auto& version : std::filesystem::directory_iterator(toolchain / "lib" / "clang", ec)) {
+                const std::filesystem::path candidate = version.path() / "lib" / "darwin" / archive;
+                if (std::filesystem::is_regular_file(candidate, ec)) return candidate.string();
+            }
+            return {};
+        };
+        std::string builtins;
+        if (const std::string payload = mcpp::toolchain_dir(); !payload.empty())
+            builtins = find_builtins(payload);
+        if (builtins.empty()) {
+            const std::string list = std::string(mcpp::out_dir()) + "/xcrun-clang.txt";
+            if (std::system(("xcrun --find clang > '" + list + "' 2>/dev/null").c_str()) == 0) {
+                std::ifstream in(list);
+                std::string clang_path;
+                std::getline(in, clang_path);
+                // <toolchain>/usr/bin/clang -> <toolchain>/usr
+                if (!clang_path.empty())
+                    builtins = find_builtins(std::filesystem::path(clang_path).parent_path().parent_path());
+            }
+        }
+        if (builtins.empty()) {
+            mcpp::warning(("huxerui: no " + archive + " in the toolchain or Xcode; `@available` will not link").c_str());
+        } else {
+            mcpp::link_flag(builtins.c_str());
         }
         return 0;
     }

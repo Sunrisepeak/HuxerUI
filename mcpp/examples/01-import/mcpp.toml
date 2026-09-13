@@ -59,3 +59,11 @@ runner = ["adb-run"]
 min_api_level = 23
 [target.aarch64-ios-sim]
 runner = ["simctl-run"]
+# llvm@20.1.7, not the row's default 22.1.8: the SDK's libc++.dylib is what
+# the program links, and 22's headers reference runtime symbols it does not
+# export yet (the atomic-wait table); 20's reference only what Xcode 26's
+# libc++ has. The framework's build program adds Apple's compiler-rt
+# builtins for `@available`. Design §9.
+toolchain = "llvm@20.1.7"
+[target.aarch64-ios]
+toolchain = "llvm@20.1.7"
