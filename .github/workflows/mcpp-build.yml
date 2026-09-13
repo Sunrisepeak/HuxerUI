@@ -697,8 +697,8 @@ jobs:
           mcpp --version | tee version.txt
           grep -q "${MCPP_VERSION}" version.txt || { echo "mcpp ${MCPP_VERSION} is not the active mcpp"; exit 1; }
 
-      # TEMPORARY, until openxlings/xim-pkgindex carries these recipes (the
-      # fork PR Sunrisepeak/xim-pkgindex#1): the synced index copy is given
+      # TEMPORARY, until openxlings/xim-pkgindex#834 is merged and published:
+      # the synced index copy is given
       # the recipe files and the index cache entries that make `xim:<name>`
       # resolve. Delete this step when the index has them.
       - name: Bridge recipes the xim index does not carry yet
@@ -920,8 +920,8 @@ jobs:
           mcpp --version | tee version.txt
           grep -q "${MCPP_VERSION}" version.txt || { echo "mcpp ${MCPP_VERSION} is not the active mcpp"; exit 1; }
 
-      # TEMPORARY, until openxlings/xim-pkgindex carries these recipes (the
-      # fork PR Sunrisepeak/xim-pkgindex#1): the synced index copy is given
+      # TEMPORARY, until openxlings/xim-pkgindex#834 is merged and published:
+      # the synced index copy is given
       # the recipe files and the index cache entries that make `xim:<name>`
       # resolve. Delete this step when the index has them.
       - name: Bridge recipes the xim index does not carry yet
