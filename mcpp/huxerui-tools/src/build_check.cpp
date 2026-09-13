@@ -301,9 +301,9 @@ std::map<std::string, std::string> linux_payloads(const toml::table& manifest) {
 void check_linux_payloads(const std::filesystem::path& root, const toml::table& manifest) {
     toml::table rules;
     try {
-        rules = toml::parse_file((root / "mcpp/huxerui-build-rules/mcpp.toml").string());
+        rules = toml::parse_file((root / "mcpp/huxerui-build-rules-gtk/mcpp.toml").string());
     } catch (const toml::parse_error& error) {
-        fail(std::string("mcpp/huxerui-build-rules/mcpp.toml does not parse: ") + std::string(error.description()));
+        fail(std::string("mcpp/huxerui-build-rules-gtk/mcpp.toml does not parse: ") + std::string(error.description()));
         return;
     }
     const auto artifact = linux_payloads(manifest);
@@ -311,11 +311,11 @@ void check_linux_payloads(const std::filesystem::path& root, const toml::table& 
     if (artifact.empty()) fail("mcpp.toml declares no Linux payloads under [target.'cfg(all(linux, not(env = \"android\")))'.xlings.workspace]");
     for (const auto& [name, version] : artifact) {
         const auto it = rule.find(name);
-        if (it == rule.end()) fail("mcpp/huxerui-build-rules/mcpp.toml lacks " + name + " = \"" + version + "\" (declared at the root)");
-        else if (it->second != version) fail(name + " is " + version + " at the root and " + it->second + " in mcpp/huxerui-build-rules/mcpp.toml");
+        if (it == rule.end()) fail("mcpp/huxerui-build-rules-gtk/mcpp.toml lacks " + name + " = \"" + version + "\" (declared at the root)");
+        else if (it->second != version) fail(name + " is " + version + " at the root and " + it->second + " in mcpp/huxerui-build-rules-gtk/mcpp.toml");
     }
     for (const auto& [name, version] : rule) {
-        if (!artifact.contains(name)) fail("mcpp.toml lacks " + name + " = \"" + version + "\" (declared in mcpp/huxerui-build-rules/mcpp.toml)");
+        if (!artifact.contains(name)) fail("mcpp.toml lacks " + name + " = \"" + version + "\" (declared in mcpp/huxerui-build-rules-gtk/mcpp.toml)");
     }
 }
 

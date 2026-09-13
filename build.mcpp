@@ -81,7 +81,7 @@ int main() {
     // The Linux GTK stack, on this package's compile line and -- with `link`
     // -- on every consumer's final link. The probe lives in huxerui.rules so
     // that a library including GTK headers can run the same one; the payload
-    // table it reads is the rule package's, and huxerui-build-check asserts it
+    // table it reads is huxerui-build-rules-gtk's, and huxerui-build-check asserts it
     // matches the one mcpp.toml declares for this artifact. A no-op on every
     // row but the Linux desktop.
     return huxerui::rules::linux_gtk(/*link=*/true) ? 0 : 1;

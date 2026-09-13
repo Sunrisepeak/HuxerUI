@@ -186,7 +186,7 @@ code is compiled and linked against.
 
 `xpkg_dir` answers only for payloads the *building* package declared, and a
 host module's `[xlings.workspace]` counts as that package's own. So the same
-37 entries appear under `mcpp/huxerui-build-rules/mcpp.toml` — the rule
+37 entries appear under `mcpp/huxerui-build-rules-gtk/mcpp.toml` — the rule
 package is a host module compiled into every application's and library's
 build program — and `huxerui::rules::linux_gtk(link)` runs the pkg-config
 probe wherever it is called: the framework's `build.mcpp` calls it with
@@ -281,7 +281,7 @@ program the package name and not its targets, and the desktop `.resources`
 directory (§3) is named after the target.
 
 **What the rule adds to each member.** The Web page is the rule's own
-template (`mcpp/huxerui-build-rules/web/index.html.in`), which imports the
+template (`mcpp/huxerui-build-rules-dist/web/index.html.in`), which imports the
 MODULARIZE launcher the emscripten section exports and mounts the application;
 an application replaces it with `.web.template_file`. The APK is dist-apk's
 level 1: the framework's Java host (`platform/android/huxerui/src/main/java`)
@@ -385,15 +385,16 @@ program to enumerate its HuxerUI library dependencies, which mcpp offers no
 channel for. Lib-Live2D's string catalogue is the one case today and is not
 read by its code.
 
-**The iOS simulator row does not link a real application.** mcpp composes
-the row from its llvm payload's libc++ headers and the SDK's `libc++.dylib`,
-and links no compiler-rt builtins for it: `std::atomic::wait` in
-`src/io/stream.cpp` references `__atomic_notify_all_global_table`, which
-Apple's libc++ does not export, and every `@available` in
-`platform/ios/uikit_accessibility.mm` references `__isPlatformVersionAtLeast`
-from `libclang_rt.iossim.a`, which is not on the link line. The framework
-compiles; the example's link fails. Both are the engine's row to fix, and CI
-reports them until it does.
+**The iOS rows are pinned to llvm@20.1.7 and link Apple's builtins.** The
+row's default llvm 22.1.8 compiles against its own libc++ headers while the
+program links the SDK's `libc++.dylib`, which does not export what 22's
+headers reference (`__atomic_*_global_table`, `__hash_memory`); 20's headers
+reference only what Xcode 26's libc++ has, so every application manifest pins
+the row. `@available` compiles to `__isPlatformVersionAtLeast` from
+compiler-rt's iOS builtins, which the engine does not link; the framework's
+build program locates `libclang_rt.iossim.a` (the payload, else Xcode's
+through xcrun) and puts it on the link line. Both are the engine's row to
+absorb; until it does, the pin is a line every iOS application carries.
 
 **macOS and iOS programs are not staged.** `mcpp pack` builds a program's
 staged tree by running it under the target's dynamic linker with
@@ -412,6 +413,14 @@ what `mcpp::deploy` placed; HuxerUI's own AppKit adapter falls back to the
 executable's directory, and a library relying on `NSBundle` — Cubism's Metal
 shader loader reads `FrameworkMetallibs/` that way — needs dist-apple to
 learn a resource destination. The iOS bundle is flat and unaffected.
+
+**An APK carries no launcher icon.** dist-apk 0.9.0 compiles a `resources`
+directory and links it as an aapt2 overlay (`-R compiled.zip`, without
+`--auto-add-overlay`), which rejects every resource the base does not already
+define — `color/ic_launcher_background does not override an existing
+resource`. A primary `res/` therefore cannot be supplied through the member
+yet; the rule renders the manifest's icon attributes only when an
+application has one, and the templates ship none. The member's to fix.
 
 **`xim:android-platform` is declared twice.** dist-apk pins 35-r2 and the
 rule package 36-r2 (§7); every Android build prints mcpp's two-versions

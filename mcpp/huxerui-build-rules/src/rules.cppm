@@ -18,74 +18,18 @@ export module huxerui.rules;
 // c++20 because that is the SDK ABI baseline. So no std::println here.
 import std;
 import mcpp;
-import mcpp.dist.wix;
-import mcpp.dist.appimage;
-import mcpp.dist.apple;
-import mcpp.dist.web;
-import mcpp.dist.apk;
 import huxerui.rules.sources;
+// Re-exported: a consumer's `import huxerui.rules;` sees the option types,
+// provide_formats() and linux_gtk() under huxerui::rules.
+export import huxerui.rules.dist;
+export import huxerui.rules.gtk;
 
 export namespace huxerui::rules {
 
 // ---------------------------------------------------------------- options --
 // Field-for-field the arguments of huxerui_add_app() in cmake/HuxerUIApp.cmake,
-// so the two spellings of "an application" can be reviewed side by side.
-// What an application must state to get a Windows installer, and nothing it
-// could have been asked for twice. The format itself is `mcpp:plugins`'
-// `dist-wix`; this is the HuxerUI-side spelling of its options, so an
-// application's build program reads like huxerui_add_app() in
-// cmake/HuxerUIApp.cmake. Every field is optional: the member derives the
-// version from [package], the manufacturer from the authors or the namespace,
-// and the upgrade code deterministically from the package identity -- a
-// stable GUID chosen once per product, which is exactly what a derived value
-// is. The format is provided on every Windows build; these only change it.
-struct installer_options {
-    std::string target;         // the [targets.*] app to install; default: options::target
-    std::string version;        // default: [package] version, made MSI-shaped
-    std::string upgrade_code;   // default: derived from namespace + name
-    std::string manufacturer;   // default: the first author, else the namespace
-    std::string display_name;   // default: the target name
-};
-
-// What an application may state about its AppImage; `dist-appimage` does the
-// rest, with a placeholder icon when none is named. The Windows counterpart
-// is installer_options above.
-struct appimage_options {
-    std::string target;                  // the [targets.*] app to package; default: options::target
-    std::string display_name;            // default: the target name
-    std::string icon;                    // a .png, relative to the manifest
-    std::vector<std::string> categories; // freedesktop categories; default "Utility"
-};
-
-// What an application may state about its `.app` bundle on macOS and iOS;
-// `dist-apple` does the rest. On macOS `icon` is one `.icns` file; on iOS it
-// is a DIRECTORY of flat PNGs, which the member lists under CFBundleIcons.
-struct apple_options {
-    std::string target;         // the [targets.*] app to bundle; default: options::target
-    std::string display_name;   // CFBundleName; default: the target name
-    std::string bundle_id;      // CFBundleIdentifier; default: derived from namespace + name
-    std::string icon;           // .icns (macOS) or a directory of .png (iOS), relative to the manifest
-};
-
-// The page `mcpp pack --format web` writes beside the launcher. Every HuxerUI
-// application is a Web application when built for wasm32-emscripten, so the
-// format is always provided; these only replace the page the rule ships.
-struct web_options {
-    std::string template_file;  // package-root-relative; `{{name}}` and `{{title}}` are substituted
-    std::string title;          // <title>; default: the package name
-};
-
-// What an application may state about its APK; every field has a default that
-// `dist-apk` or this rule derives, so a template application states nothing.
-struct android_options {
-    std::string application_id;     // manifest package; default: <namespace>.<name>
-    std::string label;              // android:label; default: the package name
-    std::string activity;           // the launcher Activity; default: org.huxerui.HuxerUIActivity
-    std::string java;               // a directory of the application's own Java, relative to the manifest; default: android/java when present
-    std::string res;                // an aapt2 `res/` directory, relative to the manifest; default: android/res when present
-    std::string manifest_template;  // replaces the manifest the rule ships, relative to the manifest
-};
-
+// so the two spellings of "an application" can be reviewed side by side. The
+// distribution option types are huxerui.rules.dist's.
 struct options {
     // The `app` target this build program serves. Names the `<target>.resources`
     // directory the desktop runtime reads beside the executable, and is the
@@ -229,152 +173,6 @@ inline std::string read_file(const std::filesystem::path& p) {
 }
 
 } // namespace detail
-
-// -------------------------------------------------------------- linux gtk --
-// THE GTK STACK REACHES A PACKAGE'S TRANSLATION UNITS FROM HERE.
-//
-// mcpp compiles with its own toolchain and its own glibc, so GTK comes from
-// xlings payloads, never from the machine (mcpp.toml's Linux section says
-// why). The framework probes pkg-config for the stack in its build program;
-// the `-l`/`-L` half of that reaches every consumer's final link, but the
-// `-I` half colours the framework's own translation units only -- mcpp offers
-// no channel for a dependency's computed include directories to reach a
-// consumer's compile. A library whose own sources include GTK headers (one
-// integrating with platform/linux, as Lib-Live2D's GL surface does) therefore
-// needs the same probe in its own build program, and it cannot copy the probe:
-// `xpkg_dir` answers only for payloads the BUILDING package declared.
-//
-// So the payload table lives once, in this package's manifest. A host module's
-// `[xlings.workspace]` reaches every build program it is compiled into, which
-// is every HuxerUI application's and library's; this function reads the table
-// wherever it is called. huxerui-build-check asserts the table and the
-// framework's own (mcpp.toml, the target-axis declaration for the artifact)
-// stay identical.
-namespace detail {
-
-// The Linux payloads, names only: their VERSIONS live in the manifest, and
-// xpkg_dir answers with the directory of whatever this build installed.
-constexpr std::string_view kLinuxPayloads[] = {
-    "gtk4", "libepoxy", "libsoup", "glib", "cairo", "pango", "harfbuzz",
-    "fribidi", "fontconfig", "gdk-pixbuf", "graphene", "libpng", "libtiff",
-    "libjpeg-turbo", "pcre2", "libffi", "zlib", "expat", "freetype",
-    "graphite2", "sqlite", "libpsl", "nghttp2", "libthai", "libdatrie",
-    "libselinux", "util-linux", "pixman", "libglvnd", "libX11", "libxcb",
-    "libXau", "libXdmcp", "libXext", "libXft", "libXrender", "xorgproto",
-};
-
-// pkg-config searches THESE directories and nothing else.
-//
-// PKG_CONFIG_LIBDIR replaces the default search path outright (unlike
-// PKG_CONFIG_PATH, which prepends to it), so /usr/lib/pkgconfig never
-// participates and no host header or library can enter the build. That is the
-// whole point: mcpp compiles against xim:glibc, and a GTK built against the
-// machine's glibc does not belong in the same binary. --define-prefix
-// recomputes each package's `prefix` from the .pc file's own location, which
-// is what makes a relocatable payload store work at all.
-inline std::string pkg_config_libdir() {
-    std::string dirs;
-    // A payload enumerated here but not declared in the manifest resolves to
-    // an empty directory, and skipping it silently is what hid graphite2 for
-    // a release: the omission is felt only once some .pc Requires the
-    // missing package, as `Package 'graphite2' was not found`, naming neither
-    // this list nor the manifest. Collect the names instead, and say which.
-    std::string undeclared;
-    std::size_t missing = 0;
-    for (std::string_view name : kLinuxPayloads) {
-        const std::string root = mcpp::xpkg_dir("xim", std::string(name).c_str());
-        if (root.empty()) {
-            undeclared += ' ';
-            undeclared += name;
-            ++missing;
-            continue;
-        }
-        // xorgproto and friends install their .pc under share/, not lib/.
-        for (const char* sub : { "/lib/pkgconfig", "/share/pkgconfig", "/lib64/pkgconfig" }) {
-            const std::string d = root + sub;
-            if (!std::filesystem::is_directory(d)) continue;
-            if (!dirs.empty()) dirs += ':';
-            dirs += d;
-        }
-    }
-    if (missing != 0) {
-        std::cerr << "huxerui.rules: " << missing << " of "
-                  << std::size(kLinuxPayloads)
-                  << " xlings payloads did not resolve:" << undeclared;
-        std::cerr << "\n         they are declared in mcpp/huxerui-build-rules/mcpp.toml "
-                     "under [target.'cfg(all(linux, not(env = \"android\")))'.xlings.workspace]; "
-                     "a build program sees them only through that host module.\n";
-    }
-    return dirs;
-}
-
-// pkg-config's output, split into mcpp directives. `-I` colours this package's
-// own TUs; `-l` and `-L` reach the final link, which is what puts GTK on an
-// application's link line without the application naming it.
-inline bool pkg_config(std::string_view module_spec, const std::string& libdir, bool link) {
-    const std::string out = std::string(mcpp::out_dir()) + "/pkg-config.txt";
-    const std::string cmd = "PKG_CONFIG_LIBDIR='" + libdir + "' "
-                            "pkg-config --define-prefix --cflags "
-                          + std::string(link ? "--libs " : "") + "'"
-                          + std::string(module_spec) + "' > '" + out + "' 2>&1";
-    const bool ok = std::system(cmd.c_str()) == 0;
-
-    std::ifstream in(out);
-    if (!in) return false;
-    if (!ok) {
-        std::cerr << "huxerui.rules: pkg-config failed for '" << module_spec << "':\n";
-        std::cerr << in.rdbuf() << "\n";
-        return false;
-    }
-    std::string token;
-    while (in >> token) {
-        if (token.empty())                     continue;
-        else if (token.starts_with("-I"))      mcpp::include_dir(token.substr(2).c_str());
-        else if (token.starts_with("-l"))      mcpp::link_lib(token.substr(2).c_str());
-        else if (token.starts_with("-L"))      mcpp::link_search(token.substr(2).c_str());
-        // A linker flag is not a compile flag. Routing -Wl,... to cxxflag would
-        // put it on every compile line, where it is at best ignored.
-        else if (token.starts_with("-Wl,"))    mcpp::link_flag(token.c_str());
-        // DIALECT FLAGS ARE NOT OURS TO EMIT. clang records the target-feature
-        // and thread-model set in the BMI it writes and refuses an importer
-        // compiled without them (`POSIX thread support was enabled in
-        // precompiled file ... but is currently disabled`), so every name in
-        // `import huxerui;` becomes undefined. `-pthread` is dropped: no
-        // translation unit in the graph carries it and the payload glibc has
-        // pthread in libc. The -m flags are dropped: SSE2 is baseline on
-        // x86-64, so the code generation is identical, and naming them is
-        // what put the feature list in the BMI in the first place.
-        else if (token == "-pthread")          {}
-        else if (token.starts_with("-msse") ||
-                 token.starts_with("-mfpmath")) {}
-        else                                   mcpp::cxxflag(token.c_str());
-    }
-    return true;
-}
-
-} // namespace detail
-
-// The GTK stack's compile flags on this package's translation units, and with
-// `link` its libraries on the final link. A no-op on every row but the Linux
-// desktop, so a build program calls it unconditionally. The framework calls
-// it with `link`; a library that includes GTK headers calls it without, since
-// the framework's link line already carries the libraries.
-//
-// Version floors match cmake/platform/Linux.cmake.
-inline bool linux_gtk(bool link) {
-    if (std::string_view(mcpp::target_os()) != "linux") return true;
-    if (std::string_view(mcpp::target_env()) == "android") return true;
-    const std::string libdir = detail::pkg_config_libdir();
-    if (libdir.empty()) {
-        std::cerr << "huxerui.rules: no xlings payload resolved for the Linux GTK stack\n";
-        return false;
-    }
-    constexpr std::string_view modules[] = { "gtk4 >= 4.14", "epoxy >= 1.5", "gio-2.0", "libsoup-3.0 >= 3.0" };
-    for (std::string_view m : modules) {
-        if (!detail::pkg_config(m, libdir, link)) return false;
-    }
-    return true;
-}
 
 // ---------------------------------------------------------------- codegen --
 namespace detail {
@@ -648,22 +446,6 @@ inline bool submit(std::span<const edge> edges) {
     return true;
 }
 
-// ------------------------------------------------------------ dist members --
-// A member's plan says why it does not apply, on stderr -- which mcpp
-// discards when the build program succeeds. When the format the member
-// provides is the one `mcpp pack` asked for, that reason is the whole
-// diagnosis, so it is repeated through `mcpp::warning`, the channel that is
-// shown; on every other build the member is quiet and so is this.
-template <class Plan>
-bool run_member(const char* format, const Plan& plan, bool (*submit)(const Plan&)) {
-    if (!plan.applies && std::string_view(mcpp::pack_format()) == format) {
-        std::string message = std::string("huxerui.rules: dist-") + format + " declined this build";
-        if (!plan.reason.empty()) message += ": " + plan.reason;
-        mcpp::warning(message.c_str());
-    }
-    return submit(plan);
-}
-
 // -------------------------------------------------------------- configure --
 // One call for the common case. Returns false only on a condition that should
 // stop the build; a missing optional input is reported and tolerated.
@@ -828,123 +610,10 @@ inline bool configure(options opt = {}) {
 
     if (!submit(edges)) return false;
 
-    // The distribution formats are `mcpp:plugins`' dist members, reached
-    // through this package's own build-dependency. Each is provided on the
-    // row it serves and nowhere else, so `mcpp pack --format apk` on a Linux
-    // desktop build is an unknown format rather than a declined one; a
-    // member's plan is a no-op until `mcpp pack` names its format, so this
-    // costs an ordinary build nothing. The payloads they run (xim:wix,
-    // xim:appimagetool, the NDK's build tools, ...) are declared by the
-    // members themselves, and a host module's declaration reaches every
-    // build program it is compiled into -- which is why an application
-    // declares none of them.
-    // A library provides no format: it has no launcher to package, and a
-    // member it asked would only decline (`no launcher in the staged tree`)
-    // beside the application's own answer.
+    // A library provides no format: it has no launcher to package. The
+    // formats themselves are huxerui.rules.dist's.
     if (!application) return true;
-    const std::string dist_os  = mcpp::target_os();
-    const std::string dist_env = mcpp::target_env();
-    const auto target_or = [&](const std::string& named) { return named.empty() ? opt.target : named; };
-    if (dist_os == "windows") {
-        mcpp::dist::wix::options w;
-        w.target       = target_or(opt.installer.target);
-        w.product_name = opt.installer.display_name;
-        w.manufacturer = opt.installer.manufacturer;
-        w.version      = opt.installer.version;
-        w.upgrade_code = opt.installer.upgrade_code;
-        mcpp::provides_pack_format("msi");
-        if (!run_member("msi", mcpp::dist::wix::plan_for(w), &mcpp::dist::wix::submit)) return false;
-    }
-    if (dist_os == "linux" && dist_env != "android") {
-        mcpp::dist::appimage::options a;
-        a.target     = target_or(opt.appimage.target);
-        a.app_name   = opt.appimage.display_name;
-        a.icon       = opt.appimage.icon;
-        a.categories = opt.appimage.categories;
-        a.terminal   = false;
-        mcpp::provides_pack_format("appimage");
-        if (!run_member("appimage", mcpp::dist::appimage::plan_for(a), &mcpp::dist::appimage::submit)) return false;
-    }
-    if (dist_os == "macos" || dist_os == "ios") {
-        mcpp::dist::apple::options a;
-        a.target    = target_or(opt.apple.target);
-        a.app_name  = opt.apple.display_name;
-        a.bundle_id = opt.apple.bundle_id;
-        a.icon      = opt.apple.icon;
-        mcpp::provides_pack_format("app");
-        if (!run_member("app", mcpp::dist::apple::plan_for(a), &mcpp::dist::apple::submit)) return false;
-    }
-    if (dist_os == "emscripten") {
-        // The page the rule ships calls the MODULARIZE factory
-        // the emscripten section exports and mounts the application; a
-        // project supplies its own to change the page, not the contract.
-        // `dist-web` joins the template path to the manifest directory, and
-        // an absolute path survives that join, which is how the rule's own
-        // template -- in the SDK, not the project -- reaches it.
-        mcpp::dist::web::options w;
-        w.target        = opt.target;
-        w.template_file = opt.web.template_file.empty()
-            ? root + "/mcpp/huxerui-build-rules/web/index.html.in" : opt.web.template_file;
-        w.title         = opt.web.title;
-        mcpp::provides_pack_format("web");
-        if (!run_member("web", mcpp::dist::web::plan_for(w), &mcpp::dist::web::submit)) return false;
-    }
-    if (dist_env == "android") {
-        // Level 1 of dist-apk with the framework's Java host as the first
-        // root and, when present, the
-        // application's own as the second; the Activity is the framework's
-        // unless the application names its own subclass.
-        const std::string manifest_dir = mcpp::manifest_dir();
-        const auto under_manifest = [&](const std::string& rel) {
-            return (std::filesystem::path(manifest_dir) / rel).string();
-        };
-        mcpp::dist::apk::options a;
-        a.target         = opt.target;
-        a.application_id = opt.android.application_id;
-        a.label          = opt.android.label;
-        a.activity       = opt.android.activity.empty() ? std::string("org.huxerui.HuxerUIActivity")
-                                                        : opt.android.activity;
-        a.java_sources   = { root + "/platform/android/huxerui/src/main/java" };
-        const std::string java = opt.android.java.empty() ? std::string("android/java") : opt.android.java;
-        if (std::filesystem::is_directory(under_manifest(java))) a.java_sources.push_back(under_manifest(java));
-        const std::string res = opt.android.res.empty() ? std::string("android/res") : opt.android.res;
-        if (std::filesystem::is_directory(under_manifest(res))) a.resources = under_manifest(res);
-        // The framework's Java root is a dependency's, so its rerun glob would
-        // match nothing; the list the rule package carries is what re-runs
-        // this program when a host file is added or removed.
-        mcpp::rerun_if_changed((root + "/mcpp/huxerui-build-rules/android/java-sources.txt").c_str());
-        if (!opt.android.manifest_template.empty()) {
-            a.manifest_template = under_manifest(opt.android.manifest_template);
-        } else {
-            // The shipped manifest names an icon only when there is a res/ to
-            // hold one: aapt2 refuses a reference to a resource that does not
-            // exist, and an application with no res/ is the common first state.
-            const std::string tmpl = root + "/mcpp/huxerui-build-rules/android/AndroidManifest.xml.in";
-            std::string text = detail::read_file(tmpl);
-            if (text.empty()) {
-                std::cerr << "huxerui.rules: cannot read " << tmpl << "\n";
-                return false;
-            }
-            const std::string icon = a.resources.empty() ? std::string()
-                : std::string("android:icon=\"@mipmap/ic_launcher\"\n        android:roundIcon=\"@mipmap/ic_launcher\"\n        ");
-            const std::size_t at = text.find("@@ICON@@");
-            if (at == std::string::npos) {
-                std::cerr << "huxerui.rules: " << tmpl << " no longer carries @@ICON@@\n";
-                return false;
-            }
-            text.replace(at, std::string("@@ICON@@").size(), icon);
-            const std::string rendered = std::string(mcpp::out_dir()) + "/android/AndroidManifest.xml.in";
-            std::error_code ec;
-            std::filesystem::create_directories(std::filesystem::path(rendered).parent_path(), ec);
-            std::ofstream file(rendered, std::ios::binary | std::ios::trunc);
-            if (!file) { std::cerr << "huxerui.rules: cannot write " << rendered << "\n"; return false; }
-            file << text;
-            mcpp::rerun_if_changed(tmpl.c_str());
-            a.manifest_template = rendered;
-        }
-        mcpp::provides_pack_format("apk");
-        if (!run_member("apk", mcpp::dist::apk::plan_for(a), &mcpp::dist::apk::submit)) return false;
-    }
+    return provide_formats({ opt.target, opt.installer, opt.appimage, opt.apple, opt.web, opt.android }, root);
     return true;
 }
 
