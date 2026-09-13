@@ -138,6 +138,18 @@ systems on one compiler, and is blocked separately: a host module's BMI reaches
 `cl.exe` in clang's `name=path` spelling and the compile dies with `C1083`
 ([mcpp#604](https://github.com/mcpp-community/mcpp/issues/604)).
 
+### Resources are a module too
+
+`hrc` writes the accessor header a CMake project includes
+(`<namespace>_resources.h`) and, for the mcpp build, the same declarations as
+a module interface unit, `<namespace>.resources` — `export module
+app.resources; import huxerui; export namespace app { … }`. The rule declares
+that unit to mcpp as a generated module interface (`provides`/`imports` on
+the hrc edge, the mechanism hcg's transformed units use), so an application
+writes `import app.resources;` and no header at all; the live2d template
+does. The header stays, for the CMake build and for a source that still
+includes it.
+
 ### Macros are the exception
 
 `HUXERUI_SCOPE` and friends are macros, and macros do not cross a module

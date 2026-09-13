@@ -10,7 +10,7 @@ namespace {
 
 constexpr std::string_view compile_usage =
     "usage: hrc --root <path> --output <path> --namespace <name> [--header-name <filename>] "
-    "[--depfile <path> --depfile-target <path>]";
+    "[--module-name <module>] [--depfile <path> --depfile-target <path>]";
 constexpr std::string_view merge_usage = "usage: hrc merge --input <package> [--input <package> ...] --output <path>";
 
 huxerui::resource_compiler::CompileOptions ParseCompileArguments(int argc, char** argv) {
@@ -37,6 +37,11 @@ huxerui::resource_compiler::CompileOptions ParseCompileArguments(int argc, char*
         throw std::invalid_argument(std::string(compile_usage));
       }
       options.header_name = argv[++index];
+    } else if (argument == "--module-name" && index + 1 < argc) {
+      if (!options.module_name.empty()) {
+        throw std::invalid_argument(std::string(compile_usage));
+      }
+      options.module_name = argv[++index];
     } else if (argument == "--depfile" && index + 1 < argc) {
       if (!options.depfile.empty()) {
         throw std::invalid_argument(std::string(compile_usage));

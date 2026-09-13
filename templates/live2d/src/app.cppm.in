@@ -2,19 +2,16 @@
 // that opens the model's files from the application's raw resources, and the
 // Application object whose constructor registers the page.
 //
-// The generated raw-resource identifiers are a header, so this unit opens
-// with a global module fragment for it; huxerui.rules puts the header's
-// directory on the include path. Everything else is imported.
-
-module;
-
-#include "app_resources.h"
+// No headers. The raw-resource identifiers arrive through `import
+// app.resources;`, a module hrc writes from the same list as the header a
+// CMake project includes.
 
 export module app;
 
 import std;
 import huxerui;
 import huxerui.live2d;
+import app.resources;
 
 using namespace huxerui;
 using namespace huxerui::live2d;

@@ -264,7 +264,8 @@ inline std::vector<edge> plan_resources(const options& opt, bool application) {
         const std::string src  = (std::filesystem::path(mcpp::manifest_dir()) / opt.resources).string();
         const std::string dep  = odir + "/app.d";
         const std::string bin  = odir + "/app/package/huxerui/resources.bin";
-        std::vector<std::string> outputs;
+        const std::string unit = odir + "/app/modules/" + ns + "_resources.cppm";
+        std::vector<std::string> outputs{ unit };
         for (const std::string& p : huxerui::rules::sources::resource_outputs(src, ns))
             outputs.push_back(odir + "/app/package/" + p);
         out.push_back(edge{
@@ -272,9 +273,12 @@ inline std::vector<edge> plan_resources(const options& opt, bool application) {
             .role        = "source",
             .description = "library resources " + opt.resources,
             .command     = { hrc, "--root", src, "--output", odir + "/app", "--namespace", ns,
+                             "--module-name", ns + ".resources",
                              "--depfile", dep, "--depfile-target", bin },
             .inputs      = { hrc },
             .outputs     = outputs,
+            .provides    = ns + ".resources",
+            .imports     = { "huxerui" },
             .depfile     = dep,
         });
         mcpp::warning((std::string("huxerui.rules: ") + mcpp::package_name()
@@ -341,7 +345,14 @@ inline std::vector<edge> plan_resources(const options& opt, bool application) {
         // the 8192 byte ceiling between the project and its own build.
         const std::string dep = odir + "/app.d";
         const std::string bin = odir + "/app/package/huxerui/resources.bin";
-        std::vector<std::string> outputs;
+        // THE ACCESSORS AS A MODULE, `<namespace>.resources`. hrc writes the
+        // header and this module unit from one list, so a module-style
+        // application writes `import app.resources;` and no header at all --
+        // the same mechanism hcg's transformed module units use: an action
+        // output declared as a module interface (`provides`) whose graph
+        // node mcpp seeds before the generator runs.
+        const std::string unit = odir + "/app/modules/" + ns + "_resources.cppm";
+        std::vector<std::string> outputs{ unit };
         for (const std::string& p : huxerui::rules::sources::resource_outputs(app_src, ns))
             outputs.push_back(odir + "/app/package/" + p);
         out.push_back(edge{
@@ -351,9 +362,12 @@ inline std::vector<edge> plan_resources(const options& opt, bool application) {
             .command     = { hrc, "--root", app_src,
                              "--output", odir + "/app",
                              "--namespace", ns,
+                             "--module-name", ns + ".resources",
                              "--depfile", dep, "--depfile-target", bin },
             .inputs      = { hrc },
             .outputs     = outputs,
+            .provides    = ns + ".resources",
+            .imports     = { "huxerui" },
             .depfile     = dep,
         });
         packages.push_back(odir + "/app/package");

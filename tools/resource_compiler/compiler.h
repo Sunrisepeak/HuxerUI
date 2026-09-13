@@ -17,6 +17,10 @@ struct CompileOptions {
   // that enumeration asks for both instead -- see Compile().
   std::filesystem::path depfile{};
   std::filesystem::path depfile_target{};
+  // The C++ module to write beside the header: `<output>/modules/<namespace>_resources.cppm`
+  // exporting the same declarations, so a module-style application writes
+  // `import <name>;` instead of including the header. Empty means no module.
+  std::string module_name{};
 };
 
 struct MergeOptions {
