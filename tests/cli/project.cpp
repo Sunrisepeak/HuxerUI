@@ -68,17 +68,43 @@ TEST_CASE("HuxerUICliCreatesMcppProjects") {
   REQUIRE(Read(project / "src/app.cppm").find("export module app;") != std::string::npos);
 }
 
-TEST_CASE("HuxerUICliNamesMcppWhenItCannotDriveTheProject") {
+TEST_CASE("HuxerUICliAddsPlatformsToAnMcppManifest") {
   TemporaryDirectory temporary;
-  REQUIRE(Invoke(temporary.Path(), {"create", "app", "Sample-App", "--build", "mcpp", "--agent", "none"}).result == 0);
+  // The template declares every row; `--platform` narrows it, which is what
+  // leaves something for `platform add` to add.
+  REQUIRE(Invoke(temporary.Path(),
+              {"create", "app", "Sample-App", "--build", "mcpp", "--platform", "linux", "--agent", "none"})
+              .result == 0);
+  const std::filesystem::path project = temporary.Path() / "Sample-App";
+  REQUIRE(Read(project / "mcpp.toml").find("platforms = [\"linux\"]") != std::string::npos);
 
-  // This CLI drives the CMake project. An mcpp project has no CMakeLists.txt
-  // on purpose, so every command that opens one has to say which tool does
-  // drive it -- "no HuxerUI project found" sends its owner looking for a file
-  // that is supposed to be absent.
-  const Invocation invocation = Invoke(temporary.Path() / "Sample-App", {"platform", "add", "linux"});
-  REQUIRE(invocation.result != 0);
-  REQUIRE(invocation.error.find("mcpp build") != std::string::npos);
+  // An mcpp project has no platform shells: its platforms are the rows
+  // `[package] platforms` declares, so `platform add` edits that line and
+  // writes the Web in mcpp's own spelling.
+  const Invocation added = Invoke(project, {"platform", "add", "android,web"});
+  REQUIRE(added.result == 0);
+  REQUIRE(added.output.find("Updated platforms: android web") != std::string::npos);
+  REQUIRE(Read(project / "mcpp.toml").find("platforms = [\"linux\", \"android\", \"emscripten\"]") != std::string::npos);
+
+  const Invocation again = Invoke(project, {"platform", "add", "android"});
+  REQUIRE(again.result != 0);
+  REQUIRE(again.error.find("already declared") != std::string::npos);
+}
+
+TEST_CASE("HuxerUICliSelectsTheLive2DTemplate") {
+  TemporaryDirectory temporary;
+  REQUIRE(Invoke(temporary.Path(),
+              {"create", "app", "Live2D-Demo", "--build", "mcpp", "--template", "live2d", "--agent", "none"})
+              .result == 0);
+  const std::filesystem::path project = temporary.Path() / "Live2D-Demo";
+  // The template pins HuxerUI and Lib-Live2D at one git revision each -- one
+  // HuxerUI for the graph -- so the CLI leaves its dependency lines alone.
+  const std::string manifest = Read(project / "mcpp.toml");
+  REQUIRE(manifest.find("huxerui.live2d  = { git = ") != std::string::npos);
+  REQUIRE(manifest.find("huxerui.huxerui = { git = ") != std::string::npos);
+  REQUIRE(manifest.find("huxerui = { path = ") == std::string::npos);
+  REQUIRE(Read(project / "src/app.cppm").find("import huxerui.live2d;") != std::string::npos);
+  REQUIRE(std::filesystem::is_regular_file(project / "resources/raw/Mao/Mao.model3.json"));
 }
 
 TEST_CASE("HuxerUICliSelectsAnMcppTemplate") {
@@ -115,10 +141,6 @@ TEST_CASE("HuxerUICliCreatesMcppLibraries") {
 TEST_CASE("HuxerUICliRejectsUnsupportedBuildSystems") {
   TemporaryDirectory temporary;
   REQUIRE(Invoke(temporary.Path(), {"create", "app", "Sample-App", "--build", "meson"}).result != 0);
-  // mcpp builds three platforms from one manifest and has no platform shells.
-  REQUIRE(Invoke(temporary.Path(),
-              {"create", "app", "Sample-App", "--build", "mcpp", "--platform", "windows"})
-              .result != 0);
   REQUIRE(Invoke(temporary.Path(),
               {"create", "app", "Sample-App", "--build", "mcpp", "--template", "nonesuch"})
               .result != 0);

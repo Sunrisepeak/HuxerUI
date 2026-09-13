@@ -1,0 +1,50 @@
+# c++23 is a workaround: mcpp's clang-on-Windows path refuses `import std;`
+# below it (mcpp-community/mcpp#603). One standard per module graph, so this
+# compiles HuxerUI at c++23 too; back to c++20 once #603 is fixed.
+[package]
+name     = "{{project.name}}"
+version  = "0.1.0"
+standard = "c++23"
+platforms = ["linux", "windows", "macos", "ios", "android", "emscripten"]
+
+# ONE HuxerUI FOR THE WHOLE GRAPH. Lib-Live2D pins the framework by git at the
+# revision its mcpp build was made against, and mcpp refuses two sources for
+# one package, so this application names that same revision rather than a
+# path -- both lines become versions once the packages are published.
+[dependencies]
+huxerui.huxerui = { git = "https://github.com/Sunrisepeak/HuxerUI.git", rev = "4130a233746ef3d2fc29cbe6d89c4b4d2884c891" }
+huxerui.live2d  = { git = "https://github.com/Sunrisepeak/Lib-Live2D.git", rev = "ac10bdcf98f5ab7e1da236511170ed9f4854d13f" }
+
+[targets.{{project.name}}]
+# `app`: an executable on the desktop rows, a `.js` launcher on the Web, the
+# shared object the Java host loads on Android.
+kind = "app"
+main = "src/main.cpp"
+# No console window behind the application on Windows; inert elsewhere.
+windows_subsystem = "windows"
+
+[build]
+ios_deployment_target = "15.0"
+# huxerui.rules selects the sources (build.mcpp); a glob here would compile the
+# original beside every hcg-transformed composable.
+sources = []
+
+# The Web build's exception model; HuxerUI requires it, and only a root can
+# state it.
+[target.'cfg(os = "emscripten")'.abi]
+exceptions = true
+
+# `mcpp run --target <row> --format apk|app` packages and hands the result to
+# the row's runner (xim:android-platform-tools, xim:apple-simulator-tools).
+[target.x86_64-linux-android]
+min_api_level = 23
+runner = ["adb-run"]
+[target.aarch64-linux-android]
+min_api_level = 23
+[target.aarch64-ios-sim]
+runner = ["simctl-run"]
+# llvm@20.1.7, not the row's default 22.1.8: 22's libc++ headers reference
+# runtime symbols the SDK's libc++.dylib does not export (HuxerUI design §9).
+toolchain = "llvm@20.1.7"
+[target.aarch64-ios]
+toolchain = "llvm@20.1.7"

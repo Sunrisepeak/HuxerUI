@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <any>
 #include <cstddef>
 #include <cstdint>
@@ -485,6 +486,8 @@ struct Runtime::State {
   Runtime& owner_;
   RootFactory root_factory_;
   PlatformAdapter* platform_;
+  // Cleared by ~State; a smoke-exit timer checks it before touching platform_.
+  std::shared_ptr<std::atomic<bool>> alive_ = std::make_shared<std::atomic<bool>>(true);
   UIThreadDispatcher ui_thread_dispatcher_;
   ViewportBreakpoints viewport_breakpoints_;
   std::shared_ptr<detail::WindowState> window_;
