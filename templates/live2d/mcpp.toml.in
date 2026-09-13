@@ -13,7 +13,7 @@ platforms = ["linux", "windows", "macos", "ios", "android", "emscripten"]
 # path -- both lines become versions once the packages are published.
 [dependencies]
 huxerui.huxerui = { git = "https://github.com/Sunrisepeak/HuxerUI.git", rev = "a58d9d9f0b4ddc2381c4d3189dd1b17179e0bae1" }
-huxerui.live2d  = { git = "https://github.com/Sunrisepeak/Lib-Live2D.git", rev = "edea2dbfc794089e3534598b876a7281d78dc534" }
+huxerui.live2d  = { git = "https://github.com/Sunrisepeak/Lib-Live2D.git", rev = "754486ec77fe71a3274c6e8feab3e9646591a4db" }
 
 [targets.{{project.name}}]
 # `app`: an executable on the desktop rows, a `.js` launcher on the Web, the
