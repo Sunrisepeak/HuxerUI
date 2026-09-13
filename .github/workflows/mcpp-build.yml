@@ -920,6 +920,34 @@ jobs:
           mcpp --version | tee version.txt
           grep -q "${MCPP_VERSION}" version.txt || { echo "mcpp ${MCPP_VERSION} is not the active mcpp"; exit 1; }
 
+      # TEMPORARY, until openxlings/xim-pkgindex carries these recipes (the
+      # fork PR Sunrisepeak/xim-pkgindex#1): the synced index copy is given
+      # the recipe files and the index cache entries that make `xim:<name>`
+      # resolve. Delete this step when the index has them.
+      - name: Bridge recipes the xim index does not carry yet
+        run: |
+          mcpp index update
+          python3 - <<'PY'
+          import json, os, re, urllib.request
+          root = os.path.expanduser("~/.mcpp/registry/data/xim-pkgindex")
+          cache_path = os.path.join(root, ".xlings-index-cache.json")
+          cache = json.load(open(cache_path))
+          base = "https://raw.githubusercontent.com/Sunrisepeak/xim-pkgindex/feat/huxerui-mcpp-payloads/pkgs/"
+          for rel in ("g/glew.lua",):
+              text = urllib.request.urlopen(base + rel).read().decode()
+              name = re.search(r'^\s*name\s*=\s*"([^"]+)"', text, re.M).group(1)
+              desc = re.search(r'^\s*description\s*=\s*"([^"]*)"', text, re.M).group(1)
+              dest = os.path.join(root, "pkgs", rel)
+              os.makedirs(os.path.dirname(dest), exist_ok=True)
+              open(dest, "w").write(text)
+              key = "xim:" + name
+              cache["entries"][key] = {"canonical_name": key, "description": desc, "entry_key": key,
+                                       "identity": {"name": name, "namespace": "xim"}, "name": name,
+                                       "path": dest, "ref": "", "type": 0, "version": ""}
+              print("bridged", key)
+          json.dump(cache, open(cache_path, "w"), indent=1)
+          PY
+
       # The CLI is a CMake artifact; only its dependencies are needed here, not
       # the framework's.
       - name: Build the huxerui CLI
@@ -976,12 +1004,21 @@ jobs:
           run_one NavDemo create app NavDemo --build mcpp --template navigation --agent none
           run_one my-widgets create library my-widgets --build mcpp --agent none
 
+          # The live2d template pins HuxerUI and Lib-Live2D by git revision
+          # (one HuxerUI for the whole graph), so it is not a path project.
+          ( cd "$work" && "$cli" create app Live2DDemo --build mcpp --template live2d --agent none )
+          grep -q '^huxerui.live2d  = { git = ' "$work/Live2DDemo/mcpp.toml" \
+            || { echo "Live2DDemo: the template did not pin Lib-Live2D"; exit 1; }
+          test -f "$work/Live2DDemo/resources/raw/Mao/Mao.model3.json" \
+            || { echo "Live2DDemo: the model is not in the project"; exit 1; }
+
           # The two applications build; the library is a lib, so its own test is
           # what says it works -- and `mcpp test` proves the module it exports
           # can actually be imported.
           ( cd "$work/AppDemo" && mcpp build )
           ( cd "$work/NavDemo" && mcpp build )
           ( cd "$work/my-widgets" && mcpp test )
+          ( cd "$work/Live2DDemo" && mcpp build )
 
       - name: Assert the transform ran on a generated project
         run: |

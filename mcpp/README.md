@@ -93,6 +93,10 @@ one would mean writing into a package root that may be read-only. 44 files /
 
 ## Six platforms, one manifest
 
+`huxerui create app <name> --build mcpp --template live2d` is the same story for an
+ecosystem library: a Live2D model on all six rows through one
+`huxerui.live2d` dependency, nothing about Cubism in the application.
+
 The framework's `mcpp.toml` carries one section per target row, and an
 application builds for any of them by naming the row:
 

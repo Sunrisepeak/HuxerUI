@@ -91,6 +91,22 @@ TEST_CASE("HuxerUICliAddsPlatformsToAnMcppManifest") {
   REQUIRE(again.error.find("already declared") != std::string::npos);
 }
 
+TEST_CASE("HuxerUICliSelectsTheLive2DTemplate") {
+  TemporaryDirectory temporary;
+  REQUIRE(Invoke(temporary.Path(),
+              {"create", "app", "Live2D-Demo", "--build", "mcpp", "--template", "live2d", "--agent", "none"})
+              .result == 0);
+  const std::filesystem::path project = temporary.Path() / "Live2D-Demo";
+  // The template pins HuxerUI and Lib-Live2D at one git revision each -- one
+  // HuxerUI for the graph -- so the CLI leaves its dependency lines alone.
+  const std::string manifest = Read(project / "mcpp.toml");
+  REQUIRE(manifest.find("huxerui.live2d  = { git = ") != std::string::npos);
+  REQUIRE(manifest.find("huxerui.huxerui = { git = ") != std::string::npos);
+  REQUIRE(manifest.find("huxerui = { path = ") == std::string::npos);
+  REQUIRE(Read(project / "src/app.cppm").find("import huxerui.live2d;") != std::string::npos);
+  REQUIRE(std::filesystem::is_regular_file(project / "resources/raw/Mao/Mao.model3.json"));
+}
+
 TEST_CASE("HuxerUICliSelectsAnMcppTemplate") {
   TemporaryDirectory temporary;
   REQUIRE(Invoke(temporary.Path(),

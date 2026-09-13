@@ -1,0 +1,129 @@
+// A Live2D model on every platform HuxerUI reaches: the page, the loader
+// that opens the model's files from the application's raw resources, and the
+// Application object whose constructor registers the page.
+//
+// The generated raw-resource identifiers are a header, so this unit opens
+// with a global module fragment for it; huxerui.rules puts the header's
+// directory on the include path. Everything else is imported.
+
+module;
+
+#include "app_resources.h"
+
+export module app;
+
+import std;
+import huxerui;
+import huxerui.live2d;
+
+using namespace huxerui;
+using namespace huxerui::live2d;
+
+namespace {
+
+// Live2D asks for its files by the path the model's manifest uses; the
+// application answers from the raw resources packaged with it.
+using ModelResources = std::map<std::string, RawAsset>;
+
+Task<IoResult<AsyncInputStream>> OpenModelResource(ModelResources resources, std::string path) {
+  const auto found = resources.find(path);
+  if (found == resources.end()) {
+    co_return IoResult<AsyncInputStream>::Failure({IoErrorCode::NotFound, path});
+  }
+  try {
+    co_return IoResult<AsyncInputStream>::Success(co_await found->second.OpenReadAsync());
+  } catch (const std::runtime_error& error) {
+    co_return IoResult<AsyncInputStream>::Failure({IoErrorCode::Io, error.what()});
+  }
+}
+
+Task<void> LoadCharacter(ModelResources resources, State<ModelAsset> asset, State<std::string> status) {
+  auto result = co_await LoadModelAsync(app::raw::Mao_Mao_model3_json, [resources](std::string path) {
+    return OpenModelResource(resources, std::move(path));
+  });
+  if (!result.Succeeded()) {
+    status = result.Error().path + ": " + result.Error().message;
+    co_return;
+  }
+  asset = std::move(result).Value();
+  status = "Preparing graphics...";
+}
+
+}  // namespace
+
+[[huxerui::composable]]
+View CharacterView() {
+  auto asset = UseState(ModelAsset{});
+  auto status = UseState(std::string("Loading Mao..."));
+  auto paused = UseState(false);
+  const ModelController controller = UseState(ModelController{});
+  auto tasks = UseTaskScope();
+
+  // Every file the model's manifest references. The keys are the paths Live2D
+  // asks for; the identifiers are hrc's for the same files.
+  ModelResources resources{
+      {"Mao/Mao.2048/texture_00.png", UseRawResource(app::raw::Mao_Mao_2048_texture_00_png)},
+      {"Mao/Mao.cdi3.json", UseRawResource(app::raw::Mao_Mao_cdi3_json)},
+      {"Mao/Mao.moc3", UseRawResource(app::raw::Mao_Mao_moc3)},
+      {"Mao/Mao.model3.json", UseRawResource(app::raw::Mao_Mao_model3_json)},
+      {"Mao/Mao.physics3.json", UseRawResource(app::raw::Mao_Mao_physics3_json)},
+      {"Mao/Mao.pose3.json", UseRawResource(app::raw::Mao_Mao_pose3_json)},
+      {"Mao/expressions/exp_01.exp3.json", UseRawResource(app::raw::Mao_expressions_exp_01_exp3_json)},
+      {"Mao/expressions/exp_02.exp3.json", UseRawResource(app::raw::Mao_expressions_exp_02_exp3_json)},
+      {"Mao/expressions/exp_03.exp3.json", UseRawResource(app::raw::Mao_expressions_exp_03_exp3_json)},
+      {"Mao/expressions/exp_04.exp3.json", UseRawResource(app::raw::Mao_expressions_exp_04_exp3_json)},
+      {"Mao/expressions/exp_05.exp3.json", UseRawResource(app::raw::Mao_expressions_exp_05_exp3_json)},
+      {"Mao/expressions/exp_06.exp3.json", UseRawResource(app::raw::Mao_expressions_exp_06_exp3_json)},
+      {"Mao/expressions/exp_07.exp3.json", UseRawResource(app::raw::Mao_expressions_exp_07_exp3_json)},
+      {"Mao/expressions/exp_08.exp3.json", UseRawResource(app::raw::Mao_expressions_exp_08_exp3_json)},
+      {"Mao/motions/mtn_01.motion3.json", UseRawResource(app::raw::Mao_motions_mtn_01_motion3_json)},
+      {"Mao/motions/mtn_02.motion3.json", UseRawResource(app::raw::Mao_motions_mtn_02_motion3_json)},
+      {"Mao/motions/mtn_03.motion3.json", UseRawResource(app::raw::Mao_motions_mtn_03_motion3_json)},
+      {"Mao/motions/mtn_04.motion3.json", UseRawResource(app::raw::Mao_motions_mtn_04_motion3_json)},
+      {"Mao/motions/sample_01.motion3.json", UseRawResource(app::raw::Mao_motions_sample_01_motion3_json)},
+      {"Mao/motions/special_01.motion3.json", UseRawResource(app::raw::Mao_motions_special_01_motion3_json)},
+      {"Mao/motions/special_02.motion3.json", UseRawResource(app::raw::Mao_motions_special_02_motion3_json)},
+      {"Mao/motions/special_03.motion3.json", UseRawResource(app::raw::Mao_motions_special_03_motion3_json)},
+  };
+  Lifecycle([tasks, resources, asset, status] {
+    auto request = tasks.Launch(LoadCharacter(resources, asset, status));
+    return [request] { request.Cancel(); };
+  });
+
+  if (!asset->HasValue()) {
+    return Text(status);
+  }
+  const ModelAsset loaded = asset;
+  return Column {
+    ModelView(loaded, {.controller = controller, .paused = paused})
+        .On<ModelEvents::Ready>([controller, loaded, status] {
+          status = "Ready";
+          // Loop the first motion group the model offers.
+          for (const auto& group : loaded.Info().motion_groups) {
+            if (group.count == 0) continue;
+            auto result = controller.PlayMotion(group.name, 0, {.loop = true});
+            if (!result.Succeeded()) status = result.Error().message;
+            break;
+          }
+        })
+        .On<ModelEvents::HitAreaTapped>([status](std::string name) { status = "Tapped: " + name; })
+        .On<ModelEvents::PlaybackFailed>([status](PlaybackError error) { status = error.message; })
+        .With(Frame{.width = 360.0F, .height = 480.0F}),
+    Text(status),
+    Button(paused ? "Resume" : "Pause").OnClick([paused] { paused = !paused; }),
+  }.With(Spacing(8.0F), CrossAlign(CrossAxisAlignment::Center));
+}
+
+View App() {
+  return Column {
+    Text("{{project.name}}", TextRole::Title),
+    CharacterView(),
+  }.With(Padding(24.0F), Spacing(16.0F), CrossAlign(CrossAxisAlignment::Center));
+}
+
+// Not exported: nothing needs to name it. Its constructor runs at static
+// initialisation, which is what registers the application.
+const Application application{
+    App,
+    {.window = {.title = "{{project.name}}", .initial_size = {480.0F, 680.0F}}},
+};
