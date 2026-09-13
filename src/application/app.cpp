@@ -2,12 +2,8 @@
 #include <huxerui/gesture.h>
 
 #include <algorithm>
-#include <chrono>
-#include <cstdio>
-#include <cstdlib>
 #include <memory>
 #include <stdexcept>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -141,37 +137,10 @@ Application::~Application() {
   }
 }
 
-namespace {
-
-// A smoke run ends the process on its own: an application has no reason to
-// stop, and a CI step needs an exit status. HUXERUI_SMOKE_EXIT_MS is the delay
-// after which the process exits 0, having survived startup, first layout and
-// first paint; a crash before then keeps the status a crash produces. _Exit
-// rather than a quit request because the platform loop still owns every
-// object at that moment and a request would have to cross threads into it.
-void ArmSmokeExit() {
-  const char* value = std::getenv("HUXERUI_SMOKE_EXIT_MS");
-  if (value == nullptr || *value == '\0') {
-    return;
-  }
-  const long delay = std::strtol(value, nullptr, 10);
-  if (delay <= 0) {
-    return;
-  }
-  std::thread([delay] {
-    std::this_thread::sleep_for(std::chrono::milliseconds(delay));
-    std::fputs("HuxerUI smoke exit\n", stderr);
-    std::_Exit(0);
-  }).detach();
-}
-
-} // namespace
-
 int RunApplication() {
 #if defined(__ANDROID__) || defined(__EMSCRIPTEN__)
   throw std::runtime_error("RunApplication() is not available on Android or Web");
 #else
-  ArmSmokeExit();
   return detail::RunPlatformApplication(detail::CurrentApplication());
 #endif
 }

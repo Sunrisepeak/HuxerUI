@@ -14,6 +14,8 @@
 #include "profiling_internal.h"
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <stdexcept>
 
 #include <huxerui/file.h>
@@ -1142,6 +1144,12 @@ Runtime::Runtime(const Application& application, PlatformAdapter& platform, Appl
     throw std::invalid_argument("HuxerUI window title-bar height must be finite and positive");
   }
   state_ = std::make_unique<State>(*this, application, platform);
+  if (const char* smoke = std::getenv("HUXERUI_SMOKE_EXIT_MS"); smoke != nullptr && *smoke != '\0') {
+    const long delay_ms = std::strtol(smoke, nullptr, 10);
+    if (delay_ms > 0) {
+      state_->smoke_exit_delay_ = static_cast<double>(delay_ms) / 1000.0;
+    }
+  }
   state_->gesture_settings_ = gesture_settings;
   state_->default_scroll_physics_ = scroll_physics;
   state_->task_delay_scheduler_ = detail::MakeTaskDelayScheduler(platform);
@@ -1578,6 +1586,19 @@ void Runtime::NotifyScrollActivity(detail::MountedNode& node, const ScrollActivi
 
 const FrameCommit& Runtime::BuildFrame() {
   const double timestamp = state_->platform_->Now();
+  // A smoke run: armed on the first frame, so the delay counts from the
+  // moment the application is actually up, and ended by the same quit an
+  // application requests itself, so shutdown is exercised too.
+  if (state_->smoke_exit_delay_ > 0.0) {
+    if (state_->smoke_exit_deadline_ < 0.0) {
+      state_->smoke_exit_deadline_ = timestamp + state_->smoke_exit_delay_;
+      RequestFrameAfter(state_->smoke_exit_delay_);
+    } else if (timestamp >= state_->smoke_exit_deadline_) {
+      state_->smoke_exit_delay_ = 0.0;
+      std::fputs("HuxerUI smoke exit\n", stderr);
+      RequestApplicationQuit();
+    }
+  }
   const double delta_time = state_->previous_frame_timestamp_.has_value()
                                 ? std::clamp(timestamp - *state_->previous_frame_timestamp_, 0.0, 0.25)
                                 : 0.0;
