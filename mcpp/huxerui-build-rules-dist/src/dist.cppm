@@ -14,19 +14,6 @@ import mcpp.dist.apple;
 import mcpp.dist.web;
 import mcpp.dist.apk;
 
-// Module linkage, not exported: `huxerui.rules` has a `detail::read_file` of
-// its own, and two exported definitions of one name would collide in every
-// importer.
-namespace huxerui::rules::dist_detail {
-
-inline std::string read_file(const std::filesystem::path& p) {
-    std::ifstream in(p, std::ios::binary);
-    if (!in) return {};
-    return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
-}
-
-} // namespace huxerui::rules::dist_detail
-
 export namespace huxerui::rules {
 
 // What an application must state to get a Windows installer, and nothing it
@@ -81,7 +68,7 @@ struct android_options {
     std::string label;              // android:label; default: the package name
     std::string activity;           // the launcher Activity; default: org.huxerui.HuxerUIActivity
     std::string java;               // a directory of the application's own Java, relative to the manifest; default: android/java when present
-    std::string res;                // an aapt2 `res/` directory, relative to the manifest; default: android/res when present
+    std::string res;                // an aapt2 `res/` directory, relative to the manifest; default: android/res when present, else the SDK's launcher icon set
     std::string manifest_template;  // replaces the manifest the rule ships, relative to the manifest
 };
 
@@ -115,9 +102,8 @@ bool run_member(const char* format, const Plan& plan, bool (*submit)(const Plan&
 // Every format the row serves, provided for `mcpp pack --format <name>` with
 // nothing stated; the options only change what a format produces. `root` is
 // the HuxerUI SDK root, where the page template, the Android manifest and the
-// launcher icon this package ships live.
+// launcher icon set the SDK ships live.
 inline bool provide_formats(const formats& opt, const std::string& root) {
-    using dist_detail::read_file;
     // The distribution formats are `mcpp:plugins`' dist members, reached
     // through this package's own build-dependency. Each is provided on the
     // row it serves and nowhere else, so `mcpp pack --format apk` on a Linux
@@ -193,44 +179,23 @@ inline bool provide_formats(const formats& opt, const std::string& root) {
         a.java_sources   = { root + "/platform/android/huxerui/src/main/java" };
         const std::string java = opt.android.java.empty() ? std::string("android/java") : opt.android.java;
         if (std::filesystem::is_directory(under_manifest(java))) a.java_sources.push_back(under_manifest(java));
-        // An application's res/, when it has one. dist-apk 0.9.0 links it as
-        // an aapt2 overlay (`-R`, no `--auto-add-overlay`), which rejects any
-        // resource the base does not already define -- so a launcher icon
-        // cannot be supplied this way yet, and the rule ships none. 0.9.1
-        // links it as the base (mcpp-plugins#21); the floor moves then.
+        // The application's res/ when it has one, else the launcher icon set
+        // the SDK's Gradle template ships -- one icon in the repository, and
+        // every APK has one. An application's own res/ replaces it whole, so
+        // it carries `@mipmap/ic_launcher`, which the manifest names.
         const std::string res = opt.android.res.empty() ? std::string("android/res") : opt.android.res;
-        if (std::filesystem::is_directory(under_manifest(res))) a.resources = under_manifest(res);
+        a.resources = std::filesystem::is_directory(under_manifest(res))
+            ? under_manifest(res)
+            : root + "/tools/huxerui_cli/templates/platform/android/app/app/src/main/res";
         // The framework's Java root is a dependency's, so its rerun glob would
         // match nothing; the list the rule package carries is what re-runs
         // this program when a host file is added or removed.
         mcpp::rerun_if_changed((root + "/mcpp/huxerui-build-rules-dist/android/java-sources.txt").c_str());
-        if (!opt.android.manifest_template.empty()) {
-            a.manifest_template = under_manifest(opt.android.manifest_template);
-        } else {
-            const std::string tmpl = root + "/mcpp/huxerui-build-rules-dist/android/AndroidManifest.xml.in";
-            std::string text = read_file(tmpl);
-            if (text.empty()) {
-                std::cerr << "huxerui.rules: cannot read " << tmpl << "\n";
-                return false;
-            }
-            // The manifest names an icon only when a res/ can hold one.
-            const std::string icon = a.resources.empty() ? std::string()
-                : std::string("android:icon=\"@mipmap/ic_launcher\"\n        android:roundIcon=\"@mipmap/ic_launcher\"\n        ");
-            const std::size_t at = text.find("@@ICON@@");
-            if (at == std::string::npos) {
-                std::cerr << "huxerui.rules: " << tmpl << " no longer carries @@ICON@@\n";
-                return false;
-            }
-            text.replace(at, std::string("@@ICON@@").size(), icon);
-            const std::string rendered = std::string(mcpp::out_dir()) + "/android/AndroidManifest.xml.in";
-            std::error_code ec;
-            std::filesystem::create_directories(std::filesystem::path(rendered).parent_path(), ec);
-            std::ofstream file(rendered, std::ios::binary | std::ios::trunc);
-            if (!file) { std::cerr << "huxerui.rules: cannot write " << rendered << "\n"; return false; }
-            file << text;
-            mcpp::rerun_if_changed(tmpl.c_str());
-            a.manifest_template = rendered;
-        }
+        // dist-apk joins the template to the manifest directory; an absolute
+        // path survives the join, which is how the SDK's own reaches it.
+        a.manifest_template = opt.android.manifest_template.empty()
+            ? root + "/mcpp/huxerui-build-rules-dist/android/AndroidManifest.xml.in"
+            : under_manifest(opt.android.manifest_template);
         mcpp::provides_pack_format("apk");
         if (!run_member("apk", mcpp::dist::apk::plan_for(a), &mcpp::dist::apk::submit)) return false;
     }

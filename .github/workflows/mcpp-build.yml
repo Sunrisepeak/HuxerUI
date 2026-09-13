@@ -154,10 +154,9 @@ jobs:
 
       - name: Select the pinned mcpp
         # A restored cache keeps whichever mcpp was active when it was saved;
-        # `xlings install` adds a version without switching to it.
+        # `--use` activates the pinned one.
         run: |
-          xlings install "mcpp@${MCPP_VERSION}" -y
-          xlings use mcpp "${MCPP_VERSION}"
+          xlings install "mcpp@${MCPP_VERSION}" -y --use
           mcpp --version | tee version.txt
           grep -q "${MCPP_VERSION}" version.txt || { echo "mcpp ${MCPP_VERSION} is not the active mcpp"; exit 1; }
 
@@ -224,10 +223,9 @@ jobs:
 
       - name: Select the pinned mcpp
         # A restored cache keeps whichever mcpp was active when it was saved;
-        # `xlings install` adds a version without switching to it.
+        # `--use` activates the pinned one.
         run: |
-          xlings install "mcpp@${MCPP_VERSION}" -y
-          xlings use mcpp "${MCPP_VERSION}"
+          xlings install "mcpp@${MCPP_VERSION}" -y --use
           mcpp --version | tee version.txt
           grep -q "${MCPP_VERSION}" version.txt || { echo "mcpp ${MCPP_VERSION} is not the active mcpp"; exit 1; }
 
@@ -407,8 +405,7 @@ jobs:
       # be a per-command environment variable for two of the three.
       - name: Select the pinned mcpp and make clang the default toolchain
         run: |
-          xlings install "mcpp@${MCPP_VERSION}" -y
-          xlings use mcpp "${MCPP_VERSION}"
+          xlings install "mcpp@${MCPP_VERSION}" -y --use
           mcpp --version
           # `default` selects; it does not install. On a cold cache the next
           # command is `error: llvm@22.1.8 is not installed`.
@@ -487,10 +484,9 @@ jobs:
 
       - name: Select the pinned mcpp
         # A restored cache keeps whichever mcpp was active when it was saved;
-        # `xlings install` adds a version without switching to it.
+        # `--use` activates the pinned one.
         run: |
-          xlings install "mcpp@${MCPP_VERSION}" -y
-          xlings use mcpp "${MCPP_VERSION}"
+          xlings install "mcpp@${MCPP_VERSION}" -y --use
           mcpp --version | tee version.txt
           grep -q "${MCPP_VERSION}" version.txt || { echo "mcpp ${MCPP_VERSION} is not the active mcpp"; exit 1; }
 
@@ -564,10 +560,9 @@ jobs:
 
       - name: Select the pinned mcpp
         # A restored cache keeps whichever mcpp was active when it was saved;
-        # `xlings install` adds a version without switching to it.
+        # `--use` activates the pinned one.
         run: |
-          xlings install "mcpp@${MCPP_VERSION}" -y
-          xlings use mcpp "${MCPP_VERSION}"
+          xlings install "mcpp@${MCPP_VERSION}" -y --use
           mcpp --version | tee version.txt
           grep -q "${MCPP_VERSION}" version.txt || { echo "mcpp ${MCPP_VERSION} is not the active mcpp"; exit 1; }
 
@@ -623,8 +618,7 @@ jobs:
 
       - name: Select the pinned mcpp
         run: |
-          xlings install "mcpp@${MCPP_VERSION}" -y
-          xlings use mcpp "${MCPP_VERSION}"
+          xlings install "mcpp@${MCPP_VERSION}" -y --use
           mcpp --version | tee version.txt
           grep -q "${MCPP_VERSION}" version.txt || { echo "mcpp ${MCPP_VERSION} is not the active mcpp"; exit 1; }
 
@@ -690,10 +684,9 @@ jobs:
 
       - name: Select the pinned mcpp
         # A restored cache keeps whichever mcpp was active when it was saved;
-        # `xlings install` adds a version without switching to it.
+        # `--use` activates the pinned one.
         run: |
-          xlings install "mcpp@${MCPP_VERSION}" -y
-          xlings use mcpp "${MCPP_VERSION}"
+          xlings install "mcpp@${MCPP_VERSION}" -y --use
           mcpp --version | tee version.txt
           grep -q "${MCPP_VERSION}" version.txt || { echo "mcpp ${MCPP_VERSION} is not the active mcpp"; exit 1; }
 
@@ -752,8 +745,7 @@ jobs:
       - name: Select the pinned mcpp
         shell: pwsh
         run: |
-          xlings install "mcpp@$env:MCPP_VERSION" -y
-          xlings use mcpp "$env:MCPP_VERSION"
+          xlings install "mcpp@$env:MCPP_VERSION" -y --use
           mcpp --version
 
       - name: Build the framework
@@ -886,10 +878,9 @@ jobs:
 
       - name: Select the pinned mcpp
         # A restored cache keeps whichever mcpp was active when it was saved;
-        # `xlings install` adds a version without switching to it.
+        # `--use` activates the pinned one.
         run: |
-          xlings install "mcpp@${MCPP_VERSION}" -y
-          xlings use mcpp "${MCPP_VERSION}"
+          xlings install "mcpp@${MCPP_VERSION}" -y --use
           mcpp --version | tee version.txt
           grep -q "${MCPP_VERSION}" version.txt || { echo "mcpp ${MCPP_VERSION} is not the active mcpp"; exit 1; }
 

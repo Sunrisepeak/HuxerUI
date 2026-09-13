@@ -115,7 +115,7 @@ mcpp build --target x86_64-linux-android
 NDK, emsdk, JDK, simulator and emulator tooling are xlings payloads mcpp
 installs on first use; iOS additionally needs Xcode on the machine, because
 Apple's SDK is located rather than installed. **Floor: mcpp 2026.9.13.1 and
-`mcpp:plugins` 0.9.0** — the manifest keys this build relies on
+`mcpp:plugins` 0.9.1** — the manifest keys this build relies on
 (`kind = "app"`, `mcpp::deploy`, per-target `frameworks`, `abi.exceptions`,
 `requires_abi` on the target axis) do not exist or are silently ignored below
 that, and the templates say so in a comment.

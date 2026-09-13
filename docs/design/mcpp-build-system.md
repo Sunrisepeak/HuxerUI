@@ -257,7 +257,7 @@ alone. Unconditional is correct: the engine renders it only for Mach-O.
 `mcpp pack` owns the mechanism and the two universal shapes, `tar` and `dir`;
 every other format lives in a package that declares it and is reached with
 `mcpp pack --format <name>`. The packages here are the `dist-*` members of
-`mcpp:plugins` (0.9.0 is the floor), and `huxerui.rules` is what puts them on
+`mcpp:plugins` (0.9.1 is the floor), and `huxerui.rules` is what puts them on
 every application's build program: it is a host module that `huxerui`
 re-exports, so an application names neither the members nor the payloads they
 run.
@@ -305,8 +305,12 @@ MODULARIZE launcher the emscripten section exports and mounts the application;
 an application replaces it with `.web.template_file`. The APK is dist-apk's
 level 1: the framework's Java host (`platform/android/huxerui/src/main/java`)
 is the first source root, the application's `android/java` the second when it
-exists, `android/res` its resources, and the launcher Activity is
-`org.huxerui.HuxerUIActivity` unless the application names a subclass. The
+exists, `android/res` its resources when it has one (else the launcher icon
+set the SDK's Gradle template ships, `tools/huxerui_cli/templates/platform/
+android/app/app/src/main/res`, so the icon lives once in the repository; an
+application's own `res/` replaces it whole and carries `@mipmap/ic_launcher`),
+and the launcher Activity is `org.huxerui.HuxerUIActivity` unless the
+application names a subclass. The
 manifest the rule ships names the application's library in
 `org.huxerui.app_library`, which is how the Activity loads the application's
 shared object before the framework's `HuxerUIView` looks for `libhuxerui.so`
@@ -432,23 +436,6 @@ what `mcpp::deploy` placed; HuxerUI's own AppKit adapter falls back to the
 executable's directory, and a library relying on `NSBundle` — Cubism's Metal
 shader loader reads `FrameworkMetallibs/` that way — needs dist-apple to
 learn a resource destination. The iOS bundle is flat and unaffected.
-
-**An APK carries no launcher icon.** dist-apk 0.9.0 compiles a `resources`
-directory and links it as an aapt2 overlay (`-R compiled.zip`, without
-`--auto-add-overlay`), which rejects every resource the base does not already
-define — `color/ic_launcher_background does not override an existing
-resource`. A primary `res/` therefore cannot be supplied through the member
-yet; the rule renders the manifest's icon attributes only when an
-application has one, and the templates ship none. Fixed on the member's
-side in mcpp-community/mcpp-plugins#21 (0.9.1 links `res/` positionally, as
-the base); once that is released and indexed, the floor moves to 0.9.1 and
-the templates get their launcher icons back.
-
-**`xim:android-platform` is declared twice.** dist-apk pins 35-r2 and the
-rule package 36-r2 (§7); every Android build prints mcpp's two-versions
-warning and uses 36-r2. The pin goes away when the member's own reaches a
-release: mcpp-plugins#21 raises it to 36-r2 (the recipe is in xim-pkgindex
-since openxlings/xim-pkgindex#834).
 
 **A universal APK is one ABI at a time.** `mcpp pack` hands a format provider
 one staged tree for one target; an APK with `lib/arm64-v8a` and `lib/x86_64`
