@@ -120,7 +120,7 @@ that, and the templates say so in a comment.
 |---|---|---|
 | Windows | `msi` | — |
 | Linux | `appimage` | — |
-| macOS, iOS simulator | `app` | `simctl-run` (iOS) |
+| macOS, iOS simulator | `app` — the executable only, until mcpp stages Mach-O programs (design §9) | `simctl-run` (iOS) |
 | Android | `apk` | `adb-run` |
 | Web | `web` (a static directory) | any static HTTP server |
 

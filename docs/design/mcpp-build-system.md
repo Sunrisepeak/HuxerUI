@@ -395,6 +395,16 @@ from `libclang_rt.iossim.a`, which is not on the link line. The framework
 compiles; the example's link fails. Both are the engine's row to fix, and CI
 reports them until it does.
 
+**macOS and iOS programs are not staged.** `mcpp pack` builds a program's
+staged tree by running it under the target's dynamic linker with
+`LD_TRACE_LOADED_OBJECTS`, which dyld ignores, and 2026.9.13.1 refuses
+rather than attempts it in every `--mode`: "no staged tree for --format app:
+cannot package the Mach-O program … until macOS support lands". dist-apple
+then bundles the bare executable, and nothing `mcpp::deploy` placed — the
+resource package under `HuxerUI/`, a library's shader libraries — reaches
+the bundle. The macOS and iOS rows build and link (iOS: see above) and the
+`.app` is produced; a runnable bundle with resources waits on the engine.
+
 **On macOS, a deployed directory is beside the executable, not a resource.**
 dist-apple copies the staged tree into `Contents/MacOS/`, so
 `NSBundle` resource lookups (`URLForResource:subdirectory:`) do not find
