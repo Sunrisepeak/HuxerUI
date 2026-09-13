@@ -4,8 +4,9 @@
 # host module's `[xlings.workspace]` counts as that package's own; this
 # package is compiled into every HuxerUI application's and library's build
 # program, so its table is what `huxerui::rules::linux_gtk()` resolves there.
-# The root mcpp.toml declares the same 37 payloads for the artifact itself,
-# and huxerui-build-check fails when the two tables differ.
+# It is the ONLY place the table lives: the framework's own build reaches it
+# the same way, and huxerui-build-check fails if the root manifest grows a
+# second copy or this one loses a module the probe asks for.
 
 [package]
 name        = "huxerui-build-rules-gtk"

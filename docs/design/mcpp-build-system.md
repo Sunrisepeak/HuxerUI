@@ -195,19 +195,25 @@ which keeps the host out entirely. They are declared on the **target** axis
 (`[target.'cfg(linux)'.xlings.workspace]`) because they are what the produced
 code is compiled and linked against.
 
-### The table is declared twice, and a library calls the rule
+### The table is declared once, and a library calls the rule
 
 `xpkg_dir` answers only for payloads the *building* package declared, and a
-host module's `[xlings.workspace]` counts as that package's own. So the same
-37 entries appear under `mcpp/huxerui-build-rules-gtk/mcpp.toml` — the rule
-package is a host module compiled into every application's and library's
-build program — and `huxerui::rules::linux_gtk(link)` runs the pkg-config
+host module's `[xlings.workspace]` counts as that package's own. So the 37
+entries live in `mcpp/huxerui-build-rules-gtk/mcpp.toml` — the rule package is
+a host module compiled into the framework's, every application's and every
+library's build program — and nowhere else; measured: with the root
+manifest's copy removed, the framework builds, the example runs and its
+RPATH is byte-identical. `huxerui::rules::linux_gtk(link)` runs the pkg-config
 probe wherever it is called: the framework's `build.mcpp` calls it with
 `link` (the `-l`/`-L` half reaches every consumer's final link), and a
 library whose own sources include GTK headers calls it without, because the
 `-I` half of a dependency's probe colours the dependency's translation units
 only. Lib-Live2D's GL surface is that library, and its manifest declares no
-GTK. `huxerui-build-check` fails when the two tables differ.
+GTK. Four of the entries are what the probe asks for (`gtk4`, `libepoxy`,
+`libsoup`, `glib`); the other 33 are their `.pc` `Requires` closure, spelled
+out because pkg-config searches the declared payloads and nothing else, and
+pinned exactly because that is what makes two machines build one binary.
+`huxerui-build-check` fails if the root manifest grows a second copy.
 
 ### Dialect flags belong to the whole graph
 
@@ -459,16 +465,14 @@ bumps its own version.
 
 **A published package carries no consumer dependencies.** `mcpp emit xpkg`
 derives a descriptor's `xpm.<platform>.deps` from the top-level
-`[xlings.workspace]` only, and the GTK payloads are declared on the target axis
-because that is what they are, and mcpp's own guidance says so: *for anything
-the produced code is compiled or linked against, the target axis is the
-recommended form*. Declaring them on both axes satisfies the descriptor, but
-the host-axis copy is right only by accident — it states a target fact about
-the build machine, and stops being right the first time the package is
-cross-compiled. Until mcpp derives consumer dependencies from the target axis,
-a published `huxerui.huxerui` would resolve and then fail to link on a machine
-without the payloads. Path and git dependencies are unaffected — they provision the target
-axis, which is what `mcpp/examples/` relies on.
+`[xlings.workspace]` only, and the GTK payloads are declared by the rule
+package on the target axis, because that is what they are: *for anything the
+produced code is compiled or linked against, the target axis is the
+recommended form*. Until mcpp derives consumer dependencies from a host
+module's target axis, a published `huxerui.huxerui` would resolve and then
+fail to link on a machine without the payloads. Path and git dependencies
+are unaffected — they provision the graph's declarations, which is what
+`mcpp/examples/` and Lib-Live2D rely on.
 
 **`tests/runtime` and `tests/platform` are not in the mcpp suite.** They reach
 fixtures a CMake step generates, and each needs an mcpp equivalent before it

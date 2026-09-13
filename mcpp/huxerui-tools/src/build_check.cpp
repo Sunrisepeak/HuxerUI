@@ -285,10 +285,10 @@ void check_one_template(const std::filesystem::path& root,
     }
 }
 
-// The Linux payload table is declared twice on purpose -- at the root for the
-// artifact, in the rule package so that a consumer's build program can resolve
-// it (`huxerui::rules::linux_gtk`) -- and this is what keeps the two copies
-// one table.
+// The Linux payload table lives once, in the gtk rule package: a host module's
+// declaration reaches every build program, the framework's included. The root
+// manifest must not grow a second copy, and the rule package's must keep the
+// four modules the probe asks for.
 std::map<std::string, std::string> linux_payloads(const toml::table& manifest) {
     std::map<std::string, std::string> out;
     const toml::node_view<const toml::node> section =
@@ -309,16 +309,12 @@ void check_linux_payloads(const std::filesystem::path& root, const toml::table& 
         fail(std::string("mcpp/huxerui-build-rules-gtk/mcpp.toml does not parse: ") + std::string(error.description()));
         return;
     }
-    const auto artifact = linux_payloads(manifest);
-    const auto rule     = linux_payloads(rules);
-    if (artifact.empty()) fail("mcpp.toml declares no Linux payloads under [target.'cfg(all(linux, not(env = \"android\")))'.xlings.workspace]");
-    for (const auto& [name, version] : artifact) {
-        const auto it = rule.find(name);
-        if (it == rule.end()) fail("mcpp/huxerui-build-rules-gtk/mcpp.toml lacks " + name + " = \"" + version + "\" (declared at the root)");
-        else if (it->second != version) fail(name + " is " + version + " at the root and " + it->second + " in mcpp/huxerui-build-rules-gtk/mcpp.toml");
-    }
-    for (const auto& [name, version] : rule) {
-        if (!artifact.contains(name)) fail("mcpp.toml lacks " + name + " = \"" + version + "\" (declared in mcpp/huxerui-build-rules-gtk/mcpp.toml)");
+    if (!linux_payloads(manifest).empty())
+        fail("mcpp.toml declares Linux payloads; the table lives in mcpp/huxerui-build-rules-gtk/mcpp.toml alone");
+    const auto rule = linux_payloads(rules);
+    for (const char* direct : { "xim:gtk4", "xim:libepoxy", "xim:libsoup", "xim:glib" }) {
+        if (!rule.contains(direct))
+            fail(std::string("mcpp/huxerui-build-rules-gtk/mcpp.toml lacks ") + direct + ", which linux_gtk() probes");
     }
 }
 
