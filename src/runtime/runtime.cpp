@@ -14,8 +14,11 @@
 #include "profiling_internal.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <thread>
+#include <chrono>
 #include <stdexcept>
 
 #include <huxerui/file.h>
@@ -1114,7 +1117,9 @@ Runtime::State::State(Runtime& owner, const Application& application, PlatformAd
       window_(std::make_shared<WindowState>(application.options.window)),
       root_scope_(std::make_shared<RecomposeScope>(owner, 1)), layer_controller_(owner) {}
 
-Runtime::State::~State() = default;
+Runtime::State::~State() {
+  alive_->store(false);
+}
 
 Runtime::Runtime(const Application& application, PlatformAdapter& platform, ApplicationActivation startup_activation) {
   ValidateViewportBreakpoints(application.options.viewport_breakpoints);
@@ -1144,10 +1149,29 @@ Runtime::Runtime(const Application& application, PlatformAdapter& platform, Appl
     throw std::invalid_argument("HuxerUI window title-bar height must be finite and positive");
   }
   state_ = std::make_unique<State>(*this, application, platform);
-  if (const char* smoke = std::getenv("HUXERUI_SMOKE_EXIT_MS"); smoke != nullptr && *smoke != '\0') {
-    const long delay_ms = std::strtol(smoke, nullptr, 10);
-    if (delay_ms > 0) {
-      state_->smoke_exit_delay_ = static_cast<double>(delay_ms) / 1000.0;
+  // HUXERUI_SMOKE_EXIT_MS: a CI smoke run ends the application this many
+  // milliseconds after start, through the same RequestApplicationQuit an
+  // application's own Quit() takes, so shutdown runs and the exit status is
+  // main()'s. A timer thread, not a frame: the delay must fire on a display
+  // that never produces a frame (a bare Xvfb), and the platform's UI-thread
+  // dispatcher is the one channel that reaches the loop from elsewhere. The
+  // quit is a no-op once this runtime is gone.
+  if (const char* smoke = std::getenv("HUXERUI_SMOKE_EXIT_MS");
+      smoke != nullptr && *smoke != '\0' && state_->ui_thread_dispatcher_) {
+    if (const long delay_ms = std::strtol(smoke, nullptr, 10); delay_ms > 0) {
+      // The flag is cleared by the state's destructor on the UI thread, the
+      // thread the dispatched quit runs on, so a true flag there means the
+      // platform is still alive for the call.
+      std::thread([alive = state_->alive_, platform = state_->platform_,
+                   dispatch = state_->ui_thread_dispatcher_, delay_ms] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
+        dispatch([alive, platform] {
+          if (alive->load()) {
+            std::fputs("HuxerUI smoke exit\n", stderr);
+            platform->RequestApplicationQuit();
+          }
+        });
+      }).detach();
     }
   }
   state_->gesture_settings_ = gesture_settings;
@@ -1586,19 +1610,6 @@ void Runtime::NotifyScrollActivity(detail::MountedNode& node, const ScrollActivi
 
 const FrameCommit& Runtime::BuildFrame() {
   const double timestamp = state_->platform_->Now();
-  // A smoke run: armed on the first frame, so the delay counts from the
-  // moment the application is actually up, and ended by the same quit an
-  // application requests itself, so shutdown is exercised too.
-  if (state_->smoke_exit_delay_ > 0.0) {
-    if (state_->smoke_exit_deadline_ < 0.0) {
-      state_->smoke_exit_deadline_ = timestamp + state_->smoke_exit_delay_;
-      RequestFrameAfter(state_->smoke_exit_delay_);
-    } else if (timestamp >= state_->smoke_exit_deadline_) {
-      state_->smoke_exit_delay_ = 0.0;
-      std::fputs("HuxerUI smoke exit\n", stderr);
-      RequestApplicationQuit();
-    }
-  }
   const double delta_time = state_->previous_frame_timestamp_.has_value()
                                 ? std::clamp(timestamp - *state_->previous_frame_timestamp_, 0.0, 0.25)
                                 : 0.0;

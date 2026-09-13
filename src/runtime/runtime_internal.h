@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <any>
 #include <cstddef>
 #include <cstdint>
@@ -485,6 +486,8 @@ struct Runtime::State {
   Runtime& owner_;
   RootFactory root_factory_;
   PlatformAdapter* platform_;
+  // Cleared by ~State; a smoke-exit timer checks it before touching platform_.
+  std::shared_ptr<std::atomic<bool>> alive_ = std::make_shared<std::atomic<bool>>(true);
   UIThreadDispatcher ui_thread_dispatcher_;
   ViewportBreakpoints viewport_breakpoints_;
   std::shared_ptr<detail::WindowState> window_;
@@ -520,10 +523,6 @@ struct Runtime::State {
   bool building_frame_ = false;
   bool frame_requested_ = false;
   double frame_request_deadline_ = 0.0;
-  // HUXERUI_SMOKE_EXIT_MS: a CI smoke run quits the application this many
-  // milliseconds after its first frame, through the platform's own quit path.
-  double smoke_exit_delay_ = 0.0;
-  double smoke_exit_deadline_ = -1.0;
   std::optional<double> previous_frame_timestamp_;
   std::uint64_t next_node_identity_ = 1;
   std::uint64_t next_scope_identity_ = 2;
