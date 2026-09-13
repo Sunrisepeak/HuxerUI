@@ -234,6 +234,27 @@ inline std::vector<edge> plan_codegen(std::span<const std::string> sources) {
 }
 
 // --------------------------------------------------------------- resources --
+namespace detail {
+
+// THE ACCESSORS AS A MODULE, `<namespace>.resources`, for a package written
+// in module units. hrc writes the header and this unit from one list, so
+// such an application writes `import app.resources;` and no header at all
+// -- the same mechanism hcg's transformed units use: an action output
+// declared as a module interface (`provides`) whose graph node mcpp seeds
+// before the generator runs. Header-style packages get the header only:
+// the rule forces `<typeinfo>` and the scope prelude into every one of
+// their translation units, and a forced include lands before `export
+// module`, which no compiler accepts.
+inline void add_resources_module(edge& e, const std::string& odir, const std::string& ns) {
+    e.command.push_back("--module-name");
+    e.command.push_back(ns + ".resources");
+    e.outputs.insert(e.outputs.begin(), odir + "/app/modules/" + ns + "_resources.cppm");
+    e.provides = ns + ".resources";
+    e.imports  = { "huxerui" };
+}
+
+} // namespace detail
+
 // Two hrc invocations plus a merge, which is the shape of
 // cmake/HuxerUIResourceBuild.cmake: compile each root, then merge the packages.
 //
@@ -243,7 +264,7 @@ inline std::vector<edge> plan_codegen(std::span<const std::string> sources) {
 // dep_dir() -- the dependency's SOURCE root. `resources/` is source, so it is
 // reachable; the compiled package is not. Recompiling 44 files / 196 KB is the
 // cost of not inventing a channel mcpp deliberately does not have.
-inline std::vector<edge> plan_resources(const options& opt, bool application) {
+inline std::vector<edge> plan_resources(const options& opt, bool application, bool module_units) {
     std::vector<edge> out;
     const std::string hrc = host_tool("hrc");
     if (hrc.empty()) return out;
@@ -264,23 +285,21 @@ inline std::vector<edge> plan_resources(const options& opt, bool application) {
         const std::string src  = (std::filesystem::path(mcpp::manifest_dir()) / opt.resources).string();
         const std::string dep  = odir + "/app.d";
         const std::string bin  = odir + "/app/package/huxerui/resources.bin";
-        const std::string unit = odir + "/app/modules/" + ns + "_resources.cppm";
-        std::vector<std::string> outputs{ unit };
+        std::vector<std::string> outputs;
         for (const std::string& p : huxerui::rules::sources::resource_outputs(src, ns))
             outputs.push_back(odir + "/app/package/" + p);
-        out.push_back(edge{
+        edge e{
             .id          = "hrc:app",
             .role        = "source",
             .description = "library resources " + opt.resources,
             .command     = { hrc, "--root", src, "--output", odir + "/app", "--namespace", ns,
-                             "--module-name", ns + ".resources",
                              "--depfile", dep, "--depfile-target", bin },
             .inputs      = { hrc },
             .outputs     = outputs,
-            .provides    = ns + ".resources",
-            .imports     = { "huxerui" },
             .depfile     = dep,
-        });
+        };
+        if (module_units) detail::add_resources_module(e, odir, ns);
+        out.push_back(std::move(e));
         mcpp::warning((std::string("huxerui.rules: ") + mcpp::package_name()
                        + " is a library; its resources are compiled for its own header and do not "
                          "reach the application's resource package under mcpp yet").c_str());
@@ -345,31 +364,23 @@ inline std::vector<edge> plan_resources(const options& opt, bool application) {
         // the 8192 byte ceiling between the project and its own build.
         const std::string dep = odir + "/app.d";
         const std::string bin = odir + "/app/package/huxerui/resources.bin";
-        // THE ACCESSORS AS A MODULE, `<namespace>.resources`. hrc writes the
-        // header and this module unit from one list, so a module-style
-        // application writes `import app.resources;` and no header at all --
-        // the same mechanism hcg's transformed module units use: an action
-        // output declared as a module interface (`provides`) whose graph
-        // node mcpp seeds before the generator runs.
-        const std::string unit = odir + "/app/modules/" + ns + "_resources.cppm";
-        std::vector<std::string> outputs{ unit };
+        std::vector<std::string> outputs;
         for (const std::string& p : huxerui::rules::sources::resource_outputs(app_src, ns))
             outputs.push_back(odir + "/app/package/" + p);
-        out.push_back(edge{
+        edge e{
             .id          = "hrc:app",
             .role        = "source",
             .description = "application resources " + opt.resources,
             .command     = { hrc, "--root", app_src,
                              "--output", odir + "/app",
                              "--namespace", ns,
-                             "--module-name", ns + ".resources",
                              "--depfile", dep, "--depfile-target", bin },
             .inputs      = { hrc },
             .outputs     = outputs,
-            .provides    = ns + ".resources",
-            .imports     = { "huxerui" },
             .depfile     = dep,
-        });
+        };
+        if (module_units) detail::add_resources_module(e, odir, ns);
+        out.push_back(std::move(e));
         packages.push_back(odir + "/app/package");
     }
 
@@ -608,7 +619,7 @@ inline bool configure(options opt = {}) {
     // deploys nothing (plan_resources says why).
     const bool application = std::filesystem::is_regular_file(
         std::filesystem::path(mcpp::manifest_dir()) / opt.entry);
-    auto rs = plan_resources(opt, application);
+    auto rs = plan_resources(opt, application, has_module_interface);
     if (!rs.empty()) {
         mcpp::include_dir(
             (std::string(mcpp::out_dir()) + "/hrc/builtin/include").c_str());
