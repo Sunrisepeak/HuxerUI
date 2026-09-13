@@ -1,13 +1,6 @@
-# c++23, and it is a workaround rather than a language requirement.
-#
-# The module unit writes `import std;`, which every implementation this project
-# builds with supports at c++20 -- the MSVC STL's named modules are documented
-# as needing /std:c++20 or later. But mcpp's clang-on-Windows path hardcodes
-# `importStdMinLevel = 23` instead of probing the STL it found
-# (mcpp-community/mcpp#603), and refuses the build below c++23.
-#
-# A module graph has exactly one standard, so this compiles huxerui at c++23
-# too. Change this line back to c++20 once #603 is fixed.
+# c++23 is a workaround: mcpp's clang-on-Windows path refuses `import std;`
+# below it (mcpp-community/mcpp#603). One standard per module graph, so this
+# compiles HuxerUI at c++23 too; back to c++20 once #603 is fixed.
 [package]
 name        = "huxerui-example-library"
 version     = "0.1.0"
@@ -23,36 +16,24 @@ huxerui        = { path = "../../.." }
 example-widgets = { path = "widgets" }
 
 [targets.huxerui_example_library]
-# `app`, not `bin`: the thing a user launches, which every row supplies its own
-# file for -- an executable on the desktop rows, a `.js` launcher on the Web,
-# and on Android the shared object the Java host loads (mcpp 2026.9.12.3+).
+# `app`: an executable on the desktop rows, a `.js` launcher on the Web, the
+# shared object the Java host loads on Android.
 kind = "app"
 main = "src/main.cpp"
-# The GUI subsystem, and the portable `int main()` that keeps it.
-#
-# Without this a double-clicked executable opens a console window behind the
-# application. The keys are here rather than in the entry source because the
-# correct linker flags depend on the ABI -- MSVC takes `/SUBSYSTEM:WINDOWS`
-# with `/ENTRY:mainCRTStartup`, MinGW takes `-mwindows` -- and they reach this
-# executable's link only, never the test binaries or a consumer. Requires
-# mcpp 2026.9.12.2+. On Linux and macOS they render nothing and the artifact
-# is byte-identical.
+# No console window behind the application on Windows; inert elsewhere.
 windows_subsystem = "windows"
 
 [build]
 ios_deployment_target = "15.0"
 sources = []
 
-# THE ARTIFACT'S EXCEPTION MODEL. Only a root manifest may state it, and
-# HuxerUI requires it on the Web, where Emscripten's default is off; an
-# application writes this section once.
+# The Web build's exception model; HuxerUI requires it, and only a root can
+# state it.
 [target.'cfg(os = "emscripten")'.abi]
 exceptions = true
 
-# The rows that run somewhere other than the build machine, and the program
-# that gets the artifact there: `adb-run` from xim:android-platform-tools,
-# `simctl-run` from xim:apple-simulator-tools. `mcpp run --target <row>
-# --format apk|app` packages first and hands the runner the result.
+# `mcpp run --target <row> --format apk|app` packages and hands the result to
+# the row's runner (xim:android-platform-tools, xim:apple-simulator-tools).
 [target.x86_64-linux-android]
 min_api_level = 23
 runner = ["adb-run"]
@@ -60,11 +41,8 @@ runner = ["adb-run"]
 min_api_level = 23
 [target.aarch64-ios-sim]
 runner = ["simctl-run"]
-# llvm@20.1.7, not the row's default 22.1.8: the SDK's libc++.dylib is what
-# the program links, and 22's headers reference runtime symbols it does not
-# export yet (the atomic-wait table); 20's reference only what Xcode 26's
-# libc++ has. The framework's build program adds Apple's compiler-rt
-# builtins for `@available`. Design §9.
+# llvm@20.1.7, not the row's default 22.1.8: 22's libc++ headers reference
+# runtime symbols the SDK's libc++.dylib does not export (HuxerUI design §9).
 toolchain = "llvm@20.1.7"
 [target.aarch64-ios]
 toolchain = "llvm@20.1.7"
