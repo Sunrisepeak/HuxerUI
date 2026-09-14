@@ -1,0 +1,22 @@
+# The unit suite, CMake's HuxerUIUnitTests
+[package]
+name        = "huxerui-tests-unit"
+namespace   = "huxerui"
+version     = "0.3.0"
+standard    = "c++20"
+description = "The unit suite, CMake's HuxerUIUnitTests"
+license     = "MIT"
+
+[dependencies]
+huxerui.huxerui-tests = { path = ".." }
+huxerui.huxerui       = { path = "../../..", features = ["profiling"] }
+
+[build]
+sources = [
+    "../../../tests/unit/*.cpp",
+    "../../../examples/buffer_reference/frame_source.cpp",
+]
+# The framework's implementation headers, as huxerui_add_test_suite() adds src/.
+include_dirs         = ["../../../src"]
+private_include_dirs = ["../../../src"]
+

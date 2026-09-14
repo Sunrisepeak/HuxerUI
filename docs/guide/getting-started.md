@@ -65,13 +65,7 @@ The source override applies only to that CLI process and its build children; it 
 
 Direct CMake builds of generated projects use `-DHUXERUI_HOME=<path>`. CMake loads the source checkout or installed package at that location. Use a separate build directory for each framework location; the CLI does this automatically.
 
-The SDK CLI also provides an independent mcpp frontend for projects that own an `mcpp.toml` manifest:
-
-```bash
-huxerui mcpp build --source ../my-mcpp-project
-```
-
-This command invokes mcpp directly and does not change the existing HuxerUI CMake build or platform commands. It is a generic mcpp entry point; the mcpp project remains responsible for its own sources, dependencies, and framework integration.
+In a project created with `--build mcpp`, the same verbs drive mcpp for the named platform: `huxerui build android` is `mcpp build --target x86_64-linux-android`, `huxerui run android` is `mcpp run --target … --format apk`, and `huxerui package windows` is `mcpp pack --target … --format setup`, the Setup.exe a CMake project packages. `huxerui doctor` reports whether mcpp is available and leaves the toolchains to `mcpp self doctor`. See [C++20/23 Modules and mcpp: Six Platforms](cpp-modules-and-mcpp.md).
 
 The CLI passes the selected framework home through its process environment and build arguments without writing it into platform configuration files. Direct Android Studio builds require `HUXERUI_HOME` in the IDE's environment; direct Xcode builds require it in the IDE's environment or explicit build settings, such as `Config/Local.xcconfig`. An already running IDE does not inherit the CLI's temporary environment or remember its last `--source` selection.
 
@@ -180,7 +174,6 @@ huxerui doctor [platform-list]
 huxerui setup <platform-list> [--yes]
 huxerui devices [platform]
 huxerui build [platform-list] [--device <id>] [--profile debug|release] [--generator <name>] [--source <path>] [--java-home <path>]
-huxerui mcpp build [--source <path>] [--release] [--locked] [--offline] [--verbose]
 huxerui run <platform> [--device <id>] [--profile debug|release] [--generator <name>] [--source <path>] [--java-home <path>]
 huxerui package <platform-list> [--device <id>] [--profile debug|release] [--generator <name>] [--source <path>] [--java-home <path>]
 huxerui open ios [--source <path>]

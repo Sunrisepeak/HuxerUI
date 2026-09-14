@@ -23,7 +23,6 @@ using huxerui::rules::sources::public_names;
 using huxerui::rules::sources::scan_module_interface;
 using huxerui::rules::sources::strip_noncode;
 using huxerui::rules::sources::umbrella_includes;
-using huxerui::rules::sources::wix_paths;
 using huxerui::rules::sources::without_entry;
 
 void glob_single_star_stays_within_one_segment() {
@@ -77,21 +76,6 @@ void package_names_become_identifiers() {
     check(identifier("my.app") == "my_app", "a dot becomes an underscore");
     check(identifier("2fast") == "_2fast", "a leading digit is prefixed");
     check(identifier("") == "resources", "an empty name still yields an identifier");
-}
-
-void wix_layout_matches_what_the_package_installs() {
-    const auto paths = wix_paths("/x/wix");
-    // The three payloads keep their own upstream shapes; these are the paths
-    // xim:wix's own post-install anchors check for.
-    check(paths.tool == "/x/wix/tool/tools/net6.0/any/wix.exe", "wix.exe path");
-    check(paths.bootstrapper_lib == "/x/wix/bootstrapper/build/native/v14/x64/balutil.lib",
-          "balutil.lib path");
-    check(paths.dutil_lib == "/x/wix/dutil/build/native/v14/x64/dutil.lib", "dutil.lib path");
-    check(paths.bootstrapper_runtime ==
-              "/x/wix/bootstrapper/runtimes/win-x64/native/mbanative.dll",
-          "mbanative.dll path");
-    check(paths.bootstrapper_include.ends_with("/build/native/include"), "bootstrapper include");
-    check(paths.dutil_include.ends_with("/build/native/include"), "dutil include");
 }
 
 void module_interface_is_read_from_the_source() {
@@ -264,61 +248,145 @@ void umbrella_includes_are_read_in_order() {
 
 // ------------------------------------------------------------- installer --
 
-void test_upgrade_code() {
-    using huxerui::rules::sources::is_upgrade_code;
-    check(is_upgrade_code("6F2B4C1E-9A3D-4F58-8B27-1D0E5A7C93B4"), "a GUID is accepted");
-    check(is_upgrade_code("6f2b4c1e-9a3d-4f58-8b27-1d0e5a7c93b4"), "lower case is a GUID too");
-    check(!is_upgrade_code(""), "empty is not a GUID");
-    check(!is_upgrade_code("not-a-guid"), "a word is not a GUID");
-    // The failure this guards is silent: WiX takes a malformed code literally
-    // and the MSI then never upgrades in place.
-    check(!is_upgrade_code("6F2B4C1E9A3D4F588B271D0E5A7C93B4"), "dashes are required");
-    check(!is_upgrade_code("6F2B4C1E-9A3D-4F58-8B27-1D0E5A7C93B"), "35 characters is not a GUID");
-    check(!is_upgrade_code("6F2B4C1E-9A3D-4F58-8B27-1D0E5A7C93BG"), "G is not a hex digit");
+void resource_outputs_predict_what_hrc_writes() {
+    using huxerui::rules::sources::resource_outputs;
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() / "huxerui-resource-outputs-test";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "images" / "nested");
+    std::filesystem::create_directories(root / "raw" / "models");
+    std::filesystem::create_directories(root / "strings");
+    for (const char* f : { "images/check.svg", "images/logo.png", "images/nested/photo.JPG",
+                           "images/notes.txt", "raw/models/a.moc3", "strings/default.properties" }) {
+        std::ofstream(root / f) << "x";
+    }
+    const auto out = resource_outputs(root, "app");
+    const auto has = [&](std::string_view p) { return std::ranges::find(out, p) != out.end(); };
+    // hrc compiles an SVG to .huxv and keeps every other image's name.
+    check(has("huxerui/app/images/check.huxv"), "an svg becomes a .huxv");
+    check(has("huxerui/app/images/logo.png"), "a png keeps its name");
+    check(has("huxerui/app/images/nested/photo.JPG"), "a nested raster keeps its path and case");
+    check(!has("huxerui/app/images/notes.txt"), "a non-image under images/ is not a payload");
+    check(has("huxerui/app/raw/models/a.moc3"), "a raw file keeps its path");
+    // Strings are index entries, not files; the index itself is always last.
+    check(!std::ranges::any_of(out, [](const std::string& p) { return p.find("/strings/") != std::string::npos; }),
+          "strings produce no payload");
+    check(out.back() == "huxerui/resources.bin", "the index is the last output");
+    check(out.size() == 5, "exactly the four payloads and the index");
+    std::filesystem::remove_all(root);
 }
 
-void test_msi_arguments() {
-    using huxerui::rules::sources::msi_arguments;
-    const auto argv = msi_arguments({
-        .wix         = "C:/wix/wix.exe",
-        .package_wxs = "C:/build/out/wix/Package.wxs",
-        .project_dir = "C:/app/assets",
-        .out         = "C:/build/out/wix/App.msi",
-        .executable  = "bin/App.exe",
-    });
-    check(argv.front() == "C:/wix/wix.exe", "the tool comes first");
-    check(argv[1] == "build", "then the verb");
-    const auto has = [&](std::string_view v) {
-        return std::ranges::find(argv, v) != argv.end();
+void sha1_matches_the_standard_vectors() {
+    using huxerui::rules::sources::sha1;
+    const auto hex = [](const std::array<std::uint8_t, 20>& digest) {
+        static constexpr std::string_view digits = "0123456789abcdef";
+        std::string out;
+        for (std::uint8_t b : digest) {
+            out.push_back(digits[b >> 4U]);
+            out.push_back(digits[b & 0x0FU]);
+        }
+        return out;
     };
-    // Named, not harvested: a directory bindpath that resolves to nothing
-    // produces a valid empty installer and says nothing about it.
-    check(has("Executable=bin/App.exe"), "the program is named exactly");
-    check(!has("Application=bin"), "no directory is harvested");
-    check(has("Project=C:/app/assets"), "the icon directory is bound absolute");
-    check(has("-arch") && has("x64"), "the architecture is stated");
-    check(argv[argv.size() - 2] == "-out", "-out is next to last");
-    check(argv.back() == "C:/build/out/wix/App.msi", "the msi is last");
+    check(hex(sha1("abc")) == "a9993e364706816aba3e25717850c26c9cd0d89d", "sha1(abc)");
+    check(hex(sha1("")) == "da39a3ee5e6b4b0d3255bfef95601890afd80709", "sha1 of nothing");
+    // Several blocks, and a length whose padding spills into a second one.
+    check(hex(sha1(std::string(1000, 'a'))) == "291e9a6c66994949b57ba5e650361e98fc36b1ba", "sha1 over 1000 bytes");
 }
 
-void test_render_wxs() {
-    using huxerui::rules::sources::render_wxs;
-    std::string error;
-    const std::string out = render_wxs("<Package Name=\"@@DISPLAY_NAME@@\" Version=\"@@VERSION@@\" />",
-                                       {{"DISPLAY_NAME", "Sample"}, {"VERSION", "1.2.3"}}, error);
-    check(error.empty(), "a complete token set renders");
-    check(out == "<Package Name=\"Sample\" Version=\"1.2.3\" />", "both tokens are replaced");
+// The values CMake's `string(UUID ... TYPE SHA1 UPPER)` returns, which are
+// RFC 4122's version 5 (checked against Python's uuid.uuid5).
+void upgrade_codes_are_the_ones_cmake_derives() {
+    using huxerui::rules::sources::uuid_v5;
+    using huxerui::rules::sources::windows_upgrade_code_namespace;
+    check(uuid_v5(windows_upgrade_code_namespace, "python.org") == "886313E1-3B8A-5372-9B90-0C9AEE199E5D",
+          "the RFC 4122 example name");
+    check(uuid_v5(windows_upgrade_code_namespace, "com.example.sampleapp.msi") ==
+              "999C638A-38BF-5DA7-97A5-A024AF215002",
+          "a project's MSI upgrade code");
+    check(uuid_v5(windows_upgrade_code_namespace, "com.example.sampleapp.bundle") ==
+              "B7C082F6-45C1-5746-A31B-CBBE81916FB5",
+          "a project's bundle upgrade code");
+}
 
-    error.clear();
-    render_wxs("@@NOPE@@", {{"DISPLAY_NAME", "Sample"}}, error);
-    check(error.find("NOPE") != std::string::npos, "an unknown token is named, not copied");
+// The templates CMake configures, found from wherever `mcpp test` runs.
+std::string cli_windows_template(std::string_view name) {
+    for (std::filesystem::path at = std::filesystem::current_path(); !at.empty(); at = at.parent_path()) {
+        const std::filesystem::path candidate =
+            at / "tools/huxerui_cli/templates/platform/windows/app/package" / name;
+        if (std::filesystem::is_regular_file(candidate)) {
+            std::ifstream in(candidate, std::ios::binary);
+            return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+        }
+        if (at == at.parent_path()) break;
+    }
+    return {};
+}
 
-    error.clear();
-    render_wxs("@@UNTERMINATED", {}, error);
-    check(!error.empty(), "an unterminated token is an error");
+huxerui::rules::sources::windows_installer_values installer_values() {
+    huxerui::rules::sources::windows_installer_values v;
+    v.project_name        = "Sample & App";
+    v.project_id          = "com.example.sampleapp";
+    v.version             = "0.1.0";
+    v.target_name         = "SampleApp";
+    v.msi_upgrade_code    = "999C638A-38BF-5DA7-97A5-A024AF215002";
+    v.bundle_upgrade_code = "B7C082F6-45C1-5746-A31B-CBBE81916FB5";
+    v.icon                = "C:/project/assets/app.ico";
+    v.interface_program   = "C:/tools/SampleApp-Installer.exe";
+    v.payloads            = {{"C:/wix/mbanative.dll", "mbanative.dll"},
+                             {"C:/out/final/package/huxerui/resources.bin",
+                              "SampleApp-Installer.resources/huxerui/resources.bin"}};
+    return v;
+}
+
+// Rendered from the SAME files CMake configures: a template change that moves
+// a line this rule replaces fails here, on Linux, before a Windows build.
+void package_definition_is_cmakes_with_the_staged_files() {
+    using huxerui::rules::sources::windows_package_definition;
+    const std::string tmpl = cli_windows_template("Package.wxs.in");
+    check(!tmpl.empty(), "Package.wxs.in is found from the test's directory");
+    const auto r = windows_package_definition(tmpl, installer_values());
+    check(r.error.empty(), "Package.wxs renders: " + r.error);
+    const auto has = [&](std::string_view s) { return r.text.find(s) != std::string::npos; };
+    check(has("<File Source=\"$(Executable)\" KeyPath=\"yes\" />"), "the program is $(Executable)");
+    check(has("<ComponentGroupRef Id=\"StagedFiles\" />"), "the staged files are installed");
+    check(!has("!(bindpath."), "no bind path remains");
+    check(has("Name=\"Sample &amp; App\""), "the product name is escaped");
+    check(has("UpgradeCode=\"999C638A-38BF-5DA7-97A5-A024AF215002\""), "the MSI upgrade code");
+    check(has("Target=\"[INSTALLFOLDER]SampleApp.exe\""), "the shortcut names the program");
+    check(has("SourceFile=\"C:/project/assets/app.ico\""), "the icon is named by path");
+}
+
+void bundle_definition_is_cmakes_with_the_interface_and_payloads() {
+    using huxerui::rules::sources::windows_bundle_definition;
+    const std::string tmpl = cli_windows_template("Bundle.wxs.in");
+    check(!tmpl.empty(), "Bundle.wxs.in is found from the test's directory");
+    const auto r = windows_bundle_definition(tmpl, installer_values());
+    check(r.error.empty(), "Bundle.wxs renders: " + r.error);
+    const auto has = [&](std::string_view s) { return r.text.find(s) != std::string::npos; };
+    check(has("<BootstrapperApplication SourceFile=\"C:/tools/SampleApp-Installer.exe\">"),
+          "the interface is the program mcpp built");
+    check(has("<MsiPackage SourceFile=\"$(Msi)\">"), "the MSI is dist-wix's $(Msi)");
+    check(has("<PayloadGroup Id=\"HuxerUIInstallerPayloads\">"), "the payload group CMake generates");
+    check(has("Name=\"SampleApp-Installer.resources\\huxerui\\resources.bin\""),
+          "a payload is named with Windows separators");
+    check(has("UpgradeCode=\"B7C082F6-45C1-5746-A31B-CBBE81916FB5\""), "the bundle upgrade code");
+    check(!has("!(bindpath."), "no bind path remains");
+    check(r.text.rfind("</Wix>") != std::string::npos && r.text.find("<Fragment>") < r.text.rfind("</Wix>"),
+          "the payloads are inside the document");
+}
+
+void a_template_without_the_replaced_line_is_refused() {
+    using huxerui::rules::sources::windows_package_definition;
+    const auto r = windows_package_definition("<Wix><Package Name=\"@PROJECT_NAME@\" /></Wix>", installer_values());
+    check(!r.error.empty(), "a Package.wxs.in that names no icon or harvest is refused");
 }
 
 int main() {
+    sha1_matches_the_standard_vectors();
+    upgrade_codes_are_the_ones_cmake_derives();
+    package_definition_is_cmakes_with_the_staged_files();
+    bundle_definition_is_cmakes_with_the_interface_and_payloads();
+    a_template_without_the_replaced_line_is_refused();
     header_scan_finds_namespace_scope_declarations();
     header_scan_sees_past_an_attribute();
     header_scan_ignores_the_detail_namespace();
@@ -329,16 +397,13 @@ int main() {
     macro_definitions_come_out_verbatim();
     umbrella_includes_are_read_in_order();
     module_interface_is_read_from_the_source();
-    wix_layout_matches_what_the_package_installs();
     package_names_become_identifiers();
     glob_single_star_stays_within_one_segment();
     glob_double_star_crosses_separators();
     glob_anchors_at_both_ends();
     codegen_prefilter_matches_the_cmake_rule();
     entry_is_excluded_from_the_transform_set();
-    test_upgrade_code();
-    test_msi_arguments();
-    test_render_wxs();
+    resource_outputs_predict_what_hrc_writes();
     if (failures != 0) {
         std::cerr << failures << " check(s) failed\n";
         return 1;

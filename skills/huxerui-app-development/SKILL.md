@@ -22,11 +22,13 @@ The last two identify an **mcpp** project, which `huxerui create app <name>
 --build mcpp` produces. It is HuxerUI application work like any other, and the
 public contracts below apply unchanged -- an mcpp project reaches the same
 entities through `import huxerui;` that a CMake project reaches through the
-umbrella header. What differs is the build: mcpp drives it, not this CLI and not
-CMake, so `mcpp build` and `mcpp run` replace `huxerui build` and `huxerui run`,
-there is no `CMakeLists.txt` and no `platform/` shell to edit, and the SDK
-discovery below does not apply -- the framework arrives through the dependency
-edge. See `references/mcpp-build.md`.
+umbrella header. What differs is the build: mcpp drives it, not CMake.
+`huxerui build`, `huxerui run` and `huxerui package` run the matching `mcpp`
+commands, and everything beyond them is `mcpp` itself; there is no
+`CMakeLists.txt` and no `platform/` shell to edit, and the SDK discovery below
+does not apply -- the framework arrives through the dependency edge. See
+`references/cpp-modules-and-mcpp.md`, and `references/mcpp-build.md` for an
+independent mcpp project built against a released SDK.
 
 Opening a matching project does not authorize changes or commands by itself.
 

@@ -1,0 +1,39 @@
+# The distribution formats -- msi and setup, appimage, app and dmg, apk and aab,
+# web -- as `mcpp:plugins`' dist members, configured the HuxerUI way. The members
+# declare the payloads they run on their own feature axes, and a host module's
+# declaration reaches every build program it is compiled into, so no
+# application names xim:wix, xim:appimagetool or the Android build tools.
+
+[package]
+name        = "huxerui-build-rules-dist"
+namespace   = "huxerui"
+version     = "0.3.0"
+description = "mcpp build rules for HuxerUI: the distribution formats"
+license     = "MIT"
+
+# 0.10.1 is the floor: dist-apk and dist-apple read the closure the engine
+# stages (the framework's own `libhuxerui.so` on the Android row, one APK for
+# several ABIs), dist-apple adds `dmg` and supplies the `app` runner, dist-wix
+# adds `setup`, the Burn bundle the Windows installer is, installs the files
+# staged beside the program and takes the inputs HuxerUI's own definitions
+# name.
+[build-dependencies.mcpp]
+plugins = { version = "0.10.1", features = ["dist-wix", "dist-appimage", "dist-apple", "dist-apk", "dist-web"], host-module = true }
+
+# The pure half of the rules, for the WiX definitions this package renders from
+# the SDK's Windows template and the upgrade codes CMake derives.
+[build-dependencies]
+huxerui.huxerui-source-select = { path = "../huxerui-source-select", host-module = true }
+
+# The runners this package supplies for the rows a host cannot execute
+# (src/dist.cppm): `adb-run` on Android and `simctl-run` on the iOS simulator.
+# Only `mcpp run` needs them, so a build or a pack installs neither; macOS's
+# `app` runner is dist-apple's own.
+[target.'cfg(env = "android")'.xlings.workspace]
+"xim:android-platform-tools" = { version = "37.0.1-4", when = "run" }
+
+[target.'cfg(all(os = "ios", env = "sim"))'.xlings.workspace]
+"xim:apple-simulator-tools" = { version = "0.3.0", when = "run" }
+
+[lib]
+path = "src/dist.cppm"

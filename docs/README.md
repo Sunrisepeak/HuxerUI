@@ -16,6 +16,7 @@ User guides describe the current public SDK, development guides cover this repos
 - [HTTP Client](guide/http.md): buffered and streaming responses, transfer progress, Tasks, and errors.
 - [Extending HuxerUI](guide/extending.md): custom components, layouts, modifiers, and platform services.
 - [C++20/23 modules and mcpp](../skills/huxerui-app-development/references/cpp-modules-and-mcpp.md): `import huxerui;` and `import std;`, module units, applications with no headers, and building with mcpp instead of CMake.
+- [C++20/23 Modules and mcpp: Six Platforms](guide/cpp-modules-and-mcpp.md): environment, build, distribution, and what mcpp adds, for applications, ecosystem libraries, and the SDK on six platforms.
 - [Platform Support](guide/platforms.md): supported hosts, toolchains, and platform capabilities.
 - [Packaging Applications](guide/packaging.md): platform-native outputs, explicit runtime payloads, and custom Windows installer interfaces.
 

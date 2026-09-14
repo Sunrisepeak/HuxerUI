@@ -1,29 +1,53 @@
-# c++23, and it is a workaround rather than a language requirement.
-#
-# The module unit writes `import std;`, which every implementation this project
-# builds with supports at c++20 -- the MSVC STL's named modules are documented
-# as needing /std:c++20 or later. But mcpp's clang-on-Windows path hardcodes
-# `importStdMinLevel = 23` instead of probing the STL it found
-# (mcpp-community/mcpp#603), and refuses the build below c++23.
-#
-# A module graph has exactly one standard, so this compiles huxerui at c++23
-# too. Change this line back to c++20 once #603 is fixed.
+# c++23 because this graph compiles the macOS and iOS rows' C++ standard
+# library (`llvm.libcxx`, below), whose sources need it, and a module graph has
+# one standard (mcpp-community/mcpp#641). HuxerUI itself is C++20.
 [package]
 name        = "huxerui-example-library"
 version     = "0.1.0"
 standard    = "c++23"
+platforms   = ["linux", "windows", "macos", "ios", "android", "emscripten"]
 description = "An application importing a HuxerUI component library"
 
 # Two edges, and only one of them is named by this application's own code.
 # `widgets` is what it imports; `huxerui` is here because the application uses
-# HuxerUI directly too -- a dependency's dependency is not importable.
+# HuxerUI directly too -- a dependency's dependency is not importable. The
+# framework's identity is the one its manifest declares, and its linkage is its
+# own statement: shared on Android, static elsewhere, as under CMake.
 [dependencies]
-huxerui        = { path = "../../.." }
+huxerui.huxerui = { path = "../../..", features = ["profiling"] }
 example-widgets = { path = "widgets" }
 
-[targets.huxerui_example_library]
-kind = "bin"
-main = "src/main.cpp"
+# The C++ standard library of the macOS and iOS rows, compiled for this
+# application's own floors: on macOS it keeps the 12.0 floor CMake builds for
+# (the toolchain's libc++ is built for 14.0), and on iOS it is the libc++ whose
+# objects match its headers. It needs the graph at c++23, above.
+[target.'cfg(any(os = "macos", os = "ios"))'.dependencies]
+llvm.libcxx = "22.1.8.2"
 
+[targets.huxerui_example_library]
+# `app`: an executable on the desktop rows, a `.js` launcher on the Web, the
+# shared object the Java host loads on Android.
+kind = "app"
+main = "src/main.cpp"
+# No console window behind the application on Windows; inert elsewhere.
+windows_subsystem = "windows"
+
+# huxerui.rules owns the source selection: a build program can ADD a source but
+# cannot replace one, so a package that also globbed src/**/*.cpp would link
+# both the original and the hcg-transformed copy of every composable.
 [build]
 sources = []
+# The platform floors CMake builds for (CMakeLists.txt). They are the
+# application's own; the framework's version floors refuse a lower one.
+macos_deployment_target = "12.0"
+ios_deployment_target   = "15.0"
+
+# The Web build's exception model; HuxerUI requires it, and only a root can
+# state it.
+[target.'cfg(os = "emscripten")'.abi]
+exceptions = true
+
+[target.x86_64-linux-android]
+min_api_level = 23
+[target.aarch64-linux-android]
+min_api_level = 23

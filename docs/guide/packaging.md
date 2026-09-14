@@ -24,6 +24,10 @@ Windows setup generation currently supports x64 applications.
 Running the restored WiX tool requires `Microsoft.NETCore.App` 6.0 or newer; HuxerUI reports this package-only prerequisite without requiring a system-wide WiX installation.
 Linux requires `appimagetool`, `patchelf`, and binutils on `PATH` for `package`; macOS uses the system `otool`, `install_name_tool`, `lipo`, `codesign`, and `hdiutil`.
 
+## mcpp projects
+
+A project created with `--build mcpp` packages with `mcpp pack --target <row> --format <format>`, and `huxerui package <platform>` runs the command that produces the artifact above: `setup` (the Setup.exe, whose interface is the project's `windows/installer`), `appimage`, `dmg`, `apk` (one debug-signed APK for `arm64-v8a` and `x86_64`), `app` (iOS) and `web`. The packaging tools are payloads mcpp installs on first use, so nothing is required on `PATH`. The formats mcpp adds, such as `msi` and `aab`, are listed in [C++20/23 Modules and mcpp: Six Platforms](cpp-modules-and-mcpp.md#build-and-development-enhancements).
+
 ## Windows URL scheme registration
 
 For a custom scheme owned by your Win32 application, call `windows::RegisterUrlScheme(scheme, display_name)` from `<huxerui/system.h>` explicitly in entry code before `RunApplication()`. It registers the current executable for the current user without administrator privileges, an installer, or CMake registration metadata. This also works in the Windows 7 compatibility backend.

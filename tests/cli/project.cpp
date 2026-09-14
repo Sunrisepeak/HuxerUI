@@ -54,31 +54,73 @@ TEST_CASE("HuxerUICliCreatesMcppProjects") {
   // Created against a source checkout, so the dependency is a path -- the
   // version the template names is only resolvable from an index, and this tree
   // is not published. mcpp documents `path` as the form for local development.
-  REQUIRE(manifest.find("huxerui = { path = \"") != std::string::npos);
+  REQUIRE(manifest.find("huxerui.huxerui = { path = \"") != std::string::npos);
   REQUIRE(manifest.find(HUXERUI_TEST_SOURCE_DIRECTORY) != std::string::npos);
+  // One line, as under CMake: how HuxerUI is linked is the framework's own
+  // statement (shared on Android, static elsewhere), and how an application is
+  // run is the rules' -- so the manifest names neither.
+  REQUIRE(manifest.find("linkage =") == std::string::npos);
+  REQUIRE(manifest.find("runner =") == std::string::npos);
   // The published identity stays in the file as the line to swap in, and it is
   // the EXACT one: a bare name reaches mcpp's deprecated bare-name search,
   // which resolves in `mcpplibs` only.
   REQUIRE(manifest.find("#   huxerui.huxerui = ") != std::string::npos);
   // Commented out, not active -- two [dependencies] entries would be one too many.
-  REQUIRE(manifest.find("\nhuxerui.huxerui = ") == std::string::npos);
+  REQUIRE(manifest.find("\nhuxerui.huxerui = \"") == std::string::npos);
+  // The floors CMake builds HuxerUI applications for. The standard is c++23
+  // because the graph compiles the Apple rows' standard library, which the
+  // manifest declares itself.
+  REQUIRE(manifest.find("standard = \"c++23\"") != std::string::npos);
+  REQUIRE(manifest.find("[target.'cfg(any(os = \"macos\", os = \"ios\"))'.dependencies]\nllvm.libcxx = \"") !=
+          std::string::npos);
+  REQUIRE(manifest.find("macos_deployment_target = \"12.0\"") != std::string::npos);
+  REQUIRE(manifest.find("ios_deployment_target   = \"15.0\"") != std::string::npos);
+  REQUIRE(manifest.find("min_api_level = 23") != std::string::npos);
+  // The project id reaches the build program as BUNDLE_IDENTIFIER does under
+  // CMake: the bundle and application id alike.
+  const std::string build_program = Read(project / "build.mcpp");
+  REQUIRE(build_program.find(".bundle_identifier = \"com.example.sampleapp\"") != std::string::npos);
+
+  // The Setup.exe's interface is a package of its own, a host tool of the
+  // Windows rows; its HuxerUI dependency names the same checkout.
+  REQUIRE(manifest.find("[target.'cfg(os = \"windows\")'.build-dependencies]") != std::string::npos);
+  REQUIRE(manifest.find("installer = { path = \"windows/installer\", tools = [\"Sample-App-Installer\"] }") !=
+          std::string::npos);
+  const std::string installer_manifest = Read(project / "windows/installer/mcpp.toml");
+  REQUIRE(installer_manifest.find("[targets.Sample-App-Installer]") != std::string::npos);
+  REQUIRE(installer_manifest.find("huxerui.huxerui = { path = \"") != std::string::npos);
+  REQUIRE(installer_manifest.find("{{") == std::string::npos);
+  const std::string installer_program = Read(project / "windows/installer/build.mcpp");
+  REQUIRE(installer_program.find(".bootstrapper = true") != std::string::npos);
+  REQUIRE(installer_program.find(".bundle_name  = \"Sample-App\"") != std::string::npos);
+  REQUIRE(std::filesystem::is_regular_file(project / "windows/installer/src/main.cpp"));
 
   REQUIRE(Read(project / "src/main.cpp").find("import huxerui;") != std::string::npos);
   REQUIRE(Read(project / "src/main.cpp").find("import app;") != std::string::npos);
   REQUIRE(Read(project / "src/app.cppm").find("export module app;") != std::string::npos);
 }
 
-TEST_CASE("HuxerUICliNamesMcppWhenItCannotDriveTheProject") {
+TEST_CASE("HuxerUICliAddsPlatformsToAnMcppManifest") {
   TemporaryDirectory temporary;
-  REQUIRE(Invoke(temporary.Path(), {"create", "app", "Sample-App", "--build", "mcpp", "--agent", "none"}).result == 0);
+  // The template declares every row; `--platform` narrows it, which is what
+  // leaves something for `platform add` to add.
+  REQUIRE(Invoke(temporary.Path(),
+              {"create", "app", "Sample-App", "--build", "mcpp", "--platform", "linux", "--agent", "none"})
+              .result == 0);
+  const std::filesystem::path project = temporary.Path() / "Sample-App";
+  REQUIRE(Read(project / "mcpp.toml").find("platforms = [\"linux\"]") != std::string::npos);
 
-  // This CLI drives the CMake project. An mcpp project has no CMakeLists.txt
-  // on purpose, so every command that opens one has to say which tool does
-  // drive it -- "no HuxerUI project found" sends its owner looking for a file
-  // that is supposed to be absent.
-  const Invocation invocation = Invoke(temporary.Path() / "Sample-App", {"platform", "add", "linux"});
-  REQUIRE(invocation.result != 0);
-  REQUIRE(invocation.error.find("mcpp build") != std::string::npos);
+  // An mcpp project has no platform shells: its platforms are the rows
+  // `[package] platforms` declares, so `platform add` edits that line and
+  // writes the Web in mcpp's own spelling.
+  const Invocation added = Invoke(project, {"platform", "add", "android,web"});
+  REQUIRE(added.result == 0);
+  REQUIRE(added.output.find("Updated platforms: android web") != std::string::npos);
+  REQUIRE(Read(project / "mcpp.toml").find("platforms = [\"linux\", \"android\", \"emscripten\"]") != std::string::npos);
+
+  const Invocation again = Invoke(project, {"platform", "add", "android"});
+  REQUIRE(again.result != 0);
+  REQUIRE(again.error.find("already declared") != std::string::npos);
 }
 
 TEST_CASE("HuxerUICliSelectsAnMcppTemplate") {
@@ -115,10 +157,6 @@ TEST_CASE("HuxerUICliCreatesMcppLibraries") {
 TEST_CASE("HuxerUICliRejectsUnsupportedBuildSystems") {
   TemporaryDirectory temporary;
   REQUIRE(Invoke(temporary.Path(), {"create", "app", "Sample-App", "--build", "meson"}).result != 0);
-  // mcpp builds three platforms from one manifest and has no platform shells.
-  REQUIRE(Invoke(temporary.Path(),
-              {"create", "app", "Sample-App", "--build", "mcpp", "--platform", "windows"})
-              .result != 0);
   REQUIRE(Invoke(temporary.Path(),
               {"create", "app", "Sample-App", "--build", "mcpp", "--template", "nonesuch"})
               .result != 0);
