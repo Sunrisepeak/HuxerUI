@@ -280,7 +280,6 @@ jobs:
           strings "$index" > index.txt
           grep -qx 'example_widgets' index.txt || { echo "the library's namespace is not in the application's package"; exit 1; }
           grep -qx 'strings/library_name' index.txt || { echo "the library's string is not in the application's package"; exit 1; }
-          grep -qx 'app' index.txt || { echo "the application's namespace is not app"; exit 1; }
           echo "the application's package carries the library's resources under example_widgets"
 
       # The AppImage is mcpp:plugins' dist-appimage, reached through

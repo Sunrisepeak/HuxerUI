@@ -44,7 +44,7 @@ Every build system must produce this for a default build.
 | Android native libraries | Stripped of their symbol tables and debug information, stored uncompressed and aligned to 16 KB pages. |
 | Apple Info.plist | The SDK application template's entries: the display name on both platforms; on iOS a launch screen, the development region, the dictionary version and the supported orientations (iPhone: portrait and both landscapes; iPad: all four). |
 | Windows | The GUI subsystem with a `main()` entry; the installer is a Burn Setup.exe chaining the MSI, whose interface is the application's own installer program, built for a package build only. |
-| Package artifacts | An AppImage (`<target>-<version>.AppImage`), a Setup.exe, a DMG, one APK for the template's two ABIs, an iOS `.app` and a Web directory, published to `dist/<platform>/`. |
+| Package artifacts | An AppImage and a DMG named `<target>-<version>`, a Setup.exe named `<target>-Setup-<version>.exe`, one APK for the template's two ABIs, an iOS `.app` and a Web directory, published to `dist/<platform>/`. |
 | Signing | Android: a release package is unsigned and a debug package is signed with the Android debug key; macOS: signed ad hoc; the iOS simulator and Windows: not signed. |
 | Library template | Carries `resources/` with its strings. |
 | Test suites | unit, runtime, ui and smoke. |
@@ -90,7 +90,7 @@ ios.runtime.libcxx                           CMake links the system libc++; mcpp
 ios.plist.launch_screen_form                 Xcode compiles the template's LaunchScreen.storyboard; mcpp states an empty UILaunchScreen, the same blank screen, because ibtool is not redistributable
 ios.icon.container                           Xcode compiles an asset catalog; mcpp lists flat PNGs under CFBundleIcons, because actool is not redistributable
 ios.plist.CFBundleVersion                    the Xcode template writes 1; mcpp takes [package] version
-macos.plist.CFBundle*Version                 the macOS template writes none; mcpp takes [package] version
+macos.plist.CFBundle*Version*                the macOS template writes none; mcpp takes [package] version
 macos.plist.CFBundleExecutable               dist-apple names the executable; CMake's template leaves the system to find the one named after the bundle, the same file
 macos.plist.NSHighResolutionCapable          dist-apple states it true, and a project's Info.plist can change the value but not remove the key; CMake's template states none, and whether a CMake bundle renders at full resolution without it is not measured
 windows.*.msvcp140*.dll                      CMake links the MSVC runtime as DLLs and installs them beside each program; mcpp links it into the program, so there is none to install

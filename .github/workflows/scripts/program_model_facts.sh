@@ -332,8 +332,11 @@ PY
     winpath() { if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"; else printf '%s' "$1"; fi; }
     python=$(command -v python || command -v python3)
     # The interface container and the manifest that names its payloads, read with 7-Zip.
+    sevenzip=$(command -v 7z || true)
+    [ -n "$sevenzip" ] || [ ! -x "/c/Program Files/7-Zip/7z.exe" ] || sevenzip="/c/Program Files/7-Zip/7z.exe"
+    [ -n "$sevenzip" ] || { echo "no 7-Zip to read the bundle with" >&2; exit 1; }
     mkdir -p "$work/ux"
-    (cd "$work/ux" && 7z x -y "$(winpath "$setup")" > /dev/null)
+    (cd "$work/ux" && "$sevenzip" x -y "$(winpath "$setup")" > /dev/null)
     [ -f "$work/ux/0" ] || { echo "7-Zip found no Burn manifest in $setup" >&2; exit 1; }
     "$python" - "$work/ux" > "$work/bundle.txt" <<'PY'
 import hashlib, os, sys, xml.etree.ElementTree as ET
@@ -394,7 +397,7 @@ for el in root.iter():
         print(f"msi.manufacturer={el.get('Manufacturer')}")
         print(f"msi.scope={el.get('Scope', 'perMachine')}")
     elif t == "Shortcut":
-        print(f"msi.shortcut.{el.get('Name')}={el.get('Directory')}")
+        print(f"msi.shortcut.{el.get('Directory')}/{el.get('Name')}=present")
     elif t == "Property" and el.get("Id", "").startswith("ARP"):
         print(f"msi.property.{el.get('Id')}={el.get('Value')}")
 # The installed files, relative to the program's folder.
