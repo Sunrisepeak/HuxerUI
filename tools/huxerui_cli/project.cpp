@@ -349,6 +349,12 @@ std::vector<GeneratedFile> McppApplicationProjectFiles(const ProjectTemplateCont
   if (manifest == files.end()) {
     throw std::logic_error("templates/app renders no mcpp.toml");
   }
+  // A template that pins its whole graph itself -- live2d names one git
+  // revision of HuxerUI, the one its library was built against -- keeps its
+  // lines; the rewrite is for the rendered version lines.
+  if (manifest->content.find("\nhuxerui.huxerui = \"") == std::string::npos) {
+    return files;
+  }
   manifest->content = McppPathDependency(manifest->content, huxerui_home);
   // The Windows installer interface is a package of its own with its own
   // HuxerUI dependency, which names the same checkout.

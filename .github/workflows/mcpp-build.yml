@@ -1265,12 +1265,21 @@ jobs:
           run_one NavDemo create app NavDemo --build mcpp --template navigation --agent none
           run_one my-widgets create library my-widgets --build mcpp --agent none
 
+          # The live2d template pins HuxerUI and Lib-Live2D by git revision
+          # (one HuxerUI for the whole graph), so it is not a path project.
+          ( cd "$work" && "$cli" create app Live2DDemo --build mcpp --template live2d --agent none )
+          grep -q '^huxerui.live2d  = { git = ' "$work/Live2DDemo/mcpp.toml" \
+            || { echo "Live2DDemo: the template did not pin Lib-Live2D"; exit 1; }
+          test -f "$work/Live2DDemo/resources/raw/Mao/Mao.model3.json" \
+            || { echo "Live2DDemo: the model is not in the project"; exit 1; }
+
           # The two applications build; the library is a lib, so its own test is
           # what says it works -- and `mcpp test` proves the module it exports
           # can actually be imported.
           ( cd "$work/AppDemo" && mcpp build )
           ( cd "$work/NavDemo" && mcpp build )
           ( cd "$work/my-widgets" && mcpp test )
+          ( cd "$work/Live2DDemo" && mcpp build )
 
       - name: Assert the transform ran on a generated project
         run: |

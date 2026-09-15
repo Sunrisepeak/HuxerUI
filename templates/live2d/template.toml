@@ -1,0 +1,12 @@
+[template]
+description = "A HuxerUI application showing a Live2D model on every platform, through the huxerui.live2d ecosystem library"
+post_message = """
+Built with:   mcpp build
+Run with:     mcpp run
+Web:          mcpp pack --target wasm32-emscripten --format web
+
+The model (Mao, from Live2D's samples, Free Material License) is under
+resources/raw/; src/app.cppm loads it through the generated raw-resource
+identifiers and shows it with ModelView. Everything Cubism -- the SDK, the
+shaders, the Web bridge -- arrives through the huxerui.live2d dependency.
+"""

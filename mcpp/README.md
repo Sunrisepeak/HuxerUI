@@ -103,6 +103,10 @@ writes that module beside the header, and the rule declares it to mcpp as a
 generated module interface (design §4). The Linux GTK payload table lives once,
 in `mcpp/huxerui-build-rules-gtk/mcpp.toml` (design §5).
 
+`huxerui create app <name> --build mcpp --template live2d` is the same story for an
+ecosystem library: a Live2D model on all six rows through one
+`huxerui.live2d` dependency, nothing about Cubism in the application.
+
 The framework's `mcpp.toml` carries one section per target row, and an
 application builds for any of them by naming the row:
 

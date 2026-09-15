@@ -1,0 +1,66 @@
+# c++20, the standard HuxerUI and a CMake application build at. The macOS and
+# iOS rows' C++ standard library (`llvm.libcxx`, below) states c++23 itself and
+# compiles its own sources at that level (mcpp 2026.9.15.2, mcpp#641).
+[package]
+name     = "{{project.name}}"
+version  = "0.1.0"
+standard = "c++20"
+platforms = ["linux", "windows", "macos", "ios", "android", "emscripten"]
+
+# ONE HuxerUI FOR THE WHOLE GRAPH. Lib-Live2D pins the framework by git at the
+# revision its mcpp build was made against, and mcpp refuses two sources for
+# one package, so this application names that same revision rather than a
+# path -- both lines become versions once the packages are published. How the
+# framework is linked is its own statement (a shared `libhuxerui.so` on
+# Android, static elsewhere), so the line names no linkage.
+[dependencies]
+huxerui.live2d  = { git = "https://github.com/Sunrisepeak/Lib-Live2D.git", rev = "e40aab47b6701ecd6d2a06aee3d62b610dfb701d" }
+huxerui.huxerui = { git = "https://github.com/Sunrisepeak/HuxerUI.git", rev = "ed896c904c6ef2bbd706aa6b9d535f29d20bcc26" }
+
+# The C++ standard library of the macOS and iOS rows, compiled for this
+# application's own floors: on macOS it keeps the 12.0 floor CMake builds for
+# (the toolchain's libc++ is built for 14.0), and on iOS it is the libc++ whose
+# objects match its headers.
+[target.'cfg(any(os = "macos", os = "ios"))'.dependencies]
+llvm.libcxx = "22.1.8.3"
+
+# The interface this application's Setup.exe runs (windows/installer): a host
+# tool of the Windows rows, built only when a build names the
+# `windows-installer` feature -- `huxerui package windows` does, through
+# `mcpp pack --format setup --features windows-installer` -- as CMake builds
+# `<target>-Installer.exe` for a package build only.
+[features]
+windows-installer = []
+
+[target.'cfg(os = "windows")'.feature-deps.windows-installer]
+installer = { path = "windows/installer", tools = ["{{project.name}}-Installer"] }
+
+[targets.{{project.name}}]
+# `app`: an executable on the desktop rows, the shared object the Java host
+# loads on Android, a `.js` launcher on the Web.
+kind = "app"
+main = "src/main.cpp"
+# No console window behind the application on Windows; inert elsewhere.
+windows_subsystem = "windows"
+
+[build]
+# huxerui.rules selects the sources (build.mcpp); a glob here would compile the
+# original beside every hcg-transformed composable.
+sources = []
+# The platform floors a HuxerUI application builds for, as under CMake. The
+# framework's version floors refuse a lower value.
+macos_deployment_target = "12.0"
+ios_deployment_target   = "15.0"
+
+# The Web build's exception model; HuxerUI requires it, and only a root can
+# state it.
+[target.'cfg(os = "emscripten")'.abi]
+exceptions = true
+
+# The Android floor CMake builds for. `mcpp run --target <row> --format apk|app`
+# hands the package to the row's runner, which huxerui.rules and dist-apple
+# supply, so none is named here.
+[target.x86_64-linux-android]
+min_api_level = 23
+[target.aarch64-linux-android]
+min_api_level = 23
