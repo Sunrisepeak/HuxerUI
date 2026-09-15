@@ -5,21 +5,22 @@
 > and calls `huxerui::rules::configure()` from its `build.mcpp`, and the SDK
 > include directory, the library, the platform link interface, the composable
 > transform (`hcg`) and the resource compiler (`hrc`) all arrive through that
-> one edge. See `mcpp/README.md` and `mcpp/examples/`. None of the manual
-> recovery below applies there.
+> one edge. See [cpp-modules-and-mcpp.md](cpp-modules-and-mcpp.md) and
+> [C++20/23 Modules and mcpp: Six Platforms](../../../docs/guide/cpp-modules-and-mcpp.md).
+> None of the manual recovery below applies there.
 >
 > The rest of this file covers the remaining case: an **independent** mcpp
 > project that consumes a released HuxerUI SDK without a source checkout, built
-> through the delegating `huxerui mcpp build` frontend.
+> with `mcpp build` directly.
 
 Use this reference for an independent mcpp project that includes HuxerUI headers or links an HuxerUI SDK library directly.
-The `huxerui mcpp` frontend validates `mcpp.toml` and delegates to `mcpp build`; it does not discover the SDK, inject compiler flags, translate CMake link interfaces, run HuxerUI code generation, or run the resource compiler.
+mcpp builds such a project from its manifest alone: nothing discovers the SDK, injects compiler flags, translates CMake link interfaces, runs HuxerUI code generation, or runs the resource compiler for it.
 
 ## Establish the build truth
 
 Before editing or compiling:
 
-1. Run `huxerui mcpp --help`, `mcpp --version`, and `huxerui doctor` when those executables are available.
+1. Run `mcpp --version`, `mcpp self doctor`, and `huxerui doctor` when those executables are available.
 2. Locate the active SDK from `HUXERUI_HOME`, the configured project's `HuxerUI_DIR`, or the SDK installation surrounding the selected `huxerui` executable.
 3. If the HuxerUI source checkout is available, read `README.md`, `docs/development/building.md`, and the current `.github/workflows/sdk-release.yml` for the release compiler and platform environment.
 4. Do not infer the SDK's original compiler from the local compiler, from an installed CMake package, or from the fact that a header compiles.
@@ -29,7 +30,7 @@ The SDK CMake package describes how to consume the library, not a complete compi
 
 ## Configure mcpp deliberately
 
-Keep `mcpp.toml` responsible for every setting the standalone frontend needs:
+Keep `mcpp.toml` responsible for every setting the build needs:
 
 - Select the C++ standard explicitly; C++20 is the HuxerUI SDK baseline.
 - Select the same compiler family, architecture, standard library, and runtime linkage as the SDK release for the target platform whenever ABI compatibility matters.
@@ -38,13 +39,12 @@ Keep `mcpp.toml` responsible for every setting the standalone frontend needs:
 - For static linking, reproduce the platform dependencies and link order exposed by the installed HuxerUI CMake target. For shared linking, retain the SDK's runtime library deployment and search-path requirements.
 - Keep `static_stdlib`, runtime library directories, platform libraries, and deployment targets consistent with the SDK and the final distribution policy.
 
-Build the selected source directory with:
+Build from the directory that contains `mcpp.toml`:
 
 ```text
-huxerui mcpp build --source <project> [--release] [--locked] [--offline] [--verbose]
+mcpp build [--release] [--locked] [--offline] [--verbose]
 ```
 
-The source directory must contain `mcpp.toml`.
 Use `mcpp run` only after the mcpp build succeeds and only when the project defines a runnable target.
 
 ## Release toolchain reference

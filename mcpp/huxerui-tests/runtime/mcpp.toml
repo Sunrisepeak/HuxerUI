@@ -1,0 +1,63 @@
+# The runtime suite, CMake's HuxerUIRuntimeTests
+[package]
+name        = "huxerui-tests-runtime"
+namespace   = "huxerui"
+version     = "0.3.0"
+standard    = "c++20"
+description = "The runtime suite, CMake's HuxerUIRuntimeTests"
+license     = "MIT"
+
+[dependencies]
+huxerui.huxerui-tests = { path = ".." }
+huxerui.huxerui       = { path = "../../..", features = ["profiling"] }
+
+[build]
+sources = [
+    "../../../tests/runtime/animation.cpp",
+    "../../../tests/runtime/shared_transition.cpp",
+    "../../../tests/runtime/application.cpp",
+    "../../../tests/runtime/clipboard.cpp",
+    "../../../tests/runtime/composition.cpp",
+    "../../../tests/runtime/controls.cpp",
+    "../../../tests/runtime/file_picker.cpp",
+    "../../../tests/runtime/file_drop.cpp",
+    "../../../tests/runtime/gestures.cpp",
+    "../../../tests/runtime/http.cpp",
+    "../../../tests/runtime/interaction.cpp",
+    "../../../tests/runtime/layers.cpp",
+    "../../../tests/runtime/layout.cpp",
+    "../../../tests/runtime/lifecycle.cpp",
+    "../../../tests/runtime/navigation.cpp",
+    "../../../tests/runtime/navigation_ui.cpp",
+    "../../../tests/runtime/local_notification.cpp",
+    "../../../tests/runtime/permission.cpp",
+    "../../../tests/runtime/platform_module.cpp",
+    "../../../tests/runtime/platform_view.cpp",
+    "../../../tests/runtime/presentation.cpp",
+    "../../../tests/runtime/presentation_semantics.cpp",
+    "../../../tests/runtime/semantics.cpp",
+    "../../../tests/runtime/profiling.cpp",
+    "../../../tests/runtime/render_scene.cpp",
+    "../../../tests/runtime/resources.cpp",
+    "../../../tests/runtime/scrolling.cpp",
+    "../../../tests/runtime/combo_box.cpp",
+    "../../../tests/runtime/date_time_picker.cpp",
+    "../../../tests/runtime/select.cpp",
+    "../../../tests/runtime/tree.cpp",
+    "../../../tests/runtime/system_tray.cpp",
+    "../../../tests/runtime/selection_area.cpp",
+    "../../../tests/runtime/task.cpp",
+    "../../../tests/runtime/text.cpp",
+    "../../../tests/runtime/text_field.cpp",
+    "../../../tests/runtime/text_input.cpp",
+    "../../../tests/runtime/theme.cpp",
+    "../../../tests/runtime/tooltip.cpp",
+    "../../../tests/runtime/virtual_layout.cpp",
+    "../../../tests/runtime/window.cpp",
+]
+# The framework's implementation headers, as huxerui_add_test_suite() adds src/.
+include_dirs         = ["../../../src"]
+private_include_dirs = ["../../../src"]
+# tests/runtime/CMakeLists.txt defines this whenever the framework it links
+# profiles, which is how the profiling cases know to run.
+defines = ["HUXERUI_ENABLE_PROFILING=1"]

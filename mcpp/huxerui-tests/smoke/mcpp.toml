@@ -1,0 +1,21 @@
+# The windowless UI testing smoke, CMake's HuxerUIUiTestingSmoke on the desktop
+[package]
+name        = "huxerui-tests-smoke"
+namespace   = "huxerui"
+version     = "0.3.0"
+standard    = "c++20"
+description = "The windowless UI testing smoke, CMake's HuxerUIUiTestingSmoke on the desktop"
+license     = "MIT"
+
+[dependencies]
+huxerui.huxerui-tests = { path = ".." }
+huxerui.huxerui       = { path = "../../..", features = ["profiling"] }
+
+[build]
+sources = [
+    "../../../tests/platform/testing/smoke.cpp",
+]
+# The framework's implementation headers, as huxerui_add_test_suite() adds src/.
+include_dirs         = ["../../../src"]
+private_include_dirs = ["../../../src"]
+

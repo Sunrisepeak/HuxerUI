@@ -229,7 +229,6 @@ huxerui doctor [platform-list]
 huxerui setup <platform-list> [--yes]
 huxerui devices [platform]
 huxerui build [platform-list] [--device <id>] [--profile debug|release] [--generator <name>] [--source <path>] [--java-home <path>]
-huxerui mcpp build [--source <path>] [--release] [--locked] [--offline] [--verbose]
 huxerui run <platform> [--device <id>] [--profile debug|release] [--generator <name>] [--source <path>] [--java-home <path>]
 huxerui package <platform-list> [--device <id>] [--profile debug|release] [--generator <name>] [--source <path>] [--java-home <path>]
 huxerui open ios [--source <path>]
@@ -243,8 +242,22 @@ The accepted identifiers are `codex`, `claude`, `antigravity`, `opencode`, `comm
 The default is `codex`; `all` selects the three distinct directories, and `none` disables Skill creation.
 An explicit list replaces the default, and aliases that share a directory are deduplicated.
 
-`huxerui mcpp build` is an independent generic mcpp frontend. It requires `mcpp.toml` in the selected source directory and invokes the `mcpp` executable directly. It does not participate in HuxerUI project discovery, alter the existing CMake and platform-driver paths, or provide HuxerUI package integration; the mcpp project owns those details.
 Desktop CMake build commands leave concurrency to CMake and its selected build tool, preserving `CMAKE_BUILD_PARALLEL_LEVEL` for callers and CI. They do not force an unnumbered `--parallel`, which becomes unlimited parallelism with Unix Makefiles.
+
+### mcpp projects
+
+A project created with `--build mcpp` — `mcpp.toml` and `build.mcpp`, no `CMakeLists.txt` — is discovered like a CMake project and drives mcpp instead. What it must produce, and the rules the CLI follows for both build systems, are the [Build Systems Specification](build-systems-spec.md)'s: one interface, the same kind of artifact in the same place, and an option that does not apply refused with the reason. Its platforms are `[package] platforms` (mcpp says `emscripten` where the CLI says `web`), and `create --platform` narrows that list rather than writing shell directories. The verbs map onto mcpp's, with a platform as a target row and a distribution format:
+
+| Platform | `build` / `run` target | `package` format |
+|---|---|---|
+| linux | the host's architecture on that OS | `appimage` |
+| windows | the host's architecture on that OS | `setup` with the `windows-installer` feature: the Setup.exe and its installer interface, built for the package only, as a CMake package build produces |
+| macos | the host's architecture; `run` passes `--format app` and runs the bundle | `dmg` |
+| web | `wasm32-emscripten`; `run` packs and serves the directory | `web` |
+| android | `x86_64-linux-android`, or `aarch64-linux-android` for a physical `--device`; `run` passes `--format apk`, and the selected device reaches `adb-run` as `ANDROID_SERIAL` | `apk` for both `aarch64-linux-android` and `x86_64-linux-android`, the ABIs the Gradle template builds |
+| ios | `aarch64-ios-sim`, or `aarch64-ios` for a physical `--device`; `run` passes `--format app`, and the selected simulator reaches `simctl-run` as `SIMCTL_RUN_UDID`, a device `devicectl-run` as `DEVICECTL_RUN_DEVICE` | `app` |
+
+`package` publishes what `mcpp pack` reports on its `Packed` lines to `dist/<platform>/`, where a CMake project's `package` publishes. `--profile` is passed on as `mcpp --profile dev|release`, named every time because `mcpp pack` builds release unless told otherwise. `--generator`, `--java-home` and `--source` are refused with the reason: the toolchain, the JDK and the HuxerUI dependency are mcpp's, a payload's and the manifest's. `platform add` adds the rows to `[package] platforms`. `doctor` stays read-only: it reports the `mcpp` executable and whether the requested platforms are enabled, and points at `mcpp self doctor` without running it, because inside a package that command resolves the build and can install a toolchain. `setup` installs the CMake path's platform tools; an mcpp project's payloads arrive on first use. The CMake platform drivers are not involved and are unchanged; the mapping is `tools/huxerui_cli/mcpp_backend.cpp`.
 
 ### Create and platform add
 
@@ -345,7 +358,7 @@ Desktop builds configure the root CMake project and then build it.
 Fresh Linux and macOS builds use Ninja when it is available unless an explicit generator, `CMAKE_GENERATOR`, or an existing CMake cache takes precedence.
 Windows discovers the latest Visual Studio installation that provides the C++ x64 tools without constraining its product version, imports its developer environment, and explicitly selects MSVC.
 Fresh Windows builds use Ninja when available and NMake otherwise; an existing Windows cache retains its compatible generator while the compiler remains MSVC.
-`huxerui_add_app` selects the Windows GUI subsystem on the application target only. MSVC applications retain `main()` through `mainCRTStartup`; the installer helper selects `wWinMainCRTStartup` through the private `HUXERUI_WINDOWS_CRT_ENTRY` target property for its existing `wWinMain()` entry. Both paths preserve CRT initialization. The framework's public link interface carries no subsystem or entry-point option, and Runtime does not allocate or hide a console.
+`huxerui_add_app` selects the Windows GUI subsystem on the application target only. MSVC applications retain `main()` through `mainCRTStartup`; the installer helper selects `wWinMainCRTStartup` through the private `HUXERUI_WINDOWS_CRT_ENTRY` target property for its existing `wWinMain()` entry. Both paths preserve CRT initialization. The mcpp build states the same selection declaratively, as `[targets.<name>] windows_subsystem = "windows"`. The framework's public link interface carries no subsystem or entry-point option, and Runtime does not allocate or hide a console.
 The Windows SDK packages matching Debug and Release shared and static libraries so the CLI's default Debug profile and explicit Release profile use the corresponding MSVC runtime.
 `--generator` applies to Linux, macOS, and Web builds. Windows, Android, and iOS reject it because their platform drivers own the supported generator and toolchain selection.
 

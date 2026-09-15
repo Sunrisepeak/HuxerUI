@@ -135,6 +135,8 @@ std::string RenderPackageTokens(std::string_view value, const PackageTemplateCon
     const std::string_view token = value.substr(open + 2, close - open - 2);
     if (token == "project.name") {
       out.append(context.project_name);
+    } else if (token == "project.id") {
+      out.append(context.project_id);
     } else if (token == "self.name" || token == "template.package.selector") {
       out.append(context.package_selector);
     } else if (token == "self.version" || token == "template.package.version") {

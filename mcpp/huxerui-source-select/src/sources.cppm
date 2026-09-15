@@ -119,6 +119,133 @@ without_entry(std::span<const std::string> sources, std::string_view entry) {
     return out;
 }
 
+// THE DEFAULT RESOURCE NAMESPACES, as a CMake project gets them. CMake's
+// huxerui_add_app() and huxerui_add_library() require RESOURCE_NAMESPACE; what
+// a project states is what `huxerui create` wrote into it:
+//
+//   - an application: `app` (tools/huxerui_cli/templates/project/app);
+//   - a library: its public target `Package::Product` flattened to
+//     `package_product`, lower-cased, one segment when the two are equal
+//     (DeriveLibraryTargetProjection in tools/huxerui_cli/project.cpp).
+//
+// An mcpp package's namespace and name are that pair: `huxerui` and `live2d`
+// give `huxerui_live2d`. A package that states no namespace is in mcpp's
+// default one, `mcpplibs`, and a build program is told `mcpplibs` either way,
+// so that namespace is not a segment: `example-widgets` gives `example_widgets`
+// in its own build and in the application's that reads its manifest.
+inline constexpr std::string_view application_resource_namespace = "app";
+
+[[nodiscard]] inline std::string library_resource_namespace(std::string_view package_namespace,
+                                                            std::string_view name) {
+    const auto lower = [](std::string_view text) {
+        std::string out(text);
+        for (char& c : out) if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+        return out;
+    };
+    const std::string package = lower(package_namespace);
+    const std::string product = lower(name);
+    if (package.empty() || package == "mcpplibs" || package == product) return identifier(product);
+    return identifier(package + "_" + product);
+}
+
+// What the build rules read from a dependency's manifest, without a TOML
+// library: the identity `[package]` declares, and whether the package depends
+// on the framework itself (`huxerui.huxerui`, in `[dependencies]` or a
+// `[target.<selector>.dependencies]` table, spelled with the dotted key or as
+// a `[dependencies.huxerui]` table), which is what makes a dependency a HuxerUI
+// library whose resources belong in an application's package.
+struct dependency_manifest {
+    std::string package_namespace;
+    std::string name;
+    bool        uses_huxerui = false;
+};
+
+[[nodiscard]] inline dependency_manifest read_dependency_manifest(std::string_view text) {
+    dependency_manifest out;
+    std::string table;
+    const auto trim = [](std::string_view v) {
+        while (!v.empty() && (v.front() == ' ' || v.front() == '\t')) v.remove_prefix(1);
+        while (!v.empty() && (v.back() == ' ' || v.back() == '\t' || v.back() == '\r')) v.remove_suffix(1);
+        return v;
+    };
+    const auto string_value = [&](std::string_view line) -> std::string {
+        const auto eq = line.find('=');
+        if (eq == std::string_view::npos) return {};
+        std::string_view value = trim(line.substr(eq + 1));
+        if (value.size() < 2 || value.front() != '"') return {};
+        const auto close = value.find('"', 1);
+        return close == std::string_view::npos ? std::string() : std::string(value.substr(1, close - 1));
+    };
+    const auto is_key = [](std::string_view line, std::string_view key) {
+        if (!line.starts_with(key)) return false;
+        const std::string_view rest = line.substr(key.size());
+        return !rest.empty() && (rest.front() == ' ' || rest.front() == '\t' || rest.front() == '=');
+    };
+    std::size_t start = 0;
+    while (start <= text.size()) {
+        const std::size_t end = text.find('\n', start);
+        std::string_view line = trim(text.substr(start, (end == std::string_view::npos ? text.size() : end) - start));
+        start = end == std::string_view::npos ? text.size() + 1 : end + 1;
+        if (line.empty() || line.front() == '#') continue;
+        if (line.front() == '[') {
+            table = std::string(line);
+            continue;
+        }
+        if (table == "[package]") {
+            if (is_key(line, "name")) out.name = string_value(line);
+            else if (is_key(line, "namespace")) out.package_namespace = string_value(line);
+            continue;
+        }
+        const bool dependencies = table == "[dependencies]" || table.ends_with(".dependencies]");
+        if (dependencies && is_key(line, "huxerui.huxerui")) out.uses_huxerui = true;
+        const bool huxerui_table = table == "[dependencies.huxerui]" || table.ends_with(".dependencies.huxerui]");
+        if (huxerui_table && is_key(line, "huxerui")) out.uses_huxerui = true;
+    }
+    return out;
+}
+
+// The dependency keys a manifest declares, in the order it writes them: the
+// keys of `[dependencies]` and of every `[target.<selector>.dependencies]`
+// table, with a `[dependencies.<ns>]` table's keys qualified by its namespace.
+// `mcpp::dep_dir()` answers for exactly these. Each key once.
+[[nodiscard]] inline std::vector<std::string> dependency_keys(std::string_view text) {
+    std::vector<std::string> keys;
+    std::string table;
+    const auto trim = [](std::string_view v) {
+        while (!v.empty() && (v.front() == ' ' || v.front() == '\t')) v.remove_prefix(1);
+        while (!v.empty() && (v.back() == ' ' || v.back() == '\t' || v.back() == '\r')) v.remove_suffix(1);
+        return v;
+    };
+    std::size_t start = 0;
+    while (start <= text.size()) {
+        const std::size_t end = text.find('\n', start);
+        std::string_view line = trim(text.substr(start, (end == std::string_view::npos ? text.size() : end) - start));
+        start = end == std::string_view::npos ? text.size() + 1 : end + 1;
+        if (line.empty() || line.front() == '#') continue;
+        if (line.front() == '[') {
+            table = std::string(line);
+            continue;
+        }
+        std::string prefix;
+        if (table == "[dependencies]" || table.ends_with(".dependencies]")) {
+            prefix = "";
+        } else if (const auto at = table.find("dependencies."); at != std::string::npos &&
+                   (at == 1 || table.compare(at - 1, 1, ".") == 0) && table.ends_with("]") &&
+                   table.find("-dependencies") == std::string::npos) {
+            prefix = table.substr(at + 13, table.size() - at - 14) + ".";
+        } else {
+            continue;
+        }
+        const auto eq = line.find('=');
+        if (eq == std::string_view::npos) continue;
+        std::string key(trim(line.substr(0, eq)));
+        if (key.empty() || key.front() == '"') continue;
+        key = prefix + key;
+        if (std::ranges::find(keys, key) == keys.end()) keys.push_back(std::move(key));
+    }
+    return keys;
+}
+
 // What a module interface unit declares, so a GENERATED copy of it can say the
 // same thing.
 //
@@ -169,102 +296,283 @@ struct module_interface {
 
 // The layout `xim:wix` installs, expressed once.
 //
-// Each of WiX's three NuGet payloads keeps its own directory shape under a
-// subdirectory of the package root, so these are the upstream-documented paths
-// rather than a repackaging. They are here rather than in the rule so they can
-// be tested: a wrong path surfaces on Windows only, at link time, as a missing
-// .lib -- and there is no Windows machine on the way to that discovery.
-struct wix_layout {
-    std::string tool;                   // wix.exe
-    std::string bootstrapper_include;   // BootstrapperApplication.h and friends
-    std::string bootstrapper_lib;       // balutil.lib
-    std::string bootstrapper_runtime;   // mbanative.dll, deployed beside the BA
-    std::string dutil_include;          // dutil.h and friends
-    std::string dutil_lib;              // dutil.lib
-};
+// --------------------------------------------------------------- resources --
+//
+// The package paths hrc will write for a resource root, predicted before it
+// runs. `mcpp::deploy` copies one declared output at a time and a copy edge
+// has to name its input, so the rule declares every payload as an output of
+// the hrc action and deploys each one; this is the mapping tools/resource_
+// compiler/compiler.cpp's Discover() applies, kept as short as it is there so
+// the two cannot drift far: images keep their relative path except that an
+// SVG is compiled to `.huxv`, raw files keep theirs, strings live only in the
+// index, and the index is always `huxerui/resources.bin`.
+[[nodiscard]] inline std::vector<std::string> resource_outputs(const std::filesystem::path& root,
+                                                               std::string_view ns) {
+    std::vector<std::string> out;
+    std::error_code ec;
+    const auto walk = [&](const char* sub, auto&& accept) {
+        const std::filesystem::path dir = root / sub;
+        if (!std::filesystem::is_directory(dir, ec)) return;
+        for (auto it = std::filesystem::recursive_directory_iterator(dir, ec);
+             it != std::filesystem::recursive_directory_iterator(); ++it) {
+            if (!it->is_regular_file(ec)) continue;
+            std::filesystem::path rel = std::filesystem::relative(it->path(), dir, ec);
+            if (ec) continue;
+            if (auto packaged = accept(rel); packaged)
+                out.push_back("huxerui/" + std::string(ns) + "/" + sub + "/" + packaged->generic_string());
+        }
+    };
+    walk("images", [](std::filesystem::path rel) -> std::optional<std::filesystem::path> {
+        std::string ext = rel.extension().string();
+        for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (ext == ".svg") return rel.replace_extension(".huxv");
+        if (ext == ".png" || ext == ".jpg" || ext == ".jpeg") return rel;
+        return std::nullopt;
+    });
+    walk("raw", [](std::filesystem::path rel) -> std::optional<std::filesystem::path> { return rel; });
+    std::ranges::sort(out);
+    out.push_back("huxerui/resources.bin");
+    return out;
+}
 
-// ------------------------------------------------------------- installer --
+// ------------------------------------------------------- Windows installer --
+//
+// SHA-1 (FIPS 180-4), for one purpose: the name-based GUIDs below. It is not
+// used to protect anything.
+[[nodiscard]] inline std::array<std::uint8_t, 20> sha1(std::string_view data) {
+    std::array<std::uint32_t, 5> h{0x67452301U, 0xEFCDAB89U, 0x98BADCFEU, 0x10325476U, 0xC3D2E1F0U};
+    std::vector<std::uint8_t> message(data.begin(), data.end());
+    const std::uint64_t bits = static_cast<std::uint64_t>(data.size()) * 8U;
+    message.push_back(0x80U);
+    while (message.size() % 64U != 56U) message.push_back(0U);
+    for (int shift = 56; shift >= 0; shift -= 8) message.push_back(static_cast<std::uint8_t>(bits >> shift));
+    for (std::size_t chunk = 0; chunk < message.size(); chunk += 64U) {
+        std::array<std::uint32_t, 80> w{};
+        for (std::size_t i = 0; i < 16U; ++i) {
+            const std::size_t at = chunk + i * 4U;
+            w[i] = (std::uint32_t{message[at]} << 24U) | (std::uint32_t{message[at + 1U]} << 16U) |
+                   (std::uint32_t{message[at + 2U]} << 8U) | std::uint32_t{message[at + 3U]};
+        }
+        for (std::size_t i = 16; i < 80U; ++i) w[i] = std::rotl(w[i - 3U] ^ w[i - 8U] ^ w[i - 14U] ^ w[i - 16U], 1);
+        std::uint32_t a = h[0], b = h[1], c = h[2], d = h[3], e = h[4];
+        for (std::size_t i = 0; i < 80U; ++i) {
+            std::uint32_t f = 0;
+            std::uint32_t k = 0;
+            if (i < 20U) {
+                f = (b & c) | (~b & d);
+                k = 0x5A827999U;
+            } else if (i < 40U) {
+                f = b ^ c ^ d;
+                k = 0x6ED9EBA1U;
+            } else if (i < 60U) {
+                f = (b & c) | (b & d) | (c & d);
+                k = 0x8F1BBCDCU;
+            } else {
+                f = b ^ c ^ d;
+                k = 0xCA62C1D6U;
+            }
+            const std::uint32_t t = std::rotl(a, 5) + f + e + k + w[i];
+            e = d;
+            d = c;
+            c = std::rotl(b, 30);
+            b = a;
+            a = t;
+        }
+        h[0] += a;
+        h[1] += b;
+        h[2] += c;
+        h[3] += d;
+        h[4] += e;
+    }
+    std::array<std::uint8_t, 20> digest{};
+    for (std::size_t i = 0; i < 20U; ++i) digest[i] = static_cast<std::uint8_t>(h[i / 4U] >> (24U - 8U * (i % 4U)));
+    return digest;
+}
 
-// A WiX UpgradeCode is a GUID, and getting it wrong is not loud: WiX accepts a
-// malformed one as a literal and the MSI then never upgrades in place, which
-// shows up as two entries in Add/Remove Programs on a user's machine rather
-// than as a build failure here.
-[[nodiscard]] inline bool is_upgrade_code(std::string_view value) {
-    if (value.size() != 36) return false;
-    for (std::size_t i = 0; i < value.size(); ++i) {
-        const bool dash = i == 8 || i == 13 || i == 18 || i == 23;
-        if (dash) {
-            if (value[i] != '-') return false;
-        } else if (!std::isxdigit(static_cast<unsigned char>(value[i]))) {
-            return false;
+// A name-based GUID (RFC 4122 version 5), upper case: what CMake's
+// `string(UUID <out> NAMESPACE <ns> NAME <name> TYPE SHA1 UPPER)` returns. The
+// Windows package CMake renders derives its MSI and bundle UpgradeCodes this
+// way from the project id (platform/windows/app/huxerui.cmake), so the
+// installers both build systems produce for one project upgrade each other.
+[[nodiscard]] inline std::string uuid_v5(std::string_view namespace_uuid, std::string_view name) {
+    std::string data;
+    int high = -1;
+    for (char c : namespace_uuid) {
+        const int value = (c >= '0' && c <= '9') ? c - '0'
+                        : (c >= 'a' && c <= 'f') ? c - 'a' + 10
+                        : (c >= 'A' && c <= 'F') ? c - 'A' + 10 : -1;
+        if (value < 0) continue;
+        if (high < 0) {
+            high = value;
+        } else {
+            data.push_back(static_cast<char>((high << 4) | value));
+            high = -1;
         }
     }
-    return true;
-}
-
-struct msi_inputs {
-    std::string wix;             // wix.exe, from the xim:wix payload
-    std::string package_wxs;     // the rendered definition, absolute
-    std::string project_dir;     // holds the icon, absolute
-    std::string out;             // the .msi to write, absolute
-    std::string executable;      // the linked program, as mcpp names it
-};
-
-// The `wix build` argv.
-//
-// The program is passed as a preprocessor variable rather than through a
-// directory bindpath. A bindpath that resolves to nothing yields a valid,
-// empty installer and no diagnostic; a `<File Source>` whose path is wrong is
-// an error. `Project` stays a bindpath because it holds the icon, which the
-// manifest names and the rule has already checked exists.
-[[nodiscard]] inline std::vector<std::string> msi_arguments(const msi_inputs& in) {
-    return {
-        in.wix, "build", in.package_wxs,
-        "-arch", "x64",
-        "-d", "Executable=" + in.executable,
-        "-bindpath", "Project=" + in.project_dir,
-        "-out", in.out,
-    };
-}
-
-// Replaces every @@TOKEN@@ in the shipped Package.wxs. An unresolved token is
-// an error rather than a literal: WiX would accept `@@VERSION@@` as a version
-// string and fail somewhere less obvious.
-[[nodiscard]] inline std::string render_wxs(
-        std::string_view text,
-        const std::vector<std::pair<std::string, std::string>>& values,
-        std::string& error) {
+    data.append(name);
+    std::array<std::uint8_t, 20> digest = sha1(data);
+    digest[6] = static_cast<std::uint8_t>((digest[6] & 0x0FU) | 0x50U);
+    digest[8] = static_cast<std::uint8_t>((digest[8] & 0x3FU) | 0x80U);
+    static constexpr std::string_view hex = "0123456789ABCDEF";
     std::string out;
-    std::size_t cursor = 0;
-    while (cursor < text.size()) {
-        const std::size_t open = text.find("@@", cursor);
-        if (open == std::string_view::npos) { out.append(text.substr(cursor)); break; }
-        out.append(text.substr(cursor, open - cursor));
-        const std::size_t close = text.find("@@", open + 2);
-        if (close == std::string_view::npos) {
-            error = "unterminated @@ token"; return {};
-        }
-        const std::string_view key = text.substr(open + 2, close - open - 2);
-        const auto it = std::ranges::find_if(values, [&](const auto& kv) { return kv.first == key; });
-        if (it == values.end()) {
-            error = "unknown token '" + std::string(key) + "'"; return {};
-        }
-        out.append(it->second);
-        cursor = close + 2;
+    for (std::size_t i = 0; i < 16U; ++i) {
+        if (i == 4U || i == 6U || i == 8U || i == 10U) out.push_back('-');
+        out.push_back(hex[digest[i] >> 4U]);
+        out.push_back(hex[digest[i] & 0x0FU]);
     }
     return out;
 }
 
-[[nodiscard]] inline wix_layout wix_paths(std::string_view root) {
-    const std::string r(root);
-    return wix_layout{
-        .tool                 = r + "/tool/tools/net6.0/any/wix.exe",
-        .bootstrapper_include = r + "/bootstrapper/build/native/include",
-        .bootstrapper_lib     = r + "/bootstrapper/build/native/v14/x64/balutil.lib",
-        .bootstrapper_runtime = r + "/bootstrapper/runtimes/win-x64/native/mbanative.dll",
-        .dutil_include        = r + "/dutil/build/native/include",
-        .dutil_lib            = r + "/dutil/build/native/v14/x64/dutil.lib",
-    };
+// The namespace CMake's Windows package names its UpgradeCodes in (RFC 4122's
+// DNS namespace).
+inline constexpr std::string_view windows_upgrade_code_namespace = "6ba7b810-9dad-11d1-80b4-00c04fd430c8";
+
+[[nodiscard]] inline std::string xml_escape(std::string_view value) {
+    std::string out;
+    out.reserve(value.size());
+    for (char c : value) {
+        switch (c) {
+            case '&': out += "&amp;"; break;
+            case '<': out += "&lt;"; break;
+            case '>': out += "&gt;"; break;
+            case '"': out += "&quot;"; break;
+            default: out.push_back(c); break;
+        }
+    }
+    return out;
+}
+
+// THE WIX DEFINITIONS CMAKE RENDERS, RENDERED FROM THE SAME FILES.
+//
+// huxerui_configure_windows_project_package() configures
+// tools/huxerui_cli/templates/platform/windows/app/package/{Package,Bundle}.wxs.in
+// into a project; an mcpp application's installer is rendered from those two
+// files rather than from a copy, so the installers cannot drift apart. What
+// differs is how a file reaches WiX, and each difference replaces one exact
+// line of a template:
+//
+//   Package.wxs  CMake harvests the staged install tree through a bind path
+//                (`<Files Include="!(bindpath.Application)\**" />`). mcpp:plugins'
+//                dist-wix names the program as `$(Executable)` and every other
+//                file `mcpp pack` staged in its `StagedFiles` component group,
+//                because a bind path that resolves to nothing is a valid, empty
+//                installer.
+//   Bundle.wxs   the interface is the program mcpp built, named by path; the MSI
+//                is `$(Msi)`, which dist-wix defines; and the interface's
+//                payloads -- CMake's generated `installer-payloads.wxs`
+//                (cmake/HuxerUIGenerateWixPayloads.cmake) -- are appended as the
+//                same `HuxerUIInstallerPayloads` group.
+//
+// Every value is XML-escaped. A template that no longer carries a line being
+// replaced, or that still names a token or a bind path after rendering, is
+// refused by name: the alternative is an installer WiX builds from a
+// definition nobody wrote.
+struct windows_installer_values {
+    std::string project_name;         // @PROJECT_NAME@
+    std::string project_id;           // @PROJECT_ID@
+    std::string version;              // @HUXERUI_WINDOWS_PROJECT_VERSION@
+    std::string target_name;          // @TARGET_NAME@
+    std::string msi_upgrade_code;     // @HUXERUI_WINDOWS_MSI_UPGRADE_CODE@
+    std::string bundle_upgrade_code;  // @HUXERUI_WINDOWS_BUNDLE_UPGRADE_CODE@
+    std::string icon;                 // for !(bindpath.Project)\app.ico
+    std::string interface_program;    // for !(bindpath.Installer)\@TARGET_NAME@-Installer.exe
+    // (source file, name in the interface's directory), as CMake's payload
+    // generator writes them.
+    std::vector<std::pair<std::string, std::string>> payloads;
+};
+
+struct rendered_definition {
+    std::string text;
+    std::string error;  // empty when `text` is the definition
+};
+
+namespace detail {
+
+[[nodiscard]] inline bool replace_once(std::string& text, std::string_view from, std::string_view to) {
+    const std::size_t at = text.find(from);
+    if (at == std::string::npos) return false;
+    text.replace(at, from.size(), to);
+    return true;
+}
+
+inline void replace_all(std::string& text, std::string_view from, std::string_view to) {
+    for (std::size_t at = 0; (at = text.find(from, at)) != std::string::npos; at += to.size())
+        text.replace(at, from.size(), to);
+}
+
+[[nodiscard]] inline std::string finish(std::string text, const windows_installer_values& v,
+                                        std::string_view which, std::string& error) {
+    replace_all(text, "@PROJECT_NAME@", xml_escape(v.project_name));
+    replace_all(text, "@PROJECT_ID@", xml_escape(v.project_id));
+    replace_all(text, "@HUXERUI_WINDOWS_PROJECT_VERSION@", xml_escape(v.version));
+    replace_all(text, "@TARGET_NAME@", xml_escape(v.target_name));
+    replace_all(text, "@HUXERUI_WINDOWS_MSI_UPGRADE_CODE@", xml_escape(v.msi_upgrade_code));
+    replace_all(text, "@HUXERUI_WINDOWS_BUNDLE_UPGRADE_CODE@", xml_escape(v.bundle_upgrade_code));
+    if (text.find("!(bindpath.") != std::string::npos) {
+        error = std::string(which) + " still names a bind path after rendering";
+    }
+    for (std::string_view token : {"@PROJECT_", "@TARGET_", "@HUXERUI_"}) {
+        if (text.find(token) != std::string::npos) {
+            error = std::string(which) + " still names a template token (" + std::string(token) +
+                    "...) after rendering";
+        }
+    }
+    return text;
+}
+
+} // namespace detail
+
+[[nodiscard]] inline rendered_definition windows_package_definition(std::string_view package_template,
+                                                                    const windows_installer_values& v) {
+    std::string text(package_template);
+    rendered_definition out;
+    if (!detail::replace_once(text, "!(bindpath.Project)\\app.ico", xml_escape(v.icon))) {
+        out.error = "Package.wxs.in no longer names !(bindpath.Project)\\app.ico";
+        return out;
+    }
+    if (!detail::replace_once(text, "<Files Include=\"!(bindpath.Application)\\**\" />",
+                              "<Component>\n"
+                              "        <File Source=\"$(Executable)\" KeyPath=\"yes\" />\n"
+                              "      </Component>\n"
+                              "      <ComponentGroupRef Id=\"StagedFiles\" />")) {
+        out.error = "Package.wxs.in no longer harvests !(bindpath.Application)";
+        return out;
+    }
+    out.text = detail::finish(std::move(text), v, "Package.wxs", out.error);
+    return out;
+}
+
+[[nodiscard]] inline rendered_definition windows_bundle_definition(std::string_view bundle_template,
+                                                                   const windows_installer_values& v) {
+    std::string text(bundle_template);
+    rendered_definition out;
+    if (!detail::replace_once(text, "!(bindpath.Project)\\app.ico", xml_escape(v.icon))) {
+        out.error = "Bundle.wxs.in no longer names !(bindpath.Project)\\app.ico";
+        return out;
+    }
+    if (!detail::replace_once(text, "!(bindpath.Installer)\\@TARGET_NAME@-Installer.exe",
+                              xml_escape(v.interface_program))) {
+        out.error = "Bundle.wxs.in no longer names !(bindpath.Installer)\\@TARGET_NAME@-Installer.exe";
+        return out;
+    }
+    if (!detail::replace_once(text, "!(bindpath.Package)\\@TARGET_NAME@.msi", "$(Msi)")) {
+        out.error = "Bundle.wxs.in no longer names !(bindpath.Package)\\@TARGET_NAME@.msi";
+        return out;
+    }
+    std::string payloads = "  <Fragment>\n    <PayloadGroup Id=\"HuxerUIInstallerPayloads\">\n";
+    for (const auto& [source, name] : v.payloads) {
+        std::string windows_name = name;
+        std::ranges::replace(windows_name, '/', '\\');
+        payloads += "      <Payload SourceFile=\"" + xml_escape(source) + "\" Name=\"" + xml_escape(windows_name) +
+                    "\" />\n";
+    }
+    payloads += "    </PayloadGroup>\n  </Fragment>\n</Wix>";
+    if (!detail::replace_once(text, "</Wix>", payloads)) {
+        out.error = "Bundle.wxs.in has no </Wix>";
+        return out;
+    }
+    out.text = detail::finish(std::move(text), v, "Bundle.wxs", out.error);
+    return out;
 }
 
 // ------------------------------------------------------------ CMake reading --

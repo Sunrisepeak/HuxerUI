@@ -1,10 +1,8 @@
 name: mcpp Build
 
-# Developing HuxerUI and its applications with mcpp.
-#
-# CMake remains the full-platform path and the only path for Android, iOS and
-# Web; this workflow covers what mcpp builds today. The design is
-# docs/design/mcpp-build-system.md.
+# Developing HuxerUI and its applications with mcpp, on the six platforms CMake
+# builds. The design is docs/design/mcpp-build-system.md; that a default package
+# is the program CMake's is checked by build-systems-conformance.yml.
 #
 # `parity` is first and cheap on purpose: it builds two small programs and no
 # framework, so the failure it catches -- a source added to one build system
@@ -33,6 +31,9 @@ on:
       - 'platform/linux/**'
       - 'platform/windows/**'
       - 'platform/macos/**'
+      - 'platform/android/**'
+      - 'platform/ios/**'
+      - 'platform/web/**'
       - 'resources/**'
       # Read by huxerui-build-check, which compares the two build systems.
       - 'cmake/platform/**'
@@ -74,6 +75,9 @@ on:
       - 'platform/linux/**'
       - 'platform/windows/**'
       - 'platform/macos/**'
+      - 'platform/android/**'
+      - 'platform/ios/**'
+      - 'platform/web/**'
       - 'resources/**'
       # Read by huxerui-build-check, which compares the two build systems.
       - 'cmake/platform/**'
@@ -106,7 +110,7 @@ permissions:
 env:
   # Pinned rather than latest: an mcpp release changes build behaviour, and a
   # green PR should stay green until someone chooses to move this line.
-  MCPP_VERSION: '2026.9.10.2'
+  MCPP_VERSION: '2026.9.15.2'
   # The Linux clang leg. Pinned for the same reason mcpp is: a toolchain
   # release changes what compiles, and a green PR should stay green until
   # someone moves this line. Windows and macOS already build with clang --
@@ -122,7 +126,9 @@ jobs:
   parity:
     name: mcpp/CMake parity
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # The workspace build compiles the four test suites: 17 minutes measured
+    # with a warm cache, past 20 with a cold one.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
 
@@ -147,9 +153,12 @@ jobs:
           xlings install "mcpp@${MCPP_VERSION}" -y || true
 
       - name: Select the pinned mcpp
+        # A restored cache keeps whichever mcpp was active when it was saved;
+        # `--use` activates the pinned one.
         run: |
-          xlings install "mcpp@${MCPP_VERSION}" -y
-          mcpp --version
+          xlings install "mcpp@${MCPP_VERSION}" -y --use
+          mcpp --version | tee version.txt
+          grep -q "${MCPP_VERSION}" version.txt || { echo "mcpp ${MCPP_VERSION} is not the active mcpp"; exit 1; }
 
       # The tooling is built by mcpp rather than written in Python: a
       # repository that offers mcpp as a first-class build system should not
@@ -181,7 +190,7 @@ jobs:
   linux:
     name: mcpp build (linux x86_64)
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v5
 
@@ -213,16 +222,23 @@ jobs:
           echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
 
       - name: Select the pinned mcpp
+        # A restored cache keeps whichever mcpp was active when it was saved;
+        # `--use` activates the pinned one.
         run: |
-          xlings install "mcpp@${MCPP_VERSION}" -y
-          mcpp --version
+          xlings install "mcpp@${MCPP_VERSION}" -y --use
+          mcpp --version | tee version.txt
+          grep -q "${MCPP_VERSION}" version.txt || { echo "mcpp ${MCPP_VERSION} is not the active mcpp"; exit 1; }
 
       # The framework: 67 core sources, platform/linux, the builtin resource
       # header (hrc) and the C++20 module shell. mcpp provisions the GTK
       # payloads itself; this step is separate only so a provisioning failure
       # is attributed to provisioning rather than to the compile.
       - name: Build the framework
-        run: mcpp build
+        run: |
+          mcpp build 2>&1 | tee build.log
+          # Every dependency is written with the identity its manifest declares.
+          ! grep -n "declares the dependency" build.log \
+            || { echo "a dependency key names another identity than its manifest"; exit 1; }
 
       # Three applications on top of it. Each mcpp.toml names one dependency
       # and each build.mcpp is one call; everything else -- GTK on the link
@@ -234,12 +250,61 @@ jobs:
             echo "--- $example"
             ( cd "$example" && mcpp build )
           done
+      # The package the runtime reads is deployed beside the executable by
+      # huxerui.rules (one `mcpp::deploy` per payload); this is the assertion
+      # that the desktop path has resources at run time at all.
+      - name: Assert the resource package is beside the executable
+        working-directory: mcpp/examples/01-import
+        run: |
+          exe=$(find target -type f -name huxerui_example_import -path '*/bin/*' | head -1)
+          test -n "$exe" || { echo "01 produced no executable"; exit 1; }
+          res="$(dirname "$exe")/huxerui_example_import.resources"
+          test -f "$res/huxerui/resources.bin" || { echo "no resource index under $res"; exit 1; }
+          test -f "$res/huxerui/huxerui/images/check.huxv" || { echo "a builtin payload is missing under $res"; exit 1; }
+          echo "resources deployed: $(find "$res" -type f | wc -l) files"
+          # The repository's examples ask for profiling, as CMake builds its tree.
+          strings "$exe" | grep -q 'profiling mode must be' \
+            || { echo "example 01 was built without the profiling feature it asks for"; exit 1; }
+
+      # One package per application, as CMake merges it: the builtin resources,
+      # then each library's under its `package_product` namespace, then the
+      # application's. Example 03's library states `.resources` in its own
+      # build program and nothing in the application names it.
+      - name: Assert a library's resources reach the application's package
+        working-directory: mcpp/examples/03-library
+        run: |
+          exe=$(find target -type f -name huxerui_example_library -path '*/bin/*' | head -1)
+          test -n "$exe" || { echo "03 produced no executable"; exit 1; }
+          index="$(dirname "$exe")/huxerui_example_library.resources/huxerui/resources.bin"
+          test -f "$index" || { echo "no resource index beside $exe"; exit 1; }
+          strings "$index" > index.txt
+          grep -qx 'example_widgets' index.txt || { echo "the library's namespace is not in the application's package"; exit 1; }
+          grep -qx 'strings/library_name' index.txt || { echo "the library's string is not in the application's package"; exit 1; }
+          echo "the application's package carries the library's resources under example_widgets"
+
+      # The AppImage is mcpp:plugins' dist-appimage, reached through
+      # huxerui.rules; the payload it runs is declared by the member itself.
+      - name: Pack the example as an AppImage
+        working-directory: mcpp/examples/01-import
+        run: |
+          mcpp pack --format appimage
+          image=$(find target -name '*.AppImage' | head -1)
+          test -n "$image" || { echo "no AppImage was produced"; exit 1; }
+          test "$(stat -c %s "$image")" -gt 1048576 || { echo "the AppImage is implausibly small"; exit 1; }
+          echo "packed $image ($(stat -c %s "$image") bytes)"
+
       # The suite that says the LIBRARY works, not just that it links. Same
       # sources tests/unit/CMakeLists.txt compiles and the same vendored
       # Catch2, against the framework mcpp built.
-      - name: Run the unit test suite
-        working-directory: mcpp/huxerui-tests
-        run: mcpp test
+      - name: Run the test suites
+        # One package per suite under mcpp/huxerui-tests, one program each, as
+        # CMake builds one executable per suite: unit, runtime, the UI testing
+        # suite and the windowless smoke.
+        run: |
+          for suite in unit runtime ui smoke; do
+            echo "--- $suite"
+            ( cd "mcpp/huxerui-tests/$suite" && mcpp test )
+          done
 
       - name: Pack the library and check its shape
         shell: bash
@@ -358,7 +423,7 @@ jobs:
       # be a per-command environment variable for two of the three.
       - name: Select the pinned mcpp and make clang the default toolchain
         run: |
-          xlings install "mcpp@${MCPP_VERSION}" -y
+          xlings install "mcpp@${MCPP_VERSION}" -y --use
           mcpp --version
           # `default` selects; it does not install. On a cold cache the next
           # command is `error: llvm@22.1.8 is not installed`.
@@ -367,7 +432,11 @@ jobs:
           mcpp toolchain list
 
       - name: Build the framework
-        run: mcpp build
+        run: |
+          mcpp build 2>&1 | tee build.log
+          # Every dependency is written with the identity its manifest declares.
+          ! grep -n "declares the dependency" build.log \
+            || { echo "a dependency key names another identity than its manifest"; exit 1; }
 
       # THIS is the step the job exists for. A library builds under either
       # compiler; consuming it as a MODULE is where they diverge, because clang
@@ -395,9 +464,15 @@ jobs:
       # The suite that says the LIBRARY works, not just that it links. Same
       # sources tests/unit/CMakeLists.txt compiles and the same vendored
       # Catch2, against the framework mcpp built.
-      - name: Run the unit test suite
-        working-directory: mcpp/huxerui-tests
-        run: mcpp test
+      - name: Run the test suites
+        # One package per suite under mcpp/huxerui-tests, one program each, as
+        # CMake builds one executable per suite: unit, runtime, the UI testing
+        # suite and the windowless smoke.
+        run: |
+          for suite in unit runtime ui smoke; do
+            echo "--- $suite"
+            ( cd "mcpp/huxerui-tests/$suite" && mcpp test )
+          done
 
       - name: Pack the library and check its shape
         run: |
@@ -436,15 +511,22 @@ jobs:
           echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
 
       - name: Select the pinned mcpp
+        # A restored cache keeps whichever mcpp was active when it was saved;
+        # `--use` activates the pinned one.
         run: |
-          xlings install "mcpp@${MCPP_VERSION}" -y
-          mcpp --version
+          xlings install "mcpp@${MCPP_VERSION}" -y --use
+          mcpp --version | tee version.txt
+          grep -q "${MCPP_VERSION}" version.txt || { echo "mcpp ${MCPP_VERSION} is not the active mcpp"; exit 1; }
 
       # 25 Objective-C++ sources compiled with -fobjc-arc, and the frameworks
       # from the top-level [runtime] table -- which the engine renders only for
       # Mach-O, so the manifest states them once and unconditionally.
       - name: Build the framework
-        run: mcpp build
+        run: |
+          mcpp build 2>&1 | tee build.log
+          # Every dependency is written with the identity its manifest declares.
+          ! grep -n "declares the dependency" build.log \
+            || { echo "a dependency key names another identity than its manifest"; exit 1; }
 
       - name: Build the examples
         run: |
@@ -455,9 +537,15 @@ jobs:
       # The suite that says the LIBRARY works, not just that it links. Same
       # sources tests/unit/CMakeLists.txt compiles and the same vendored
       # Catch2, against the framework mcpp built.
-      - name: Run the unit test suite
-        working-directory: mcpp/huxerui-tests
-        run: mcpp test
+      - name: Run the test suites
+        # One package per suite under mcpp/huxerui-tests, one program each, as
+        # CMake builds one executable per suite: unit, runtime, the UI testing
+        # suite and the windowless smoke.
+        run: |
+          for suite in unit runtime ui smoke; do
+            echo "--- $suite"
+            ( cd "mcpp/huxerui-tests/$suite" && mcpp test )
+          done
 
       - name: Pack the library and check its shape
         shell: bash
@@ -477,10 +565,378 @@ jobs:
           echo "$list" | grep -qE 'lib/.+/(libhuxerui\.a|huxerui\.lib)' \
             || { echo "the package carries no library"; exit 1; }
           echo "package carries headers, the module interface and a library"
+  # ---------------------------------------------------------------- Web ----
+  # The Emscripten row. The framework is built as example 01's dependency
+  # rather than at the root: the artifact's exception model is stated by the
+  # root, and the application is the root that states it. emsdk is a payload
+  # mcpp installs on first use.
+      # The `.app` carries the executable under Contents/MacOS and the deployed
+      # resource package under Contents/Resources/HuxerUI -- the layout
+      # `huxerui_add_resources` stages for a CMake bundle, and where the AppKit
+      # adapter reads without any fallback.
+      - name: Pack the example as a bundle and check its layout
+        working-directory: mcpp/examples/01-import
+        run: |
+          # An application's own Info.plist entries, where an Xcode project
+          # keeps them: `macos/Info.plist`, merged over the entries CMake's
+          # application template writes.
+          mkdir -p macos
+          printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' '<plist version="1.0"><dict>' \
+            '<key>NSCameraUsageDescription</key><string>Scans a code.</string></dict></plist>' > macos/Info.plist
+          mcpp pack --format app 2>&1 | tee pack.log
+          app=$(find target -type d -name '*.app' | head -1)
+          test -n "$app" || { echo "dist-apple produced no bundle"; exit 1; }
+          test -f "$app/Contents/MacOS/huxerui_example_import" || { echo "the bundle carries no executable under Contents/MacOS"; exit 1; }
+          test -f "$app/Contents/Resources/HuxerUI/huxerui/resources.bin" || { echo "the resource package is not under Contents/Resources/HuxerUI"; exit 1; }
+          plutil -lint "$app/Contents/Info.plist"
+          plutil -p "$app/Contents/Info.plist" | tee plist.txt
+          grep -q '"CFBundleIdentifier" => "org.huxerui.example01"' plist.txt || { echo "CFBundleIdentifier is not the build program's"; exit 1; }
+          grep -q '"CFBundleDisplayName" => "huxerui-example-import"' plist.txt || { echo "the display name is not the project's"; exit 1; }
+          grep -q '"NSCameraUsageDescription" => "Scans a code."' plist.txt || { echo "macos/Info.plist did not reach the bundle"; exit 1; }
+          # CMake builds for macOS 12. libc++ comes from the graph on this row,
+          # compiled for the application's floor, so nothing in the program
+          # needs a newer system and it loads no system libc++.
+          otool -l "$app/Contents/MacOS/huxerui_example_import" | tee load.txt | grep -A4 LC_BUILD_VERSION | grep -E 'minos'
+          grep -A4 LC_BUILD_VERSION load.txt | grep -qE 'minos 12\.0$' || { echo "the program's minimum macOS is not 12.0"; exit 1; }
+          ! otool -L "$app/Contents/MacOS/huxerui_example_import" | grep -n 'libc++' \
+            || { echo "the program loads a system libc++"; exit 1; }
+          ! grep -n 'was built for newer macOS version' pack.log \
+            || { echo "an object in the link was built for a newer macOS than 12.0"; exit 1; }
+          echo "bundle: $app"
+
+      # `huxerui run macos` is `mcpp run --target aarch64-macos --format app`,
+      # and the runner named `app` is dist-apple's `macapp-run`: the bundle's
+      # program in the foreground, its output and its status. The manifest
+      # names no runner, so a plain `mcpp run` executes the program itself.
+      - name: Run the bundle through dist-apple's runner
+        working-directory: mcpp/examples/01-import
+        run: |
+          mcpp run --target aarch64-macos --format app --list-runners 2>&1 | tee runners.txt
+          grep -qE 'app[[:space:]]+macapp-run' runners.txt || { echo "the app runner is not macapp-run"; exit 1; }
+          ! grep -n '"open"\|[[:space:]]open[[:space:]]' runners.txt || { echo "a runner still hands the bundle to open"; exit 1; }
+
+      # `huxerui package macos` produces a DMG under CMake, and so does mcpp:
+      # the bundle beside an Applications link, in a compressed image.
+      - name: Pack the example as a DMG and check its layout
+        working-directory: mcpp/examples/01-import
+        run: |
+          mcpp pack --format dmg 2>&1 | tee dmg.log
+          dmg=$(find target -name '*.dmg' | head -1)
+          test -n "$dmg" || { echo "dist-apple produced no DMG"; exit 1; }
+          hdiutil verify "$dmg"
+          mnt="$RUNNER_TEMP/dmg"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mnt" "$dmg"
+          ls -la "$mnt"
+          app=$(find "$mnt" -maxdepth 1 -name '*.app' | head -1)
+          ok=1
+          test -n "$app" || { echo "the DMG carries no bundle"; ok=0; }
+          test -z "$app" || test -f "$app/Contents/Resources/HuxerUI/huxerui/resources.bin" || { echo "the DMG's bundle has no resources"; ok=0; }
+          test "$(readlink "$mnt/Applications")" = "/Applications" || { echo "the DMG has no Applications link"; ok=0; }
+          hdiutil detach "$mnt"
+          test "$ok" = 1
+
+      # The framework linked shared on macOS is an explicit choice of the
+      # application's (`linkage = "shared"`), and the bundle then carries it in
+      # Contents/Frameworks, signed, loaded through @rpath.
+      - name: Pack a shared-framework bundle
+        run: |
+          cp -R mcpp/examples/01-import "$RUNNER_TEMP/01-import-shared"
+          rm -rf "$RUNNER_TEMP/01-import-shared/target"
+          mkdir -p mcpp/examples/99-shared
+          cp -R "$RUNNER_TEMP/01-import-shared/." mcpp/examples/99-shared/
+          cd mcpp/examples/99-shared
+          sed -i '' 's|^huxerui.huxerui = { path = "../../..", features = \["profiling"\] }$|huxerui.huxerui = { path = "../../..", features = ["profiling"], linkage = "shared" }|' mcpp.toml
+          grep -n 'linkage = "shared"' mcpp.toml
+          # With the toolchain's libc++ and its 14.0 floor: a C++ shared library
+          # in a graph whose C++ runtime is a package is refused
+          # (`shared-library-cxx-runtime`, mcpp-community/mcpp#641 item 5), so
+          # this option does not take the application's `llvm.libcxx`. Whether
+          # a std exception thrown in the dylib is caught by type in the program
+          # is mcpp-community/mcpp#646 F2, not measured here.
+          sed -i '' -e "/^\[target.'cfg(any(os = \"macos\", os = \"ios\"))'.dependencies\]$/d" -e '/^llvm.libcxx = /d' \
+            -e 's|^macos_deployment_target = "12.0"$|macos_deployment_target = "14.0"|' mcpp.toml
+          ! grep -n '^llvm.libcxx' mcpp.toml
+          mcpp pack --format app 2>&1 | tee pack.log
+          app=$(find target -type d -name '*.app' | head -1)
+          test -n "$app" || { echo "no bundle"; exit 1; }
+          find "$app/Contents/Frameworks" -name 'libhuxerui*.dylib' | grep -q . || { echo "the bundle carries no framework dylib"; exit 1; }
+          otool -L "$app/Contents/MacOS/huxerui_example_import" | grep -n '@rpath/libhuxerui'
+          codesign --verify --deep --strict "$app"
+          echo "shared bundle: $app"
+
+  web:
+    name: mcpp build (wasm32-emscripten)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Cache xlings and mcpp
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.xlings
+            ~/.mcpp
+          key: mcpp-web-${{ runner.os }}-${{ runner.arch }}-v2-${{ env.MCPP_VERSION }}-${{ hashFiles('mcpp.toml') }}
+          restore-keys: |
+            mcpp-web-${{ runner.os }}-${{ runner.arch }}-v2-${{ env.MCPP_VERSION }}-
+            mcpp-web-${{ runner.os }}-${{ runner.arch }}-v2-
+
+      - name: Install xlings and mcpp
+        run: |
+          if [ ! -x "$HOME/.xlings/bin/xlings" ]; then
+            curl -fsSL https://d2learn.org/xlings-install.sh | bash
+          fi
+          echo "$HOME/.xlings/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
+
+      - name: Select the pinned mcpp
+        # A restored cache keeps whichever mcpp was active when it was saved;
+        # `--use` activates the pinned one.
+        run: |
+          xlings install "mcpp@${MCPP_VERSION}" -y --use
+          mcpp --version | tee version.txt
+          grep -q "${MCPP_VERSION}" version.txt || { echo "mcpp ${MCPP_VERSION} is not the active mcpp"; exit 1; }
+
+      - name: Build the example for the Web
+        working-directory: mcpp/examples/01-import
+        run: mcpp build --target wasm32-emscripten
+
+      # dist-web writes the launcher, the implicit .wasm, the preloaded
+      # resources and the page huxerui.rules ships into one static directory.
+      - name: Pack the static directory and check its shape
+        working-directory: mcpp/examples/01-import
+        run: |
+          mcpp pack --target wasm32-emscripten --format web
+          web=$(find target -type d -name web -path '*out/web' | head -1)
+          test -n "$web" || { echo "dist-web produced no directory"; exit 1; }
+          for f in index.html huxerui_example_import.js huxerui_example_import.wasm huxerui_example_import.data; do
+            test -f "$web/$f" || { echo "the Web directory lacks $f"; exit 1; }
+          done
+          magic=$(head -c 4 "$web/huxerui_example_import.wasm" | od -An -tx1 | tr -d ' \n')
+          test "$magic" = "0061736d" || { echo "the .wasm is not a WebAssembly module (magic $magic)"; exit 1; }
+          grep -q 'createHuxerUIApp' "$web/index.html" || { echo "the page does not load the launcher"; exit 1; }
+          echo "web directory: $(ls "$web" | tr '\n' ' ')"
+
+  # ---------------------------------------------------------- iOS simulator ----
+  # The simulator row: the compiler is the llvm payload, the SDK is Xcode's,
+  # located rather than installed. dist-apple assembles the flat bundle and
+  # simctl-run (xim:apple-simulator-tools) installs and launches it.
+  ios-sim:
+    name: mcpp build (aarch64-ios-sim)
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Cache xlings and mcpp
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.xlings
+            ~/.mcpp
+          key: mcpp-ios-${{ runner.os }}-${{ runner.arch }}-v2-${{ env.MCPP_VERSION }}-${{ hashFiles('mcpp.toml') }}
+          restore-keys: |
+            mcpp-ios-${{ runner.os }}-${{ runner.arch }}-v2-${{ env.MCPP_VERSION }}-
+            mcpp-ios-${{ runner.os }}-${{ runner.arch }}-v2-
+
+      - name: Install xlings and mcpp
+        run: |
+          if [ ! -x "$HOME/.xlings/bin/xlings" ]; then
+            curl -fsSL https://d2learn.org/xlings-install.sh | bash
+          fi
+          echo "$HOME/.xlings/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
+
+      - name: Select the pinned mcpp
+        run: |
+          xlings install "mcpp@${MCPP_VERSION}" -y --use
+          mcpp --version | tee version.txt
+          grep -q "${MCPP_VERSION}" version.txt || { echo "mcpp ${MCPP_VERSION} is not the active mcpp"; exit 1; }
+
+      - name: Build the example for the simulator
+        working-directory: mcpp/examples/01-import
+        run: mcpp build --target aarch64-ios-sim
+
+      # The bundle is flat: the executable, Info.plist and the deployed
+      # resource package at its root (`HuxerUI/`), the layout CMake's Xcode
+      # shell stages -- mcpp 2026.9.13.2 stages the declared files before the
+      # closure walk and dist-apple 0.9.2 places them at the resource root.
+      - name: Pack the bundle and check its shape
+        working-directory: mcpp/examples/01-import
+        run: |
+          # The application's own Info.plist entries, merged over the template's.
+          mkdir -p ios
+          printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' '<plist version="1.0"><dict>' \
+            '<key>NSCameraUsageDescription</key><string>Scans a code.</string></dict></plist>' > ios/Info.plist
+          mcpp pack --target aarch64-ios-sim --format app 2>&1 | tee pack.log
+          app=$(find target -type d -name '*.app' | head -1)
+          test -n "$app" || { echo "dist-apple produced no bundle"; exit 1; }
+          test -f "$app/huxerui_example_import" || { echo "the bundle carries no executable"; exit 1; }
+          plutil -lint "$app/Info.plist"
+          plutil -p "$app/Info.plist" | tee plist.txt
+          grep -q '"MinimumOSVersion" => "15.0"' plist.txt || { echo "MinimumOSVersion is not the manifest's 15.0"; exit 1; }
+          grep -q '"CFBundleIdentifier" => "org.huxerui.example01"' plist.txt || { echo "CFBundleIdentifier is not the build program's"; exit 1; }
+          # The entries CMake's iOS template writes: without a launch screen iOS
+          # runs the application in compatibility mode, not at the device's
+          # resolution.
+          plutil -extract UILaunchScreen raw -o - "$app/Info.plist" || { echo "the bundle declares no launch screen"; exit 1; }
+          grep -q '"CFBundleDisplayName" => "huxerui-example-import"' plist.txt || { echo "the display name is not the project's"; exit 1; }
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :UISupportedInterfaceOrientations:2' "$app/Info.plist")" = UIInterfaceOrientationLandscapeRight ] \
+            || { echo "the iPhone orientations are not the template's"; exit 1; }
+          grep -q '"NSCameraUsageDescription" => "Scans a code."' plist.txt || { echo "ios/Info.plist did not reach the bundle"; exit 1; }
+          test -f "$app/HuxerUI/huxerui/resources.bin" || { echo "the resource package is not at the bundle root"; exit 1; }
+          echo "bundle: $app"
+
+      # The manifest names no runner: huxerui.rules supplies `simctl-run` on
+      # the simulator row, which `huxerui run ios` reaches through mcpp.
+      - name: Check the simulator runner
+        working-directory: mcpp/examples/01-import
+        run: |
+          mcpp run --target aarch64-ios-sim --format app --list-runners 2>&1 | tee runners.txt
+          grep -q 'simctl-run' runners.txt || { echo "the simulator runner is not simctl-run"; exit 1; }
+
+  android:
+    name: mcpp build (x86_64-linux-android)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Cache xlings and mcpp
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.xlings
+            ~/.mcpp
+          key: mcpp-android-${{ runner.os }}-${{ runner.arch }}-v2-${{ env.MCPP_VERSION }}-${{ hashFiles('mcpp.toml') }}
+          restore-keys: |
+            mcpp-android-${{ runner.os }}-${{ runner.arch }}-v2-${{ env.MCPP_VERSION }}-
+            mcpp-android-${{ runner.os }}-${{ runner.arch }}-v2-
+
+      - name: Install xlings and mcpp
+        run: |
+          if [ ! -x "$HOME/.xlings/bin/xlings" ]; then
+            curl -fsSL https://d2learn.org/xlings-install.sh | bash
+          fi
+          echo "$HOME/.xlings/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
+
+      - name: Select the pinned mcpp
+        # A restored cache keeps whichever mcpp was active when it was saved;
+        # `--use` activates the pinned one.
+        run: |
+          xlings install "mcpp@${MCPP_VERSION}" -y --use
+          mcpp --version | tee version.txt
+          grep -q "${MCPP_VERSION}" version.txt || { echo "mcpp ${MCPP_VERSION} is not the active mcpp"; exit 1; }
+
+
+      - name: Build the example for Android
+        working-directory: mcpp/examples/01-import
+        run: mcpp build --target x86_64-linux-android
+
+      - name: Pack the APK and check its contents
+        working-directory: mcpp/examples/01-import
+        run: |
+          # `huxerui package android` under CMake is the Gradle APK for the ABIs
+          # gradle.properties lists, arm64-v8a and x86_64; one mcpp pack with
+          # both targets produces the same.
+          mcpp pack --target aarch64-linux-android --target x86_64-linux-android --format apk
+          apk=$(find target -name '*.apk' | grep -v base.apk | head -1)
+          test -n "$apk" || { echo "dist-apk produced no APK"; exit 1; }
+          unzip -Z1 "$apk" | tee contents.txt
+          # The framework is its own libhuxerui.so beside the application's in
+          # each ABI, as under Gradle; the launcher icon is the SDK's unless the
+          # application supplies android/res.
+          for f in lib/x86_64/libhuxerui_example_import.so lib/x86_64/libhuxerui.so \
+                   lib/arm64-v8a/libhuxerui_example_import.so lib/arm64-v8a/libhuxerui.so assets/huxerui/resources.bin \
+                   classes.dex AndroidManifest.xml resources.arsc res/mipmap-anydpi-v26/ic_launcher.xml; do
+            grep -qx "$f" contents.txt || { echo "the APK lacks $f"; exit 1; }
+          done
+          # A release package without a keystore is unsigned and aligned, as
+          # Gradle's release variant without a signing configuration is.
+          ! grep -qE '^META-INF/.*\.(RSA|EC)$' contents.txt || { echo "the release APK is signed without a keystore"; exit 1; }
+          zipalign=$(find ~/.mcpp/registry/data/xpkgs -name zipalign -type f | head -1)
+          "$zipalign" -c -p 4 "$apk" || { echo "the release APK is not aligned"; exit 1; }
+          aapt2=$(find ~/.mcpp/registry/data/xpkgs -name aapt2 -type f | head -1)
+          "$aapt2" dump badging "$apk" | tee badging.txt | grep -E "^(application:|targetSdkVersion)"
+          grep -q "^application-icon" badging.txt || { echo "the manifest names no launcher icon"; exit 1; }
+          grep -q "targetSdkVersion:'36'" badging.txt || { echo "targetSdkVersion is not 36"; exit 1; }
+          grep -q "package: name='org.huxerui.example01'" badging.txt || { echo "the application id is not the build program's"; exit 1; }
+          grep -q "versionName='0.1.0'" badging.txt || { echo "versionName is not the package version"; exit 1; }
+          grep -q "launchable-activity: name='org.huxerui.example01.MainActivity'" badging.txt || { echo "the launcher is not the generated MainActivity"; exit 1; }
+          grep -q "native-code: 'arm64-v8a' 'x86_64'" badging.txt || { echo "the APK does not carry both ABIs"; exit 1; }
+          echo "apk: $apk"
+          # A debug package is signed with the Android debug key, as Gradle's
+          # debug variant is, so `huxerui run android` installs it.
+          mcpp pack --profile dev --target x86_64-linux-android --format apk 2>&1 | tee pack-dev.log
+          dev=$(sed -n 's/^ *Packed //p' pack-dev.log | tail -1)
+          apksigner=$(find ~/.mcpp/registry/data/xpkgs -name apksigner -type f | head -1)
+          "$apksigner" verify --print-certs "$dev" | tee certs.txt | head -3
+          grep -q 'CN=Android Debug' certs.txt || { echo "the debug APK is not signed with the debug key"; exit 1; }
+          # The manifest names no runner: huxerui.rules supplies `adb-run`.
+          mcpp run --target x86_64-linux-android --format apk --list-runners 2>&1 | tee runners.txt
+          grep -q 'adb-run' runners.txt || { echo "the Android runner is not adb-run"; exit 1; }
+
+      # THE ANDROID EXTENSION POINTS a Gradle project has, on the example that
+      # depends on a library: the application's Kotlin (the framework's
+      # `android-kotlin` feature), its `android/libs` archives, a Maven
+      # dependency through the lock (`android-maven`), and the library's own
+      # Java, res/ and manifest. Written into the checkout for this job only.
+      - name: Kotlin, a library's Android sources, local archives and a Maven dependency reach the APK
+        working-directory: mcpp/examples/03-library
+        run: |
+          set -euo pipefail
+          sed -i 's|^huxerui.huxerui = { path = "../../..", features = \["profiling"\] }$|huxerui.huxerui = { path = "../../..", features = ["profiling", "android-kotlin", "android-maven"] }|' mcpp.toml
+          grep -q 'android-kotlin' mcpp.toml
+          sed -i 's|^        .bundle_identifier = "org.huxerui.example03",$|        .bundle_identifier = "org.huxerui.example03",\n        .android           = { .maven = { "androidx.startup:startup-runtime:1.1.1" } },|' build.mcpp
+          grep -q 'androidx.startup' build.mcpp
+          mkdir -p android/kotlin/org/huxerui/example03 android/libs \
+                   widgets/android/java/org/huxerui/widgets widgets/android/res/values
+          printf 'package org.huxerui.example03\n\nobject KotlinProbe {\n    fun greeting(name: String) = "hello, $name"\n}\n' \
+            > android/kotlin/org/huxerui/example03/KotlinProbe.kt
+          printf 'package org.huxerui.widgets;\n\npublic final class WidgetsProbe {\n    public static int label() { return R.string.widgets_label; }\n}\n' \
+            > widgets/android/java/org/huxerui/widgets/WidgetsProbe.java
+          printf '%s\n' '<?xml version="1.0" encoding="utf-8"?>' '<resources><string name="widgets_label">widgets</string></resources>' \
+            > widgets/android/res/values/strings.xml
+          printf '%s\n' '<?xml version="1.0" encoding="utf-8"?>' \
+            '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="org.huxerui.widgets">' \
+            '<uses-permission android:name="android.permission.VIBRATE"/></manifest>' > widgets/android/AndroidManifest.xml
+          jdk=$(find ~/.mcpp/registry/data/xpkgs/xim-x-jdk-temurin -mindepth 1 -maxdepth 1 -type d | head -1)
+          probe=$(mktemp -d)
+          mkdir -p "$probe/org/huxerui/archive"
+          printf 'package org.huxerui.archive;\npublic final class ArchiveProbe {}\n' > "$probe/org/huxerui/archive/ArchiveProbe.java"
+          "$jdk/bin/javac" -d "$probe/classes" "$probe/org/huxerui/archive/ArchiveProbe.java"
+          "$jdk/bin/jar" cf android/libs/archive-probe.jar -C "$probe/classes" .
+
+          MCPP_DIST_APK_MAVEN=update mcpp pack --profile dev --target x86_64-linux-android --format apk 2>&1 | tee pack.log
+          apk=$(sed -n 's/^ *Packed //p' pack.log | tail -1)
+          test -f "$apk" || { echo "the pack reported no APK"; exit 1; }
+          test -f android/maven.lock || { echo "no Maven lock was written beside the manifest"; exit 1; }
+          grep -q '^artifact androidx.startup:startup-runtime:1.1.1 ' android/maven.lock
+          bt=$(find ~/.mcpp/registry/data/xpkgs/xim-x-android-build-tools -mindepth 1 -maxdepth 1 -type d | head -1)
+          out=$(mktemp -d)
+          unzip -q "$apk" -d "$out"
+          for dex in "$out"/classes*.dex; do "$bt/dexdump" "$dex" 2>/dev/null; done \
+            | sed -n "s/^ *Class descriptor *: '\(.*\)'$/\1/p" | sort -u > classes.txt
+          for c in 'Lorg/huxerui/example03/KotlinProbe;' 'Lkotlin/jvm/internal/Intrinsics;' \
+                   'Lorg/huxerui/widgets/WidgetsProbe;' 'Lorg/huxerui/widgets/R$string;' \
+                   'Lorg/huxerui/archive/ArchiveProbe;' 'Landroidx/startup/InitializationProvider;'; do
+            grep -qxF "$c" classes.txt || { echo "the dex does not carry $c"; exit 1; }
+          done
+          "$bt/aapt2" dump permissions "$apk" | tee permissions.txt
+          grep -q 'android.permission.VIBRATE' permissions.txt || { echo "the library's manifest was not merged"; exit 1; }
+          "$bt/aapt2" dump xmltree "$apk" --file AndroidManifest.xml | grep -q 'org.huxerui.example03.androidx-startup' \
+            || { echo "the Maven library's provider did not reach the manifest"; exit 1; }
+          # An ordinary pack reads the lock and the cache and reaches no network.
+          mcpp pack --profile dev --target x86_64-linux-android --format apk > pack-offline.log 2>&1 \
+            || { cat pack-offline.log; echo "a pack with the lock and a warm cache failed"; exit 1; }
+          echo "Kotlin, the library's Java, res/ and manifest, a local JAR and a Maven AAR are in $apk"
+
   windows:
     name: mcpp build (windows x86_64)
     runs-on: windows-2022
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v5
 
@@ -512,7 +968,7 @@ jobs:
       - name: Select the pinned mcpp
         shell: pwsh
         run: |
-          xlings install "mcpp@$env:MCPP_VERSION" -y
+          xlings install "mcpp@$env:MCPP_VERSION" -y --use
           mcpp --version
 
       - name: Build the framework
@@ -544,11 +1000,15 @@ jobs:
           Write-Host "FileVersion=$($info.FileVersion) ProductName=$($info.ProductName)"
           if (-not $info.FileVersion) { throw 'the executable carries no version resource' }
 
-      # The installer, built by huxerui.rules through the WiX toolset the
-      # framework declares as an xlings payload. `role = "artifact"` is what
-      # sequences it after the link -- its input is the executable above -- and
-      # `bindpath.Application=bin` is what lets it harvest the link directory
-      # without a staging step.
+      # The MSI CMake's Windows package builds, from the same Package.wxs
+      # template (huxerui.rules renders it), through mcpp:plugins' dist-wix. A
+      # plain `mcpp build` above produces none; this step asks for one.
+      - name: Build the MSI
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: mcpp/examples/02-module-units
+        run: mcpp pack --format msi
+
       - name: Assert the MSI was produced
         if: runner.os == 'Windows'
         shell: pwsh
@@ -581,18 +1041,114 @@ jobs:
           $exe = $files | Where-Object { $_.Name -like '*huxerui_example_module_units.exe*' }
           if (-not $exe) { throw 'the MSI does not carry the application executable' }
           if ($exe.Size -lt 1MB) { throw "the installed executable is $($exe.Size) bytes, which is not the application" }
+          # The resource package the runtime reads beside the executable, which
+          # the program-only MSI of mcpp:plugins 0.10.0 left out.
+          if (-not ($files | Where-Object { $_.Name -like '*resources.bin*' })) {
+            throw 'the MSI does not carry the resource package'
+          }
+          # Not the installer interface: that is the Setup.exe's, not the application's.
+          if ($files | Where-Object { $_.Name -like '*Installer*' }) { throw 'the MSI carries the installer interface' }
 
-          # The definition the rule rendered, kept beside it for inspection.
-          $wxs = Get-ChildItem -Recurse -Filter 'Package.wxs' target | Select-Object -First 1
-          if (-not $wxs) { throw 'the rendered Package.wxs is missing' }
-          if ((Get-Content $wxs.FullName -Raw) -match '@@') { throw 'the Package.wxs has unresolved tokens' }
+          # The Start menu shortcut CMake's Package.wxs declares.
+          $view = $db.GetType().InvokeMember(
+              'OpenView', 'InvokeMethod', $null, $db, @('SELECT Shortcut FROM Shortcut'))
+          $view.GetType().InvokeMember('Execute', 'InvokeMethod', $null, $view, $null)
+          $shortcuts = 0
+          while ($view.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $view, $null)) { $shortcuts++ }
+          if ($shortcuts -lt 1) { throw 'the MSI declares no shortcut' }
+          Write-Host "$($files.Count) files, $shortcuts shortcuts"
+
+      # Installed and removed the way the Setup.exe's chain does it, without the
+      # interface (which has no silent mode, under CMake either): the program
+      # and its resource package in Program Files, the Start menu shortcut, and
+      # nothing left behind.
+      - name: Install and remove the MSI
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: mcpp/examples/02-module-units
+        run: |
+          $msi = Get-ChildItem -Recurse -Filter 'huxerui_example_module_units.msi' target | Select-Object -First 1
+          $folder = Join-Path $env:ProgramFiles 'huxerui-example-module-units'
+          $shortcut = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\huxerui-example-module-units\huxerui-example-module-units.lnk'
+          $p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @('/i', "`"$($msi.FullName)`"", '/qn', '/l*v', 'install.log')
+          if ($p.ExitCode -ne 0) { Get-Content install.log -Tail 40; throw "msiexec /i exited $($p.ExitCode)" }
+          foreach ($f in @('huxerui_example_module_units.exe', 'huxerui_example_module_units.resources\huxerui\resources.bin')) {
+            if (-not (Test-Path (Join-Path $folder $f))) { throw "the installation has no $f" }
+          }
+          if (-not (Test-Path $shortcut)) { throw 'the installation has no Start menu shortcut' }
+          $p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @('/x', "`"$($msi.FullName)`"", '/qn', '/l*v', 'uninstall.log')
+          if ($p.ExitCode -ne 0) { Get-Content uninstall.log -Tail 40; throw "msiexec /x exited $($p.ExitCode)" }
+          if (Test-Path (Join-Path $folder 'huxerui_example_module_units.exe')) { throw 'the program survived the removal' }
+          if (Test-Path $shortcut) { throw 'the shortcut survived the removal' }
+          Write-Host "installed into $folder and removed"
+
+      # The Setup.exe CMake's `huxerui package` produces: a Burn bundle whose
+      # interface is the application's own installer program, a host tool of
+      # the example's Windows row built only under the `windows-installer`
+      # feature (as CMake builds it for a package build only), with WiX's
+      # mbanative.dll and the interface's resource package beside it.
+      - name: Build the Setup.exe and check what it carries
+        if: runner.os == 'Windows'
+        working-directory: mcpp/examples/02-module-units
+        run: |
+          set -euo pipefail
+          mcpp pack --format setup --features windows-installer 2>&1 | tee setup.log
+          bundle=$(sed -n 's/^ *Packed //p' setup.log | tail -1 | tr -d '\r' | tr '\\' '/')
+          case "$bundle" in
+            */huxerui_example_module_units-Setup-0.1.0.exe) ;;
+            *) echo "the pack reported '$bundle', not huxerui_example_module_units-Setup-0.1.0.exe"; exit 1 ;;
+          esac
+          test -f "$bundle"
+
+          home=$(mcpp self env | awk -F'= *' '/^MCPP_HOME/{print $2; exit}' | tr -d '\r')
+          home=$(cygpath -u "$home")
+          wix="$home/registry/data/xpkgs/xim-x-wix/5.0.2-1/tool/tools/net6.0/any/wix.exe"
+          native="$home/registry/data/xpkgs/xim-x-wix/5.0.2-1/bootstrapper/runtimes/win-x64/native/mbanative.dll"
+          # The interface the bundle definition names: the tool mcpp built for
+          # this build (the store may hold one per consumer configuration).
+          interface=$(sed -n 's/.*<BootstrapperApplication SourceFile="\([^"]*\)".*/\1/p' \
+            target/.build-mcpp/out/huxerui-windows/Bundle.wxs | head -1 | tr -d '\r')
+          test -n "$interface" || { echo "the bundle definition names no interface"; exit 1; }
+          interface=$(cygpath -u "$interface")
+          case "$interface" in */huxerui_example_module_units-Installer.exe) ;; *) echo "the interface is $interface"; exit 1 ;; esac
+          index=target/.build-mcpp/out/hrc/installer-final/package/huxerui/resources.bin
+          msi=$(dirname "$bundle")/huxerui_example_module_units.msi
+          for f in "$wix" "$native" "$index" "$msi"; do test -f "$f" || { echo "missing $f"; exit 1; }; done
+
+          # Taken apart by WiX, the bundle's interface container carries the
+          # interface, mbanative.dll and the resource package, and its attached
+          # container the MSI. Compared by content: which names an extraction
+          # without the bootstrapper application keeps is WiX's business.
+          out="$PWD/target/setup-extract"
+          rm -rf "$out"
+          "$wix" burn extract "$(cygpath -w "$bundle")" -oba "$(cygpath -w "$out/ba")" -o "$(cygpath -w "$out/payloads")"
+          find "$out" -type f | sed "s|^$out/||" | sort
+          carries() {
+            while IFS= read -r f; do cmp -s "$f" "$2" && return 0; done < <(find "$out/$1" -type f)
+            echo "the bundle's $1 container does not carry $2"; exit 1
+          }
+          carries ba "$interface"
+          carries ba "$native"
+          carries ba "$index"
+          carries payloads "$msi"
+          echo "the Setup.exe carries the interface, mbanative.dll, its resource package and the MSI"
+
+          # The interface's resources sit where its runtime reads them.
+          grep -q 'Name="huxerui_example_module_units-Installer.resources\\huxerui\\resources.bin"' \
+            target/.build-mcpp/out/huxerui-windows/Bundle.wxs
 
       # The suite that says the LIBRARY works, not just that it links. Same
       # sources tests/unit/CMakeLists.txt compiles and the same vendored
       # Catch2, against the framework mcpp built.
-      - name: Run the unit test suite
-        working-directory: mcpp/huxerui-tests
-        run: mcpp test
+      - name: Run the test suites
+        # One package per suite under mcpp/huxerui-tests, one program each, as
+        # CMake builds one executable per suite: unit, runtime, the UI testing
+        # suite and the windowless smoke.
+        run: |
+          for suite in unit runtime ui smoke; do
+            echo "--- $suite"
+            ( cd "mcpp/huxerui-tests/$suite" && mcpp test )
+          done
 
       - name: Pack the library and check its shape
         shell: bash
@@ -641,9 +1197,13 @@ jobs:
           xlings install "mcpp@${MCPP_VERSION}" -y || true
 
       - name: Select the pinned mcpp
+        # A restored cache keeps whichever mcpp was active when it was saved;
+        # `--use` activates the pinned one.
         run: |
-          xlings install "mcpp@${MCPP_VERSION}" -y
-          mcpp --version
+          xlings install "mcpp@${MCPP_VERSION}" -y --use
+          mcpp --version | tee version.txt
+          grep -q "${MCPP_VERSION}" version.txt || { echo "mcpp ${MCPP_VERSION} is not the active mcpp"; exit 1; }
+
 
       # The CLI is a CMake artifact; only its dependencies are needed here, not
       # the framework's.
@@ -684,10 +1244,14 @@ jobs:
             ( cd "$work" && "$cli" "$@" )
             local project="$work/$dir"
 
-            grep -q '^huxerui = { path = ' "$project/mcpp.toml" \
+            grep -q '^huxerui.huxerui = { path = ' "$project/mcpp.toml" \
               || { echo "$dir: the CLI did not resolve a path dependency"; exit 1; }
             grep -q '^#   huxerui\.huxerui = ' "$project/mcpp.toml" \
               || { echo "$dir: the published identity is not recorded"; exit 1; }
+            # One dependency line, as under CMake: the framework states its own
+            # linkage and the rules supply the runners.
+            ! grep -nE '(linkage|runner)[[:space:]]*=' "$project/mcpp.toml" \
+              || { echo "$dir: the manifest names a linkage or a runner"; exit 1; }
             # No headers anywhere: the entry instantiates nothing and the module
             # unit reaches std::type_info through `import std;`.
             ! grep -rn '^[[:space:]]*#include' "$project/src" \
@@ -715,6 +1279,10 @@ jobs:
           test -n "$generated" || { echo "hcg did not transform src/app.cppm"; exit 1; }
           grep -q 'return ::huxerui::Scope(' "$generated" \
             || { echo "the composable was not wrapped"; exit 1; }
-          find target -type f -name AppDemo | head -1 | grep -q . \
-            || { echo "no executable was produced"; exit 1; }
+          exe=$(find target -type f -name AppDemo | head -1)
+          test -n "$exe" || { echo "no executable was produced"; exit 1; }
+          # Built as an application of the SDK is: without compile-time
+          # profiling, which CMake's distributed SDK refuses to carry.
+          ! strings "$exe" | grep -n 'profiling mode must be' \
+            || { echo "the generated application was built with profiling"; exit 1; }
           echo "generated project builds and runs the transform"

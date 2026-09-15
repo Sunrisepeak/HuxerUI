@@ -1,56 +1,55 @@
-# The framework's own test suite, built and run by mcpp.
+# What the HuxerUI test suites share under mcpp, as CMake's
+# huxerui_add_test_suite() gives every suite: the vendored Catch2, the builtin
+# resource package tests/support/builtin_resources.cpp opens, and the
+# windowless testing library (testing/, CMake's HuxerUI::testing).
 #
-# WHY IT IS A SEPARATE PACKAGE. mcpp defines a test as every `tests/**/*.cpp`
-# in the package, with no manifest key to point that elsewhere, and this
-# repository's `tests/` is CMake's -- 111 files across eleven directories, some
-# of them CMake- or Python-driven and some linking the CLI. Discovering that
-# tree from the root package would try to compile all of it. A package with its
-# own `tests/` directory selects instead of discovering.
+# WHY THE SUITES ARE PACKAGES. The repository's `tests/` is CMake's -- 111
+# files, some driven by CMake or Python, some linking the CLI -- and mcpp builds
+# every object of a package into every one of its programs. CMake builds one
+# executable per suite, so each suite is a package of its own below (unit,
+# runtime, ui, smoke), its sources named where they live, one program each.
 #
 # WHY THE SOURCES REACH UPWARD. The test files are not copied here. They are
 # the same files `ctest` compiles, and a copy is the drift the rest of this
-# directory exists to prevent -- `huxerui-build-check` would have nothing to
-# compare. `[build] sources` names them where they live.
-
+# directory exists to prevent.
 [package]
 name        = "huxerui-tests"
 namespace   = "huxerui"
 version     = "0.3.0"
 standard    = "c++20"
-description = "The HuxerUI test suite, compiled against the mcpp-built framework"
-license     = "Apache-2.0"
+description = "What the HuxerUI test suites share under mcpp"
+license     = "MIT"
 
+# The framework as CMake's own tree builds it for its tests: with profiling.
 [dependencies]
-huxerui = { path = "../.." }
+huxerui.huxerui = { path = "../..", features = ["profiling"] }
+
+[targets.huxerui-tests]
+kind = "lib"
 
 [build]
-# Catch2 is the amalgamated copy this repository vendors, not the index's:
-# the tests include <catch2/catch_amalgamated.hpp>, and taking a different
-# Catch2 here would be a second version of the framework's test dependency.
-#
-# tests/unit only, for now. tests/runtime and tests/platform reach CMake-
-# generated fixtures -- ui_testing.cpp includes ui_test_fixture_resources.h,
-# which a resource step writes -- and each needs an mcpp equivalent before it
-# can compile here. tests/cli links the CLI, which is a CMake target, and
-# tests/cmake and tests/scripts are driven by CMake and Python. The unit suite
-# needs none of that: it is the framework's own behaviour, compiled against the
-# framework mcpp built.
+# Catch2 is the amalgamated copy this repository vendors, not the index's: the
+# tests include <catch2/catch_amalgamated.hpp>, and a different Catch2 here would
+# be a second version of the framework's test dependency.
 sources = [
     "../../3dparty/catch2/src/catch_amalgamated.cpp",
-    "../../tests/unit/*.cpp",
-    # Exactly what tests/unit/CMakeLists.txt adds beside the suite's own files.
-    "../../examples/buffer_reference/frame_source.cpp",
     "../../tests/support/builtin_resources.cpp",
+    "../../testing/ui_test.cpp",
+    "../../testing/testing_platform_adapter.cpp",
+    "../../testing/ui_snapshot.cpp",
 ]
-# catch_amalgamated.cpp includes its own header unqualified
-# (`#include "catch_amalgamated.hpp"`), so its own directory is on the path as
-# well as the one the tests spell `<catch2/...>` through. The CMake target adds
-# the same pair, the second one PRIVATE.
 include_dirs = [
     "../../3dparty/catch2/include",
     "../../3dparty/catch2/include/catch2",
     "../../tests/support",
+    "../../testing",
     "../../src",
 ]
-private_include_dirs = ["../../3dparty/catch2/include/catch2", "../../src"]
-defines      = ["CATCH_AMALGAMATED_CUSTOM_MAIN=ON"]
+# The framework's implementation headers, which the testing library reaches as
+# CMake's PRIVATE include does; every suite names them for itself.
+private_include_dirs = ["../../src"]
+defines = ["CATCH_AMALGAMATED_CUSTOM_MAIN=ON"]
+
+# Not a suite: the suites are the packages below.
+[test]
+discover = []

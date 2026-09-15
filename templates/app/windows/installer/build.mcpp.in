@@ -1,0 +1,13 @@
+// The installer interface, compiled as a CMake project's
+// huxerui_add_windows_installer() compiles it.
+
+import mcpp;
+import huxerui.rules;
+
+int main() {
+    return huxerui::rules::configure({
+        .target       = "{{project.name}}-Installer",
+        .bundle_name  = "{{project.name}}",
+        .bootstrapper = true,
+    }) ? 0 : 1;
+}

@@ -23,7 +23,6 @@ huxerui doctor [platform-list]
 huxerui setup <platform-list> [--yes]
 huxerui devices [platform]
 huxerui build [platform-list] [--device <id>] [--profile debug|release] [--generator <name>] [--source <path>] [--java-home <path>]
-huxerui mcpp build [--source <path>] [--release] [--locked] [--offline] [--verbose]
 huxerui run <platform> [--device <id>] [--profile debug|release] [--generator <name>] [--source <path>] [--java-home <path>]
 huxerui package <platform-list> [--device <id>] [--profile debug|release] [--generator <name>] [--source <path>] [--java-home <path>]
 huxerui open ios [--source <path>]
@@ -157,7 +156,7 @@ Do not add a second dependency manifest or invoke FetchContent separately for a 
 
 ## Build and run without changing toolchains
 
-For an independent project that uses mcpp, run `huxerui mcpp build`. The selected directory must contain `mcpp.toml`; this frontend invokes mcpp directly and does not change the CMake-based HuxerUI project workflow below.
+In a project created with `--build mcpp`, `huxerui build`, `run` and `package` run the matching `mcpp` commands, and anything beyond them is `mcpp` itself; see [cpp-modules-and-mcpp.md](cpp-modules-and-mcpp.md). The rest of this section is the CMake workflow.
 
 - Reuse the project's compatible build directory and generator.
 - On Windows, keep the existing MSVC generator; do not switch to MinGW or pin a Visual Studio release without a project requirement.

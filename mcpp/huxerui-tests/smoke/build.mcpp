@@ -1,0 +1,17 @@
+// The smoke's resources, as tests/platform/testing/CMakeLists.txt builds them:
+// tests/libraries/application_resources under `ui_testing_smoke`, merged with
+// the builtin package into the directory HUXERUI_SMOKE_PACKAGE names.
+
+import std;
+import mcpp;
+import huxerui.rules;
+#include "../resources.h"
+
+int main() {
+    std::string root, hrc;
+    if (!huxerui_tests::locate(root, hrc)) return 1;
+    mcpp::rerun_if_changed("../resources.h");
+    huxerui_tests::define_path("HUXERUI_SMOKE_PACKAGE",
+        huxerui_tests::fixture_package(root, hrc, root + "/tests/libraries/application_resources", "ui_testing_smoke"));
+    return 0;
+}

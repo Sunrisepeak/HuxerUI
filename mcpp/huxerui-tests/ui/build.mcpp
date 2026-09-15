@@ -1,0 +1,17 @@
+// The fixture HuxerUIUiTests opens, as tests/runtime/CMakeLists.txt builds it:
+// tests/libraries/application_resources under `ui_test_fixture`, merged with
+// the builtin package into the directory HUXERUI_UI_TEST_PACKAGE names.
+
+import std;
+import mcpp;
+import huxerui.rules;
+#include "../resources.h"
+
+int main() {
+    std::string root, hrc;
+    if (!huxerui_tests::locate(root, hrc)) return 1;
+    mcpp::rerun_if_changed("../resources.h");
+    huxerui_tests::define_path("HUXERUI_UI_TEST_PACKAGE",
+        huxerui_tests::fixture_package(root, hrc, root + "/tests/libraries/application_resources", "ui_test_fixture"));
+    return 0;
+}
