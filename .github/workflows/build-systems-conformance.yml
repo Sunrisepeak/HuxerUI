@@ -11,6 +11,8 @@ name: Build Systems Conformance
 # Ubuntu runner; every platform runs weekly and on request.
 
 on:
+  push:
+    branches: ['ci/**']
   pull_request:
     paths:
       # What either build system reads to produce a default application.
