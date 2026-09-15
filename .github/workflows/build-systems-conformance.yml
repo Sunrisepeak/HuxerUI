@@ -177,12 +177,24 @@ jobs:
           "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "platform-tools" "ndk;29.0.14206865"
 
       # The CMake project builds the framework from this checkout, as
-      # `--source` does for a developer; on the Apple rows with the Xcode
-      # sdk-release.yml builds the SDK with.
+      # `--source` does for a developer.
       - name: Package with CMake
-        env:
-          DEVELOPER_DIR: ${{ runner.os == 'macOS' && '/Applications/Xcode_26.2.app/Contents/Developer' || '' }}
+        if: runner.os != 'macOS'
         run: cd "$WORK/cmake/conformance" && "$CLI" package ${{ matrix.platform }} --source "$HUXERUI_HOME"
+
+      # On the Apple rows with the Xcode sdk-release.yml builds the SDK with,
+      # and with Ninja as CMake's default generator: the iOS template's build
+      # phase runs `cmake --build --parallel` with no job count, which under
+      # Makefiles is an unbounded `make -j` on a three-core runner. The
+      # generator does not change what is built.
+      - name: Package with CMake
+        if: runner.os == 'macOS'
+        env:
+          DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
+          CMAKE_GENERATOR: Ninja
+        run: |
+          command -v ninja >/dev/null 2>&1 || brew install ninja
+          cd "$WORK/cmake/conformance" && "$CLI" package ${{ matrix.platform }} --source "$HUXERUI_HOME"
 
       # ---------------------------------------------------------- the check ----
       - name: Read the program model facts
