@@ -176,7 +176,12 @@ jobs:
           set -o pipefail
           "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "platform-tools" "ndk;29.0.14206865"
 
+      # The CMake project builds the framework from this checkout, as
+      # `--source` does for a developer; on the Apple rows with the Xcode
+      # sdk-release.yml builds the SDK with.
       - name: Package with CMake
+        env:
+          DEVELOPER_DIR: ${{ runner.os == 'macOS' && '/Applications/Xcode_26.2.app/Contents/Developer' || '' }}
         run: cd "$WORK/cmake/conformance" && "$CLI" package ${{ matrix.platform }} --source "$HUXERUI_HOME"
 
       # ---------------------------------------------------------- the check ----

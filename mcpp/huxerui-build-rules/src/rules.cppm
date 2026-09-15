@@ -983,16 +983,18 @@ inline bool configure(options opt = {}) {
     apple_options     apple     = opt.apple;
     android_options   android   = opt.android;
     installer_options installer = opt.installer;
+    web_options       web       = opt.web;
     if (apple.display_name.empty())     apple.display_name     = opt.bundle_name;
     if (apple.bundle_id.empty())        apple.bundle_id        = opt.bundle_identifier;
     if (android.application_id.empty()) android.application_id = opt.bundle_identifier;
     if (installer.display_name.empty()) installer.display_name = opt.bundle_name;
     if (installer.project_id.empty())   installer.project_id   = opt.bundle_identifier;
+    if (web.storage_key.empty())        web.storage_key        = opt.bundle_identifier;
     installer_interface setup_interface;
     if (std::string_view(mcpp::target_os()) == "windows" && std::string_view(mcpp::pack_format()) == "setup" &&
         !detail::plan_setup_interface(opt, installer, root, setup_interface))
         return false;
-    return provide_formats({ opt.target, installer, opt.appimage, apple, opt.web, android, setup_interface },
+    return provide_formats({ opt.target, installer, opt.appimage, apple, web, android, setup_interface },
                            root);
 }
 

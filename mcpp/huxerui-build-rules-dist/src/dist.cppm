@@ -87,8 +87,9 @@ struct apple_options {
 // application is a Web application when built for wasm32-emscripten, so the
 // format is always provided; these only replace the page the rule ships.
 struct web_options {
-    std::string template_file;  // package-root-relative; `{{name}}` and `{{title}}` are substituted
+    std::string template_file;  // package-root-relative; `{{name}}`, `{{title}}` and `{{storage_key}}` are substituted
     std::string title;          // <title>; default: the package name
+    std::string storage_key;    // scopes the application's browser-managed files; default: the bundle identifier, else the target
 };
 
 // What an application may state about its APK; every field has a default that
@@ -410,6 +411,10 @@ inline bool provide_formats(const formats& opt, const std::string& root) {
         a.icon       = opt.appimage.icon;
         a.categories = opt.appimage.categories;
         a.terminal   = false;
+        // Named as `huxerui package linux` names CMake's, `<target>-<version>.AppImage`.
+        const std::string program = a.target.empty() ? std::string(mcpp::package_name()) : a.target;
+        a.output = (std::filesystem::path(mcpp::out_dir()) /
+                    (program + "-" + std::string(mcpp::package_version()) + ".AppImage")).string();
         if (!mcpp::dist::appimage::generate(a)) return false;
     }
     if (dist_os == "macos" || dist_os == "ios") {
@@ -421,7 +426,12 @@ inline bool provide_formats(const formats& opt, const std::string& root) {
         a.target    = target_or(opt.apple.target);
         a.app_name  = opt.apple.display_name;
         a.bundle_id = opt.apple.bundle_id;
-        a.icon      = opt.apple.icon;
+        // The icon CMake's application template ships, unless the application names its own: the macOS
+        // `.icns`, and on iOS the asset catalog's PNGs, which dist-apple lists under CFBundleIcons because
+        // compiling the catalog takes Xcode's actool.
+        a.icon      = !opt.apple.icon.empty() ? opt.apple.icon
+                    : dist_os == "ios" ? root + "/tools/huxerui_cli/templates/platform/ios/app/App/Assets.xcassets/AppIcon.appiconset"
+                                       : root + "/tools/huxerui_cli/templates/platform/macos/app/AppIcon.icns";
         a.identity             = opt.apple.identity;
         a.entitlements         = under_manifest(opt.apple.entitlements);
         a.provisioning_profile = under_manifest(opt.apple.provisioning_profile);
@@ -464,16 +474,46 @@ inline bool provide_formats(const formats& opt, const std::string& root) {
         mcpp::runner("simctl-run");
     }
     if (dist_os == "emscripten") {
-        // The page the rule ships calls the MODULARIZE factory
-        // the emscripten section exports and mounts the application; a
-        // project supplies its own to change the page, not the contract.
-        // `dist-web` joins the template path to the manifest directory, and
-        // an absolute path survives that join, which is how the rule's own
-        // template -- in the SDK, not the project -- reaches it.
+        // The page the rule ships calls the MODULARIZE factory the emscripten
+        // section exports and mounts the application; a project supplies its
+        // own to change the page, not the contract. Either is rendered into
+        // out_dir first: `dist-web` joins the template path to the manifest
+        // directory, and an absolute path survives that join.
+        //
+        // What CMake's Web template adds is added here too. The storage key is
+        // the application's identifier, so a user's browser-managed files are
+        // in one place whichever build system made the page, and the SDK's
+        // favicon and touch icon are deployed beside the launcher under the
+        // names CMake gives them.
+        const std::string name = opt.target.empty() ? std::string(mcpp::package_name()) : opt.target;
+        const std::filesystem::path web_out = std::filesystem::path(mcpp::out_dir()) / "huxerui-web";
+        const std::filesystem::path web_shell = std::filesystem::path(root) / "tools/huxerui_cli/templates/platform/web/app";
+        for (const auto& [file, placed_suffix] : { std::pair<const char*, const char*>{ "favicon.svg", ".favicon.svg" },
+                                                   std::pair<const char*, const char*>{ "apple-touch-icon.png", ".apple-touch-icon.png" } }) {
+            const std::filesystem::path from   = web_shell / file;
+            const std::filesystem::path placed = web_out / (name + placed_suffix);
+            mcpp::rerun_if_changed(from.string().c_str());
+            if (!detail::write_text_if_different(placed, detail::read_text(from)))
+                return detail::refuse("huxerui.rules: cannot write " + placed.string());
+            mcpp::deploy(placed.string().c_str(), ".");
+        }
+        const std::filesystem::path page_template = opt.web.template_file.empty()
+            ? std::filesystem::path(root) / "mcpp/huxerui-build-rules-dist/web/index.html.in"
+            : std::filesystem::path(mcpp::manifest_dir()) / opt.web.template_file;
+        if (!std::filesystem::is_regular_file(page_template))
+            return detail::refuse("huxerui.rules: the page template " + page_template.string() + " was not found");
+        mcpp::rerun_if_changed(page_template.string().c_str());
+        std::string page_text = detail::read_text(page_template);
+        const std::string storage_key = !opt.web.storage_key.empty() ? opt.web.storage_key : name;
+        const std::string_view token = "{{storage_key}}";
+        for (std::size_t at = 0; (at = page_text.find(token, at)) != std::string::npos; at += storage_key.size())
+            page_text.replace(at, token.size(), storage_key);
+        const std::filesystem::path page = web_out / "index.html.in";
+        if (!detail::write_text_if_different(page, page_text))
+            return detail::refuse("huxerui.rules: cannot write " + page.string());
         mcpp::dist::web::options w;
         w.target        = opt.target;
-        w.template_file = opt.web.template_file.empty()
-            ? root + "/mcpp/huxerui-build-rules-dist/web/index.html.in" : opt.web.template_file;
+        w.template_file = page.string();
         w.title         = opt.web.title;
         if (!mcpp::dist::web::generate(w)) return false;
     }
@@ -493,6 +533,41 @@ inline bool provide_formats(const formats& opt, const std::string& root) {
         a.java_sources   = { root + "/platform/android/huxerui/src/main/java" };
         const std::string java = opt.android.java.empty() ? std::string("android/java") : opt.android.java;
         if (std::filesystem::is_directory(under_manifest(java))) a.java_sources.push_back(under_manifest(java));
+        // The application id: the manifest's package, and the package of the Java the rule writes.
+        std::string app_id = !opt.android.application_id.empty() ? opt.android.application_id
+            : (std::string(mcpp::package_namespace()).empty() ? std::string("app")
+                                                               : std::string(mcpp::package_namespace()))
+              + "." + std::string(mcpp::package_name());
+        // dist-apk's own default, which a Java package can carry: no dashes.
+        if (opt.android.application_id.empty())
+            for (std::size_t i = 0; i < app_id.size(); ++i) if (app_id[i] == '-') app_id[i] = '_';
+        a.application_id = app_id;
+        const std::string lib_name = opt.target.empty() ? std::string(mcpp::package_name()) : opt.target;
+        std::string package_dir = app_id;
+        for (char& c : package_dir) if (c == '.') c = '/';
+        const std::filesystem::path generated_root = std::filesystem::path(mcpp::out_dir()) / "android" / "java";
+        a.java_sources.push_back(generated_root.string());
+        // BuildConfig, as the Android Gradle plugin writes it for the SDK's application template, which
+        // `buildConfig = true` turns on: the variant's fields, and the application library the template's
+        // MainActivity loads. Java an application carries reads it as it does under Gradle.
+        {
+            const std::string profile = mcpp::profile();
+            const std::string version = mcpp::package_version();
+            std::string java = "package " + app_id + ";\n\n"
+                "/** Generated by huxerui.rules: the fields the Android Gradle plugin writes for the application. */\n"
+                "public final class BuildConfig {\n"
+                "  public static final boolean DEBUG = " + std::string(profile == "dev" ? "true" : "false") + ";\n"
+                "  public static final String APPLICATION_ID = \"" + app_id + "\";\n"
+                "  public static final String BUILD_TYPE = \"" + (profile == "dev" ? std::string("debug") : profile) + "\";\n"
+                "  public static final int VERSION_CODE = " + mcpp::dist::apk::version_code_for(version) + ";\n"
+                "  public static final String VERSION_NAME = \"" + version + "\";\n"
+                "  // The application library the launcher Activity loads.\n"
+                "  public static final String HUXERUI_APP_LIBRARY = \"" + lib_name + "\";\n"
+                "}\n";
+            const std::filesystem::path build_config = generated_root / package_dir / "BuildConfig.java";
+            if (!detail::write_text_if_different(build_config, java))
+                return detail::refuse("huxerui.rules: cannot write " + build_config.string());
+        }
         if (!opt.android.activity.empty()) {
             a.activity = opt.android.activity;
         } else {
@@ -503,34 +578,18 @@ inline bool provide_formats(const formats& opt, const std::string& root) {
             // Activity cannot know the name of. The rule writes that class
             // from the same two values the manifest carries, so the
             // framework's Java is identical under both build systems.
-            std::string app_id = !opt.android.application_id.empty() ? opt.android.application_id
-                : (std::string(mcpp::package_namespace()).empty() ? std::string("app")
-                                                                   : std::string(mcpp::package_namespace()))
-                  + "." + std::string(mcpp::package_name());
-            // dist-apk's own default, which a Java package can carry: no dashes.
-            if (opt.android.application_id.empty())
-                for (std::size_t i = 0; i < app_id.size(); ++i) if (app_id[i] == '-') app_id[i] = '_';
-            const std::string lib_name = opt.target.empty() ? std::string(mcpp::package_name()) : opt.target;
-            std::string package_dir = app_id;
-            for (char& c : package_dir) if (c == '.') c = '/';
-            const std::filesystem::path generated_root = std::filesystem::path(mcpp::out_dir()) / "android" / "java";
             const std::filesystem::path source = generated_root / package_dir / "MainActivity.java";
-            std::error_code ec;
-            std::filesystem::create_directories(source.parent_path(), ec);
-            std::ofstream file(source, std::ios::binary | std::ios::trunc);
-            if (!file) { std::cerr << "huxerui.rules: cannot write " << source.string() << "\n"; return false; }
-            file << "package " << app_id << ";\n\n"
-                    "import org.huxerui.HuxerUIActivity;\n\n"
-                    "/** Generated by huxerui.rules: loads the application's shared object, as a Gradle project's MainActivity does. */\n"
-                    "public final class MainActivity extends HuxerUIActivity {\n"
-                    "    static {\n"
-                    "        System.loadLibrary(\"" << lib_name << "\");\n"
-                    "    }\n"
-                    "}\n";
-            file.close();
-            a.java_sources.push_back(generated_root.string());
+            const std::string java = "package " + app_id + ";\n\n"
+                "import org.huxerui.HuxerUIActivity;\n\n"
+                "/** Generated by huxerui.rules: loads the application's shared object, as a Gradle project's MainActivity does. */\n"
+                "public final class MainActivity extends HuxerUIActivity {\n"
+                "    static {\n"
+                "        System.loadLibrary(BuildConfig.HUXERUI_APP_LIBRARY);\n"
+                "    }\n"
+                "}\n";
+            if (!detail::write_text_if_different(source, java))
+                return detail::refuse("huxerui.rules: cannot write " + source.string());
             // The manifest's package is the class's package by construction.
-            a.application_id = app_id;
             a.activity = app_id + ".MainActivity";
         }
         // The application's res/ when it has one, else the launcher icon set
@@ -624,12 +683,13 @@ inline bool provide_formats(const formats& opt, const std::string& root) {
                                                                          : opt.android.maven_lock);
 
         // SIGNING AS GRADLE SIGNS: a stated keystore always; otherwise the
-        // debug key for a debug build and nothing for a release one, which a
-        // Gradle release variant without a signing configuration produces.
+        // debug key for a debug build (mcpp's `dev` profile, BuildConfig.DEBUG
+        // above) and nothing for any other, which a Gradle release variant
+        // without a signing configuration produces.
         a.keystore              = opt.android.keystore;
         a.keystore_alias        = opt.android.keystore_alias;
         a.keystore_password_env = opt.android.keystore_password_env;
-        a.sign = !opt.android.keystore.empty() || std::string_view(mcpp::profile()) != "release";
+        a.sign = !opt.android.keystore.empty() || std::string_view(mcpp::profile()) == "dev";
         // The framework's Java root is a dependency's, so its rerun glob would
         // match nothing; the list the rule package carries is what re-runs
         // this program when a host file is added or removed.

@@ -79,15 +79,20 @@ The conformance scripts read this block, so it is the only list.
 
 <!-- allowed-differences:begin -->
 ```text
-*.binary.*                    toolchains differ; hashes, symbols and optimisation are not the program model
-macos.runtime.libcxx          CMake links the system libc++; mcpp links a libc++ built for the 12.0 floor
-ios.runtime.libcxx            CMake links the system libc++; mcpp links the libc++ its objects match
-ios.plist.launch_screen_form  Xcode compiles the template's LaunchScreen.storyboard; mcpp states an empty UILaunchScreen, the same blank screen, because ibtool is not redistributable
-ios.icon.container            Xcode compiles an asset catalog; mcpp lists flat PNGs under CFBundleIcons, because actool is not redistributable
-android.version.*             the Gradle template writes 1.0 and 1; mcpp takes [package] version, one source for every platform
-android.resources.file.mcpp-run.json  mcpp's `adb-run` reads the launcher from it; the program never reads it
-ios.plist.CFBundleVersion     the Xcode template writes 1; mcpp takes [package] version
-macos.plist.CFBundle*Version  the macOS template writes none; mcpp takes [package] version
+*.binary.*                                   toolchains differ; hashes, symbols and optimisation are not the program model
+linux.runtime.gtk                            CMake links the distribution's GTK 4 and needs it on the host; mcpp links GTK from xlings payloads built against its own glibc, so the AppImage carries that closure (the host's GL, EGL and Vulkan serve both)
+linux.desktop.X-AppImage-Version             dist-appimage records the package version for AppImage tools; CMake's desktop entry states none
+macos.runtime.libcxx                         CMake links the system libc++; mcpp links a libc++ built for the 12.0 floor
+ios.runtime.libcxx                           CMake links the system libc++; mcpp links the libc++ its objects match
+ios.plist.launch_screen_form                 Xcode compiles the template's LaunchScreen.storyboard; mcpp states an empty UILaunchScreen, the same blank screen, because ibtool is not redistributable
+ios.icon.container                           Xcode compiles an asset catalog; mcpp lists flat PNGs under CFBundleIcons, because actool is not redistributable
+ios.plist.CFBundleVersion                    the Xcode template writes 1; mcpp takes [package] version
+macos.plist.CFBundle*Version                 the macOS template writes none; mcpp takes [package] version
+android.version.*                            the Gradle template writes 1.0 and 1; mcpp takes [package] version, one source for every platform
+android.artifact.name                        Gradle names the APK after its module and variant (app-release-unsigned.apk); dist-apk names it after the target
+android.dex.class.org.huxerui.R              Gradle generates an R class for the framework's library module, which has no resources; nothing reads it
+android.resources.file.mcpp-run.json         mcpp's `adb-run` reads the launcher from it; the program never reads it
+web.page.file                                dist-web names the page index.html, which a static server serves for the directory; CMake names it after the target
 ```
 <!-- allowed-differences:end -->
 

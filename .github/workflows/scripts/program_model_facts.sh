@@ -135,8 +135,10 @@ print("manifest.label=" + one(r"^application-label:'([^']*)'"))
 print("manifest.launchable_activity=" + one(r"^launchable-activity: name='([^']*)'"))
 print("abis=" + " ".join(sorted(re.findall(r"'([^']+)'", one(r"^native-code:(.*)$")))))
 print("manifest.permissions=" + ",".join(sorted(set(re.findall(r"^uses-permission: name='([^']*)'", badging, re.M)))))
+# Whether the launcher icon is adaptive. Not its densities: the Android Gradle
+# plugin shortens a release package's resource paths, which changes what aapt2
+# resolves for a density the package has no file for.
 icons = re.findall(r"^application-icon-(\d+):'([^']*)'", badging, re.M)
-print("icon.densities=" + ",".join(sorted({d for d, _ in icons}, key=int)))
 print("icon.adaptive=" + ("yes" if any(p.endswith(".xml") for _, p in icons) else "no"))
 # An application resource is named, not numbered: the two build systems assign
 # identifiers independently.
@@ -169,6 +171,20 @@ PY
     for abi in $(grep -oE '^lib/[^/]+/' "$work/entries.txt" | cut -d/ -f2 | LC_ALL=C sort -u); do
       fact "libs.$abi" "$(grep -E "^lib/$abi/[^/]+\.so$" "$work/entries.txt" | sed "s|^lib/$abi/||" | LC_ALL=C sort | paste -sd, -)"
     done
+    # How each native library travels: stored uncompressed (loaded from the APK in place) or
+    # compressed, and with or without its symbol table and debug information.
+    unzip -v "$apk" > "$work/listing.txt"
+    mkdir -p "$work/apk"
+    unzip -q "$apk" 'lib/*' -d "$work/apk" 2>/dev/null || true
+    while IFS= read -r so; do
+      method=$(awk -v name="$so" '$NF == name { print $2 }' "$work/listing.txt")
+      fact "lib.${so#lib/}.packaging" "$([ "$method" = Stored ] && echo stored || echo compressed)"
+      readelf -S "$work/apk/$so" > "$work/sections.txt" 2>/dev/null || true
+      if grep -q '\.debug_' "$work/sections.txt"; then debug=debug-info
+      elif grep -q '\.symtab' "$work/sections.txt"; then debug=symbols
+      else debug=stripped; fi
+      fact "lib.${so#lib/}.debug" "$debug"
+    done < <(grep -E '^lib/[^/]+/[^/]+\.so$' "$work/entries.txt" | LC_ALL=C sort)
     if grep -qE '^META-INF/.*\.(RSA|EC|DSA)$' "$work/entries.txt"; then
       if [ -n "$apksigner" ] && "$apksigner" verify --print-certs "$apk" > "$work/certs.txt" 2>/dev/null \
          && grep -q 'CN=Android Debug' "$work/certs.txt"; then
@@ -179,13 +195,16 @@ PY
     else
       fact signature unsigned
     fi
-    mkdir -p "$work/apk"
     unzip -q "$apk" 'classes*.dex' 'assets/*' -d "$work/apk" 2>/dev/null || true
-    # The Java and Kotlin classes the program carries, one fact each.
+    # The named Java and Kotlin classes the program carries, one fact each. A
+    # compiler's own classes are left out -- anonymous and synthetic classes
+    # (`$1`, `$$ExternalSyntheticLambda0`, `-IA`) and the platform API outlines
+    # and backports D8 copies in -- because each compiler names them its own way.
     if [ -n "$dexdump" ]; then
       for dex in "$work"/apk/classes*.dex; do
         if [ -f "$dex" ]; then "$dexdump" "$dex" 2>/dev/null || true; fi
-      done | sed -n "s/^ *Class descriptor *: 'L\(.*\);'$/\1/p" | tr / . | LC_ALL=C sort -u > "$work/classes.txt"
+      done | sed -n "s/^ *Class descriptor *: 'L\(.*\);'$/\1/p" | tr / . \
+        | grep -vE '\$\$|\$[0-9]+(\$|$)|-IA$|^(android|java|javax|com\.android\.tools)\.' | LC_ALL=C sort -u > "$work/classes.txt" || true
       while IFS= read -r class; do fact "dex.class.$class" present; done < "$work/classes.txt"
     fi
     resource_facts "$work/apk/assets"
@@ -197,15 +216,19 @@ PY
     name=$(basename "$js" .js)
     fact artifact.kind web
     fact launcher.name "$name"
-    # File names with the launcher's stem written as <name>, so the set is compared, not the stem.
-    fact artifact.files "$(artifacts '*' | sed "s|.*/||; s|^$name\.|<name>.|" | LC_ALL=C sort | paste -sd, -)"
+    # File names with the launcher's stem written as <name>, so the set is compared, not the stem; the
+    # page is page.file below.
+    fact artifact.files "$(artifacts '*' | sed "s|.*/||; s|^$name\.|<name>.|" | grep -vxE 'index\.html|<name>\.html' | LC_ALL=C sort | paste -sd, -)"
     while IFS= read -r f; do
       case "$f" in *.js|*.wasm|*.data|*.map|*.html) continue ;; esac
       if [ -f "$f" ]; then fact "file.$(basename "$f" | sed "s|^$name\.|<name>.|")" "$(sha "$f")"; fi
     done < <(artifacts '*')
+    # dist-web names the page index.html, CMake names it after the target.
     page=$(artifacts 'index.html' | head -1)
+    [ -n "$page" ] || page=$(artifacts "$name.html" | head -1)
     fact page.present "$([ -n "$page" ] && echo yes || echo no)"
     if [ -n "$page" ]; then
+      fact page.file "$(basename "$page" | sed "s|^$name\.|<name>.|")"
       python3 - "$page" "$name" > "$work/web.txt" <<'PY'
 import re, sys
 text, name = open(sys.argv[1], encoding="utf-8").read(), sys.argv[2]
@@ -225,18 +248,17 @@ PY
     if [ -z "$data" ]; then
       fact resources.present no
     else
+      # The preloaded files are named in the launcher's loadPackage() metadata:
+      # JSON from one Emscripten, a minified object literal from another.
       python3 - "$js" "$data" "$work/preload" <<'PY'
-import json, os, re, sys
+import os, re, sys
 text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
-m = re.search(r'loadPackage\((\{"files":.*?\})\)', text, re.S)
-if not m:
-    sys.exit(0)
-meta = json.loads(m.group(1))
 data = open(sys.argv[2], "rb").read()
-for f in meta["files"]:
-    out = os.path.join(sys.argv[3], f["filename"].lstrip("/"))
+entry = re.compile(r'\{\s*"?filename"?\s*:\s*"([^"]+)"\s*,\s*"?start"?\s*:\s*(\d+)\s*,\s*"?end"?\s*:\s*(\d+)')
+for filename, start, end in entry.findall(text):
+    out = os.path.join(sys.argv[3], filename.lstrip("/"))
     os.makedirs(os.path.dirname(out), exist_ok=True)
-    open(out, "wb").write(data[f["start"]:f["end"]])
+    open(out, "wb").write(data[int(start):int(end)])
 PY
       resource_facts "$work/preload"
     fi

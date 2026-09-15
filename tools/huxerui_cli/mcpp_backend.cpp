@@ -66,10 +66,17 @@ std::vector<std::string> McppProjectPlatforms(const std::filesystem::path& manif
   const std::string text{std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
   // The key is a string array on one line in every manifest this CLI writes;
   // mcpp's own vocabulary is the six names below, so anything else is ignored
-  // rather than guessed at.
-  static const std::regex line(R"(^[ \t]*platforms[ \t]*=[ \t]*\[([^\]]*)\])", std::regex::multiline);
+  // rather than guessed at. Matched a line at a time: MSVC's standard library
+  // has no std::regex::multiline.
+  static const std::regex key(R"(^[ \t]*platforms[ \t]*=[ \t]*\[([^\]]*)\])");
   std::smatch match;
-  if (!std::regex_search(text, match, line)) {
+  std::istringstream lines(text);
+  std::string line;
+  bool found = false;
+  while (!found && std::getline(lines, line)) {
+    found = std::regex_search(line, match, key);
+  }
+  if (!found) {
     return {"linux", "windows", "macos"};
   }
   std::vector<std::string> platforms;
