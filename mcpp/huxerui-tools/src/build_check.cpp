@@ -249,8 +249,8 @@ void check_one_template(const std::filesystem::path& root,
         const std::filesystem::path& path = it->path();
         const std::string relative = std::filesystem::relative(path, root, ec).generic_string();
         const std::string text = read(path);
-        // A binary asset -- a texture, an icon -- is copied verbatim and can
-        // carry any byte pair; only text is scanned for tokens.
+        // A binary asset -- the live2d template's model textures -- is copied
+        // verbatim and can carry any byte pair; only text is scanned for tokens.
         if (text.find('\0') != std::string::npos) continue;
 
         if (path.extension() == ".h" || path.extension() == ".hpp")

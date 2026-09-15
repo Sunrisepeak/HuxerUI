@@ -125,6 +125,33 @@ TEST_CASE("HuxerUICliAddsPlatformsToAnMcppManifest") {
   REQUIRE(again.error.find("already declared") != std::string::npos);
 }
 
+TEST_CASE("HuxerUICliSelectsTheLive2DTemplate") {
+  TemporaryDirectory temporary;
+  REQUIRE(Invoke(temporary.Path(),
+              {"create", "app", "Live2D-Demo", "--build", "mcpp", "--template", "live2d", "--agent", "none"})
+              .result == 0);
+  const std::filesystem::path project = temporary.Path() / "Live2D-Demo";
+  // The template pins HuxerUI and Lib-Live2D at one git revision each -- one
+  // HuxerUI for the graph -- so the CLI leaves its dependency lines alone, the
+  // Windows installer interface's included.
+  const std::string manifest = Read(project / "mcpp.toml");
+  REQUIRE(manifest.find("huxerui.live2d  = { git = ") != std::string::npos);
+  REQUIRE(manifest.find("huxerui.huxerui = { git = ") != std::string::npos);
+  REQUIRE(manifest.find("huxerui = { path = ") == std::string::npos);
+  REQUIRE(manifest.find("linkage =") == std::string::npos);
+  REQUIRE(manifest.find("runner =") == std::string::npos);
+  REQUIRE(manifest.find("llvm.libcxx = \"") != std::string::npos);
+  REQUIRE(manifest.find("standard = \"c++20\"") != std::string::npos);
+  // Its installer interface is built for a package only, as the app template's is.
+  REQUIRE(manifest.find("[features]\nwindows-installer = []") != std::string::npos);
+  REQUIRE(manifest.find("[target.'cfg(os = \"windows\")'.feature-deps.windows-installer]") != std::string::npos);
+  const std::string installer_manifest = Read(project / "windows/installer/mcpp.toml");
+  REQUIRE(installer_manifest.find("huxerui.huxerui = { git = ") != std::string::npos);
+  REQUIRE(installer_manifest.find("[targets.Live2D-Demo-Installer]") != std::string::npos);
+  REQUIRE(Read(project / "src/app.cppm").find("import huxerui.live2d;") != std::string::npos);
+  REQUIRE(std::filesystem::is_regular_file(project / "resources/raw/Mao/Mao.model3.json"));
+}
+
 TEST_CASE("HuxerUICliSelectsAnMcppTemplate") {
   TemporaryDirectory temporary;
   REQUIRE(Invoke(temporary.Path(),

@@ -194,8 +194,8 @@ a module interface unit, `<namespace>.resources` — `export module
 app.resources; import huxerui; export namespace app { … }`. The rule declares
 that unit to mcpp as a generated module interface (`provides`/`imports` on
 the hrc edge, the mechanism hcg's transformed units use), so a module-style
-application writes `import app.resources;` and no header at all. A
-header-style package gets the header only: the rule
+application writes `import app.resources;` and no header at all; the live2d
+template does. A header-style package gets the header only: the rule
 forces `<typeinfo>` and the scope prelude into its translation units, and a
 forced include before `export module` is what no compiler accepts.
 

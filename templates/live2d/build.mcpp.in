@@ -1,0 +1,19 @@
+// The whole build program: the composable transform and the resource
+// compiler for this application, through the huxerui dependency's rule. The
+// model under resources/raw/ becomes raw resources of the `app` namespace, an
+// application's by default, which is what src/app.cppm names them by. Nothing
+// here is about Live2D: the library's own build program deploys the shaders
+// and bundles the Web bridge.
+
+import mcpp;
+import huxerui.rules;
+
+int main() {
+    return huxerui::rules::configure({
+        .resources         = "resources",
+        // The identifier a store or a launcher knows the application by: the
+        // Apple bundle id and the Android application id alike, the project id
+        // `huxerui create --id` recorded (CMake's BUNDLE_IDENTIFIER).
+        .bundle_identifier = "{{project.id}}",
+    }) ? 0 : 1;
+}
