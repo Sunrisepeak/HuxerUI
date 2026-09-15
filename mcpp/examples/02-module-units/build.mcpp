@@ -6,7 +6,9 @@ import huxerui.rules;
 
 int main() {
     return huxerui::rules::configure({
-        .resources = "resources",
+        .target            = "huxerui_example_module_units",
+        .resources         = "resources",
+        .bundle_identifier = "org.huxerui.example02",
         // The Windows MSI. Silent on Linux and macOS -- the rule returns before
         // it looks at anything when the target is not Windows.
         //

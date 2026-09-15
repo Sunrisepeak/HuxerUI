@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cerrno>
+#include <functional>
 #include <cstdlib>
 #include <cwctype>
 #include <stdexcept>
@@ -185,7 +186,8 @@ std::wstring WindowsCommandLine(const ProcessCommand& command) {
   return command_line;
 }
 
-ProcessResult RunWindowsProcess(const ProcessCommand& command, bool capture_output) {
+ProcessResult RunWindowsProcess(const ProcessCommand& command, bool capture_output,
+                                const std::function<void(std::string_view)>* on_output = nullptr) {
   std::wstring command_line = WindowsCommandLine(command);
   std::wstring working_directory = command.working_directory.wstring();
 
@@ -240,6 +242,9 @@ ProcessResult RunWindowsProcess(const ProcessCommand& command, bool capture_outp
     DWORD read = 0;
     while (ReadFile(output_read, buffer.data(), static_cast<DWORD>(buffer.size()), &read, nullptr) && read != 0) {
       output.append(buffer.data(), read);
+      if (on_output) {
+        (*on_output)(std::string_view(buffer.data(), read));
+      }
     }
     CloseHandle(output_read);
   }
@@ -257,7 +262,8 @@ ProcessResult RunWindowsProcess(const ProcessCommand& command, bool capture_outp
 #endif
 
 #if !defined(_WIN32)
-ProcessResult RunPosixProcess(const ProcessCommand& command, bool capture_output) {
+ProcessResult RunPosixProcess(const ProcessCommand& command, bool capture_output,
+                              const std::function<void(std::string_view)>* on_output = nullptr) {
   std::array<int, 2> output_pipe{-1, -1};
   if (capture_output && pipe(output_pipe.data()) != 0) {
     throw std::runtime_error("cannot create process output pipe");
@@ -304,6 +310,9 @@ ProcessResult RunPosixProcess(const ProcessCommand& command, bool capture_output
       const ssize_t count = read(output_pipe[0], buffer.data(), buffer.size());
       if (count > 0) {
         output.append(buffer.data(), static_cast<std::size_t>(count));
+        if (on_output) {
+          (*on_output)(std::string_view(buffer.data(), static_cast<std::size_t>(count)));
+        }
       } else if (count == 0) {
         break;
       } else if (errno != EINTR) {
@@ -444,6 +453,19 @@ ProcessResult RunProcessCapture(const ProcessCommand& command) {
   return RunWindowsProcess(command, true);
 #else
   return RunPosixProcess(command, true);
+#endif
+}
+
+ProcessResult RunProcessStreaming(const ProcessCommand& command,
+                                  const std::function<void(std::string_view)>& on_output) {
+  if (command.executable.empty()) {
+    throw std::invalid_argument("process executable cannot be empty");
+  }
+
+#if defined(_WIN32)
+  return RunWindowsProcess(command, true, &on_output);
+#else
+  return RunPosixProcess(command, true, &on_output);
 #endif
 }
 

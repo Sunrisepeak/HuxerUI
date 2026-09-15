@@ -45,7 +45,7 @@ add_library(huxerui_cli_core STATIC
         platform/macos.cpp
         platform/web.cpp
         platform/windows.cpp
-        mcpp/mcpp.cpp
+        mcpp_backend.cpp
         process_runner.cpp
         project.cpp
         sdk.cpp

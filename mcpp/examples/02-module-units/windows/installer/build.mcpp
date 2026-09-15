@@ -1,0 +1,15 @@
+// The installer interface, compiled as huxerui_add_windows_installer() compiles
+// it: this package's entry, the page and strings of the SDK's Windows template
+// rendered with the product's name, the SDK's Burn glue and the WiX
+// bootstrapper SDK.
+
+import mcpp;
+import huxerui.rules;
+
+int main() {
+    return huxerui::rules::configure({
+        .target       = "huxerui_example_module_units-Installer",
+        .bundle_name  = "huxerui-example-module-units",
+        .bootstrapper = true,
+    }) ? 0 : 1;
+}

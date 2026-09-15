@@ -4,4 +4,9 @@
 import mcpp;
 import huxerui.rules;
 
-int main() { return huxerui::rules::configure({}) ? 0 : 1; }
+int main() {
+    return huxerui::rules::configure({
+        .target            = "huxerui_example_library",
+        .bundle_identifier = "org.huxerui.example03",
+    }) ? 0 : 1;
+}

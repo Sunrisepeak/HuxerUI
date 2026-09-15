@@ -14,9 +14,9 @@ sources in the manifest. `[[huxerui::composable]]` means exactly what it means
 under CMake.
 
 Recognise it by `mcpp.toml` beside a `build.mcpp`, or by `import huxerui;` in a
-source. Such a project has no `CMakeLists.txt` and no `platform/` shell, and
-`huxerui build` / `run` / `package` do not drive it — `mcpp build` and
-`mcpp run` do.
+source. Such a project has no `CMakeLists.txt` and no `platform/` shell;
+`mcpp build`, `mcpp run` and `mcpp pack` drive it, and
+`huxerui build` / `run` / `package <platform>` map onto them.
 
 ## What the project looks like
 
@@ -26,11 +26,12 @@ build.mcpp           the build program: one call
 src/main.cpp         the entry, and it instantiates nothing
 src/app.cppm         a module interface unit: the page and its composables
 resources/           compiled by hrc, reached as StringResource / ImageResource
+windows/installer/   the interface the Windows Setup.exe runs, a package of its own
 ```
 
 ```toml
 [package]
-standard = "c++23"
+standard = "c++20"
 
 [dependencies]
 huxerui.huxerui = "0.3.0"
@@ -71,14 +72,13 @@ View Counter() {
 
 - **No headers.** `import huxerui;` and `#include <huxerui/huxerui.h>` name the
   same entities; an mcpp project uses the first and contains no `#include`.
-- **`import std;` is load-bearing, and it is why the package pins c++23.**
-  `UseState()`, `View` and `Layout` instantiate `typeid` in their caller, GCC
-  checks that per translation unit, and a global module fragment's includes do
-  not reach an importer — so `import huxerui;` cannot supply `<typeinfo>`.
-  The c++23 pin is a workaround, not a requirement: every implementation this
-  project builds with offers the std module at C++20, and mcpp's
-  clang-on-Windows path hardcodes a c++23 floor instead of probing the STL it
-  found ([mcpp#603](https://github.com/mcpp-community/mcpp/issues/603)).
+- **`import std;` is load-bearing.** `UseState()`, `View` and `Layout`
+  instantiate `typeid` in their caller, GCC checks that per translation unit,
+  and a global module fragment's includes do not reach an importer — so
+  `import huxerui;` cannot supply `<typeinfo>`. The framework and an
+  application are C++20; the macOS and iOS rows' C++ standard library
+  (`llvm.libcxx`, which the template declares) states the c++23 its own sources
+  need.
 - **Keep the entry empty.** `src/main.cpp` calls `RunApplication()` and nothing
   else, so it instantiates nothing and needs no imports beyond `huxerui` and
   the app module. It is also the one file `huxerui.rules` never transforms.
@@ -97,13 +97,49 @@ mcpp test             # every tests/**/*.cpp, each its own program
 mcpp build --workspace
 ```
 
-A toolchain is selected once rather than per command — `mcpp test` and
-`mcpp pack` take no `--toolchain` flag:
+A platform is a target row of the same manifest, and a distributable is a
+format of `mcpp pack`; the toolchains and payloads (NDK, emsdk, JDK,
+simulator tools, packaging tools) are installed by mcpp on first use:
+
+```bash
+mcpp build --target wasm32-emscripten
+mcpp pack  --target x86_64-linux-android --format apk
+mcpp run   --target x86_64-linux-android --format apk   # adb-run
+huxerui package windows                                  # mcpp pack --format setup
+```
+
+[C++20/23 Modules and mcpp: Six Platforms](../../../docs/guide/cpp-modules-and-mcpp.md)
+lists every row and format, and its
+[Build and development enhancements](../../../docs/guide/cpp-modules-and-mcpp.md#build-and-development-enhancements)
+section lists what mcpp offers beyond the CMake build: further formats,
+`mcpp test`, `--toolchain`, `mcpp why`, `--locked` and `--offline`.
+
+`mcpp self doctor` diagnoses the toolchains and payloads. In an mcpp project
+`huxerui doctor` only reports whether `mcpp` is found and whether the requested
+platforms are enabled, and points at `mcpp self doctor`.
+
+A toolchain is selected once, or for one invocation with `--toolchain`, which
+`mcpp build`, `run`, `test` and `pack` all take:
 
 ```bash
 mcpp toolchain install llvm 22.1.8
 mcpp toolchain default llvm@22.1.8
+mcpp test --toolchain llvm@22.1.8
 ```
+
+**Keep the program model CMake's**, as the
+[Build Systems Specification](../../../docs/design/build-systems-spec.md)
+defines it. The framework states how it is linked on each row (static, and its
+own `libhuxerui.so` on Android), so the manifest names neither a `linkage` nor a
+runner; the platform floors (Android API 23, iOS 15.0, macOS 12.0) are written
+in the template and enforced by the framework; compile-time profiling is the
+`profiling` feature, off unless the dependency asks for it. The Windows
+Setup.exe's interface is `windows/installer`, a package of its own built only
+for `huxerui package windows` (the `windows-installer` feature). Platform code
+and metadata go where the guide's
+[Platform code, metadata and dependencies](../../../docs/guide/cpp-modules-and-mcpp.md#platform-code-metadata-and-dependencies)
+says: `android/java`, `android/kotlin`, `android/res`, `ios/Info.plist`, a
+library's own `resources/` and `android/`.
 
 ## Reading further
 

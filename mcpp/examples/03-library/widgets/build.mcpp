@@ -1,7 +1,9 @@
 // A library needs the same build program an application does: its composables
-// are transformed by the same hcg, scheduled by the same rules.
+// are transformed by the same hcg, scheduled by the same rules. Its resources
+// reach the resource package of the application that depends on it, under the
+// namespace `example_widgets`.
 
 import mcpp;
 import huxerui.rules;
 
-int main() { return huxerui::rules::configure({}) ? 0 : 1; }
+int main() { return huxerui::rules::configure({ .resources = "resources" }) ? 0 : 1; }

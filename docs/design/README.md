@@ -48,6 +48,8 @@ They explain the current implementation and deliberately unsupported behavior, w
 ## SDK and platforms
 
 - [SDK, CLI, Platform Shell, and Library](sdk-cli.md): installed SDK structure, project tooling, libraries, and platform integration.
+- [Build Systems Specification](build-systems-spec.md): the default program model, extension points, and allowed differences CMake and mcpp are held to.
+- [mcpp Build System](mcpp-build-system.md): the framework and its applications as mcpp packages, and how they meet the specification.
 - [Web Platform](web.md): browser lifecycle, rendering, input, resources, services, and integration limits.
 
 Deferred behavior remains in the owning design document only when its boundary affects current architecture.

@@ -14,6 +14,6 @@ import component;
 int main() {
   const huxerui::View badge   = Badge("new");
   const huxerui::View counter = LabelledCounter("items");
-  std::println("built {} views", 2);
+  std::printf("built %d views\n", 2);
   return 0;
 }

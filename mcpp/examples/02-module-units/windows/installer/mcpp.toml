@@ -1,0 +1,22 @@
+# The interface this example's Setup.exe runs: the installer program CMake's
+# huxerui_add_windows_installer() builds as `<target>-Installer.exe`. The
+# example builds it as a host tool on the Windows rows (../../mcpp.toml), and huxerui.rules gives it the page and the strings the
+# SDK's Windows template gives a CMake project.
+[package]
+name        = "installer"
+version     = "0.1.0"
+standard    = "c++20"
+platforms   = ["windows"]
+description = "The Windows installer interface of huxerui-example-module-units"
+
+[dependencies]
+huxerui.huxerui = { path = "../../../../.." }
+
+[targets.huxerui_example_module_units-Installer]
+kind = "bin"
+main = "src/main.cpp"
+windows_subsystem = "windows"
+
+# huxerui.rules selects the sources (build.mcpp).
+[build]
+sources = []

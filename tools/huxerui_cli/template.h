@@ -55,6 +55,8 @@ struct PackageTemplateContext {
   std::string package_selector;
   /// Version of the template's own package, for `{{self.version}}`.
   std::string package_version;
+  /// Reverse-DNS project identifier, for `{{project.id}}`: the Android application id and the Apple bundle id.
+  std::string project_id;
 };
 
 /// Additional token replacement applied while rendering a template tree.

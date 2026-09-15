@@ -1,0 +1,24 @@
+# The interface this application's Setup.exe runs: the installer program a
+# CMake project builds as `<target>-Installer.exe`. The application builds it
+# for a package build only, through its `windows-installer` feature
+# (../../mcpp.toml).
+# huxerui.rules gives it the page and the strings of the SDK's Windows
+# template; a `src/app.cpp` or a `resources/` here replaces them.
+[package]
+name        = "installer"
+version     = "0.1.0"
+standard    = "c++20"
+platforms   = ["windows"]
+description = "The Windows installer interface of {{project.name}}"
+
+[dependencies]
+{{self.name}} = "{{self.version}}"
+
+[targets.{{project.name}}-Installer]
+kind = "bin"
+main = "src/main.cpp"
+windows_subsystem = "windows"
+
+# huxerui.rules selects the sources (build.mcpp).
+[build]
+sources = []
