@@ -8,6 +8,7 @@ export module huxerui.rules.dist;
 
 import std;
 import mcpp;
+import mcpp.plugins;
 import huxerui.rules.sources;
 import mcpp.dist.wix;
 import mcpp.dist.appimage;
@@ -63,9 +64,23 @@ struct appimage_options {
 // is a DIRECTORY of flat PNGs, which the member lists under CFBundleIcons.
 struct apple_options {
     std::string target;         // the [targets.*] app to bundle; default: options::target
-    std::string display_name;   // CFBundleName; default: the target name
+    std::string display_name;   // CFBundleName and CFBundleDisplayName; default: the target name
     std::string bundle_id;      // CFBundleIdentifier; default: derived from namespace + name
     std::string icon;           // .icns (macOS) or a directory of .png (iOS), relative to the manifest
+    // THE APPLICATION'S OWN Info.plist ENTRIES, a plist relative to the manifest -- usage descriptions, URL
+    // types, background modes, what an Xcode project's Info.plist states. Default: `ios/Info.plist` on iOS and
+    // `macos/Info.plist` on macOS, when present. Merged over the entries CMake's application template writes
+    // (template_info_plist() below); a key the bundle derives -- the identifier, the versions, the executable --
+    // is refused by name.
+    std::string info_plist;
+    // SIGNING, stated explicitly, as an Xcode project's signing settings are. `identity` is a keychain
+    // identity: without one a macOS bundle is signed ad hoc and an iOS device bundle is not signed.
+    // `entitlements` is a plist relative to the manifest. `provisioning_profile`, relative to the manifest, is
+    // embedded in an iOS device bundle and supplies its entitlements when `entitlements` is empty; it needs
+    // `identity`.
+    std::string identity;
+    std::string entitlements;
+    std::string provisioning_profile;
 };
 
 // The page `mcpp pack --format web` writes beside the launcher. Every HuxerUI
@@ -83,8 +98,30 @@ struct android_options {
     std::string label;              // android:label; default: the package name
     std::string activity;           // the launcher Activity; default: org.huxerui.HuxerUIActivity
     std::string java;               // a directory of the application's own Java, relative to the manifest; default: android/java when present
+    // A directory of the application's own Kotlin, relative to the manifest; default: android/kotlin when
+    // present. Compiled by `xim:kotlin`, which the framework's `android-kotlin` feature brings:
+    //     huxerui.huxerui = { ..., features = ["android-kotlin"] }
+    std::string kotlin;
     std::string res;                // an aapt2 `res/` directory, relative to the manifest; default: android/res when present, else the SDK's launcher icon set
+    // A directory of `.jar` and `.aar` files the application uses, relative to the manifest; default:
+    // android/libs when present.
+    std::string libs;
+    // Maven coordinates (`group:artifact:version`), resolved with their transitive dependencies into
+    // `maven_lock` (relative to the manifest; default: android/maven.lock), which the project commits. An
+    // ordinary build reads the locked artifacts from the cache and does not reach the network;
+    // `MCPP_DIST_APK_MAVEN=update` resolves, `=fetch` downloads, with `xim:coursier` from the framework's
+    // `android-maven` feature. Empty repositories mean Google's Maven repository, then Maven Central.
+    std::vector<std::string> maven;
+    std::string              maven_lock;
+    std::vector<std::string> maven_repositories;
     std::string manifest_template;  // replaces the manifest the rule ships, relative to the manifest
+    // SIGNING, stated explicitly, as a Gradle project's signing configuration is. With a keystore (a package
+    // name, `ns:name`, whose payload holds the key) every APK is signed with it; `keystore_password_env` names
+    // the variable the tools read the password from. Without one a debug build is signed with the Android debug
+    // key and a release build is not signed, as Gradle's release variant without a signing configuration.
+    std::string keystore;
+    std::string keystore_alias;
+    std::string keystore_password_env;
 };
 
 // What provide_formats() is given: the application's target and the five
@@ -105,6 +142,131 @@ inline bool refuse(const std::string& message) {
     mcpp::warning(message.c_str());
     std::cerr << message << "\n";
     return false;
+}
+
+inline std::string read_text(const std::filesystem::path& p) {
+    std::ifstream in(p, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+}
+
+inline bool write_text_if_different(const std::filesystem::path& p, const std::string& text) {
+    std::error_code ec;
+    if (std::filesystem::is_regular_file(p, ec) && read_text(p) == text) return true;
+    std::filesystem::create_directories(p.parent_path(), ec);
+    std::ofstream out(p, std::ios::binary | std::ios::trunc);
+    if (!out) return false;
+    out << text;
+    return static_cast<bool>(out);
+}
+
+} // namespace detail
+
+// THE HUXERUI LIBRARIES AN APPLICATION DEPENDS ON DIRECTLY: the dependencies
+// its manifest declares (`mcpp::dep_dir` answers for exactly those) whose own
+// manifest depends on `huxerui.huxerui`, in the order the manifest writes them.
+// What CMake's huxerui_use_library() calls name. A library reached only through
+// another dependency is not visible to a build program (mcpp-community/mcpp#647,
+// E1).
+struct direct_library {
+    std::string                                  key;
+    std::filesystem::path                        root;
+    huxerui::rules::sources::dependency_manifest manifest;
+};
+
+inline std::vector<direct_library> direct_libraries() {
+    std::vector<direct_library> out;
+    const std::filesystem::path manifest = std::filesystem::path(mcpp::manifest_dir()) / "mcpp.toml";
+    std::vector<std::filesystem::path> seen;
+    for (const std::string& key : huxerui::rules::sources::dependency_keys(detail::read_text(manifest))) {
+        const std::string dir = mcpp::dep_dir(key.c_str());
+        if (dir.empty()) continue;
+        std::error_code ec;
+        const std::filesystem::path root = std::filesystem::weakly_canonical(dir, ec);
+        if (ec || std::ranges::find(seen, root) != seen.end()) continue;
+        seen.push_back(root);
+        auto library = huxerui::rules::sources::read_dependency_manifest(detail::read_text(root / "mcpp.toml"));
+        if (!library.uses_huxerui) continue;
+        out.push_back({ key, root, std::move(library) });
+    }
+    return out;
+}
+
+namespace detail {
+
+// THE Info.plist ENTRIES CMAKE'S APPLICATION TEMPLATES WRITE beyond the ones
+// dist-apple derives (tools/huxerui_cli/templates/platform/{ios,macos}/app):
+// the display name on both; on iOS the development region, the dictionary
+// version, the supported orientations, and a launch screen. Without a launch
+// screen iOS runs an application in compatibility mode rather than at the
+// device's resolution. The template's `LaunchScreen.storyboard` is a blank
+// `systemBackgroundColor` view, which an empty `UILaunchScreen` dictionary is
+// too, with no storyboard to compile (Xcode's `ibtool` is not redistributable).
+inline std::string template_info_plist(bool ios, const std::string& display_name) {
+    std::string entries = "<key>CFBundleDisplayName</key><string>" + display_name + "</string>";
+    if (ios) {
+        entries += "<key>CFBundleDevelopmentRegion</key><string>en</string>"
+                   "<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>"
+                   "<key>UILaunchScreen</key><dict/>"
+                   "<key>UISupportedInterfaceOrientations</key><array>"
+                   "<string>UIInterfaceOrientationPortrait</string>"
+                   "<string>UIInterfaceOrientationLandscapeLeft</string>"
+                   "<string>UIInterfaceOrientationLandscapeRight</string></array>"
+                   "<key>UISupportedInterfaceOrientations~ipad</key><array>"
+                   "<string>UIInterfaceOrientationPortrait</string>"
+                   "<string>UIInterfaceOrientationPortraitUpsideDown</string>"
+                   "<string>UIInterfaceOrientationLandscapeLeft</string>"
+                   "<string>UIInterfaceOrientationLandscapeRight</string></array>";
+    }
+    return "<plist version=\"1.0\"><dict>" + entries + "</dict></plist>";
+}
+
+// The template's entries with the application's own merged over them -- a key
+// both state is the application's -- written as one plist for dist-apple's
+// `info_plist`, which refuses a key the bundle derives.
+inline bool write_info_plist(const std::string& template_plist, const std::string& application_plist,
+                             const std::filesystem::path& out, std::string& error) {
+    namespace xml = mcpp::plugins::xml;
+    const auto top_dict = [](xml::node& root) -> xml::node* {
+        if (root.name == "dict") return &root;
+        for (xml::node& child : root.children) if (child.name == "dict") return &child;
+        return nullptr;
+    };
+    const auto key_of = [](const xml::node& n) {
+        return n.name == "key" && n.children.size() == 1 && n.children.front().name.empty()
+            ? xml::trim_copy(n.children.front().text) : std::string();
+    };
+    xml::node merged;
+    if (!xml::parse(template_plist, merged, error)) return false;
+    xml::node* into = top_dict(merged);
+    if (!into) { error = "the template's entries are not a dictionary"; return false; }
+    if (!application_plist.empty()) {
+        xml::node app;
+        if (!xml::parse(read_text(application_plist), app, error)) {
+            error = application_plist + ": " + error;
+            return false;
+        }
+        xml::node* from = top_dict(app);
+        if (!from) { error = application_plist + " has no top-level <dict>"; return false; }
+        for (std::size_t i = 0; i + 1 < from->children.size(); i += 2) {
+            const std::string key = key_of(from->children[i]);
+            if (key.empty()) { error = application_plist + ": a <dict> entry does not open with a <key>"; return false; }
+            for (std::size_t j = 0; j + 1 < into->children.size(); j += 2) {
+                if (key_of(into->children[j]) == key) {
+                    into->children.erase(into->children.begin() + static_cast<std::ptrdiff_t>(j),
+                                         into->children.begin() + static_cast<std::ptrdiff_t>(j + 2));
+                    break;
+                }
+            }
+            into->children.push_back(from->children[i]);
+            into->children.push_back(from->children[i + 1]);
+        }
+    }
+    std::string text = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                       "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" "
+                       "\"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n";
+    xml::write(merged, text, 0);
+    if (!write_text_if_different(out, text)) { error = "cannot write " + out.string(); return false; }
+    return true;
 }
 
 // THE WINDOWS PACKAGE CMAKE BUILDS, for `--format msi` and `--format setup`.
@@ -251,15 +413,47 @@ inline bool provide_formats(const formats& opt, const std::string& root) {
         if (!mcpp::dist::appimage::generate(a)) return false;
     }
     if (dist_os == "macos" || dist_os == "ios") {
+        const std::filesystem::path manifest = mcpp::manifest_dir();
+        const auto under_manifest = [&](const std::string& rel) {
+            return rel.empty() ? std::string() : (manifest / rel).string();
+        };
         mcpp::dist::apple::options a;
         a.target    = target_or(opt.apple.target);
         a.app_name  = opt.apple.display_name;
         a.bundle_id = opt.apple.bundle_id;
         a.icon      = opt.apple.icon;
+        a.identity             = opt.apple.identity;
+        a.entitlements         = under_manifest(opt.apple.entitlements);
+        a.provisioning_profile = under_manifest(opt.apple.provisioning_profile);
+        // THE Info.plist: the entries CMake's template writes, with the
+        // application's own merged over them. Written only when this build
+        // packs a bundle; every other build only declares the formats.
+        const std::string format = mcpp::pack_format();
+        if (format == "app" || format == "dmg") {
+            const bool ios = dist_os == "ios";
+            std::string application_plist = under_manifest(opt.apple.info_plist);
+            if (application_plist.empty()) {
+                const std::filesystem::path conventional = manifest / (ios ? "ios/Info.plist" : "macos/Info.plist");
+                if (std::filesystem::is_regular_file(conventional)) application_plist = conventional.string();
+            }
+            if (!application_plist.empty()) {
+                if (!std::filesystem::is_regular_file(application_plist))
+                    return detail::refuse("huxerui.rules: the Info.plist " + application_plist + " was not found");
+                mcpp::rerun_if_changed(application_plist.c_str());
+            }
+            const std::string display = !opt.apple.display_name.empty() ? opt.apple.display_name : a.target;
+            const std::filesystem::path merged =
+                std::filesystem::path(mcpp::out_dir()) / "huxerui-apple" / (ios ? "ios-Info.plist" : "macos-Info.plist");
+            std::string error;
+            if (!detail::write_info_plist(detail::template_info_plist(ios, display), application_plist, merged, error))
+                return detail::refuse("huxerui.rules: " + error);
+            a.info_plist = merged.string();
+        }
         // `generate` also links the program with the rpath that finds
-        // `Contents/Frameworks/` and, on macOS, supplies the runner named
-        // `app` (`macapp-run`), so `mcpp run --format app` runs the bundle in
-        // the foreground and returns the program's status.
+        // `Contents/Frameworks/` and supplies the runner named `app`:
+        // `macapp-run` on macOS, which runs the bundle in the foreground and
+        // returns the program's status, and `devicectl-run` on the iOS device
+        // row, which installs a signed bundle and launches it.
         if (!mcpp::dist::apple::generate(a)) return false;
     }
     if (dist_os == "ios" && dist_env == "sim") {
@@ -347,6 +541,95 @@ inline bool provide_formats(const formats& opt, const std::string& root) {
         a.resources = std::filesystem::is_directory(under_manifest(res))
             ? under_manifest(res)
             : root + "/tools/huxerui_cli/templates/platform/android/app/app/src/main/res";
+
+        // THE APPLICATION'S KOTLIN, beside its Java, when it has any. The
+        // compiler is `xim:kotlin`, which only the framework's `android-kotlin`
+        // feature declares, so an application without Kotlin downloads none; a
+        // Kotlin root without it is refused here, naming the feature to add.
+        const std::string kotlin = opt.android.kotlin.empty() ? std::string("android/kotlin") : opt.android.kotlin;
+        if (std::filesystem::is_directory(under_manifest(kotlin))) {
+            if (std::string(mcpp::xpkg_dir("xim", "kotlin")).empty())
+                return detail::refuse("huxerui.rules: " + under_manifest(kotlin) + " holds Kotlin, which is compiled "
+                                      "by xim:kotlin; request it with the framework's `android-kotlin` feature:\n"
+                                      "  huxerui.huxerui = { ..., features = [\"android-kotlin\"] }");
+            a.kotlin_sources.push_back(under_manifest(kotlin));
+        } else if (!opt.android.kotlin.empty()) {
+            return detail::refuse("huxerui.rules: android_options::kotlin names " + under_manifest(kotlin) +
+                                  ", which is not a directory");
+        }
+
+        // JARs and AARs: the application's own directory, then each library's.
+        const auto archives_in = [&](const std::filesystem::path& dir) {
+            std::vector<std::string> found;
+            std::error_code ec;
+            if (!std::filesystem::is_directory(dir, ec)) return found;
+            for (const auto& entry : std::filesystem::directory_iterator(dir, ec))
+                if (entry.is_regular_file(ec)) found.push_back(entry.path().string());
+            std::ranges::sort(found);
+            for (const std::string& f : found) {
+                if (f.ends_with(".jar")) a.jars.push_back(f);
+                else if (f.ends_with(".aar")) a.aars.push_back(f);
+            }
+            return found;
+        };
+        const std::string libs = opt.android.libs.empty() ? std::string("android/libs") : opt.android.libs;
+        if (!opt.android.libs.empty() && !std::filesystem::is_directory(under_manifest(libs)))
+            return detail::refuse("huxerui.rules: android_options::libs names " + under_manifest(libs) +
+                                  ", which is not a directory");
+        archives_in(under_manifest(libs));
+
+        // THE LIBRARIES' ANDROID CONTRIBUTIONS, as a Gradle library module
+        // makes them: Java and Kotlin, `res/` under the library's own R
+        // package, a manifest merged into the application's, and assets.
+        for (const direct_library& library : direct_libraries()) {
+            const std::filesystem::path android = library.root / "android";
+            if (!std::filesystem::is_directory(android)) continue;
+            mcpp::dist::apk::library contribution;
+            const std::filesystem::path library_manifest = android / "AndroidManifest.xml";
+            std::string package;
+            if (std::filesystem::is_regular_file(library_manifest)) {
+                contribution.manifest = library_manifest.string();
+                mcpp::plugins::xml::node node;
+                std::string error;
+                if (mcpp::plugins::xml::parse(detail::read_text(library_manifest), node, error))
+                    package = mcpp::plugins::xml::attr_of(node, "package");
+            }
+            if (package.empty()) {
+                const std::string ns = library.manifest.package_namespace;
+                package = (ns.empty() || ns == "mcpplibs" ? std::string() : ns + ".") + library.manifest.name;
+                for (char& c : package) if (c == '-') c = '_';
+            }
+            contribution.package = package;
+            if (std::filesystem::is_directory(android / "res"))    contribution.resources = (android / "res").string();
+            if (std::filesystem::is_directory(android / "assets")) contribution.assets = (android / "assets").string();
+            if (std::filesystem::is_directory(android / "java"))   contribution.java_sources = { (android / "java").string() };
+            if (std::filesystem::is_directory(android / "kotlin")) {
+                if (std::string(mcpp::xpkg_dir("xim", "kotlin")).empty())
+                    return detail::refuse("huxerui.rules: the library " + library.key + " holds Kotlin in " +
+                                          (android / "kotlin").string() + ", which is compiled by xim:kotlin; "
+                                          "request it with the framework's `android-kotlin` feature");
+                contribution.kotlin_sources = { (android / "kotlin").string() };
+            }
+            archives_in(android / "libs");
+            if (!contribution.manifest.empty() || !contribution.resources.empty() || !contribution.assets.empty() ||
+                !contribution.java_sources.empty() || !contribution.kotlin_sources.empty())
+                a.libraries.push_back(std::move(contribution));
+        }
+
+        // MAVEN, through the lock the project commits (see android_options::maven).
+        a.maven              = opt.android.maven;
+        a.maven_repositories = opt.android.maven_repositories;
+        if (!a.maven.empty())
+            a.maven_lock = under_manifest(opt.android.maven_lock.empty() ? std::string("android/maven.lock")
+                                                                         : opt.android.maven_lock);
+
+        // SIGNING AS GRADLE SIGNS: a stated keystore always; otherwise the
+        // debug key for a debug build and nothing for a release one, which a
+        // Gradle release variant without a signing configuration produces.
+        a.keystore              = opt.android.keystore;
+        a.keystore_alias        = opt.android.keystore_alias;
+        a.keystore_password_env = opt.android.keystore_password_env;
+        a.sign = !opt.android.keystore.empty() || std::string_view(mcpp::profile()) != "release";
         // The framework's Java root is a dependency's, so its rerun glob would
         // match nothing; the list the rule package carries is what re-runs
         // this program when a host file is added or removed.

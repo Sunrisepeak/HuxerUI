@@ -304,6 +304,44 @@ inline void add_resources_module(edge& e, const std::string& odir, const std::st
     e.imports  = { "huxerui" };
 }
 
+// A HuxerUI LIBRARY'S RESOURCES, AS AN APPLICATION MERGES THEM. CMake's
+// huxerui_use_library() appends a library's compiled package to the
+// application's resource inputs; under mcpp the application's own build program
+// finds the same libraries among the dependencies its manifest declares
+// (huxerui::rules::direct_libraries()) and compiles each one's `resources/`
+// under the namespace huxerui_add_library() would be given
+// (sources::library_resource_namespace). A library whose own build program
+// names a different root or namespace is not visible here: a build program
+// cannot read another package's options (mcpp-community/mcpp#647, E1).
+struct library_resources {
+    std::string package;
+    std::string ns;
+    std::string root;
+};
+
+inline std::vector<library_resources> direct_library_resources() {
+    std::vector<library_resources> out;
+    for (const direct_library& library : direct_libraries()) {
+        std::error_code ec;
+        const std::filesystem::path resources = library.root / "resources";
+        if (!std::filesystem::is_directory(resources, ec)) continue;
+        // A resource added to or removed from the library changes the payloads
+        // this program declares; its content is the hrc edge's depfile's.
+        // Directories rather than a glob: a glob matches under this package's
+        // own root only.
+        mcpp::rerun_if_changed(resources.string().c_str());
+        for (auto it = std::filesystem::recursive_directory_iterator(resources, ec);
+             !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
+            if (it->is_directory(ec)) mcpp::rerun_if_changed(it->path().string().c_str());
+        }
+        out.push_back({ library.key,
+                        huxerui::rules::sources::library_resource_namespace(library.manifest.package_namespace,
+                                                                            library.manifest.name),
+                        resources.string() });
+    }
+    return out;
+}
+
 } // namespace detail
 
 // Two hrc invocations plus a merge, which is the shape of
@@ -326,12 +364,13 @@ inline std::vector<edge> plan_resources(const options& opt, bool application, bo
     // place a second copy at the same path -- `runtime deploy collision`,
     // measured on the macOS row where every package's prefix is `HuxerUI/`.
     // A library with resources of its own gets them compiled for its own
-    // header; they do not reach the application's index under mcpp yet,
-    // which the design records as a gap.
+    // header here, and an application that depends on it merges the same
+    // resources into its package (detail::direct_library_resources()).
     if (!application) {
         if (opt.resources.empty()) return out;
         const std::string ns = opt.resource_namespace.empty()
-            ? huxerui::rules::sources::identifier(mcpp::package_name()) : opt.resource_namespace;
+            ? huxerui::rules::sources::library_resource_namespace(mcpp::package_namespace(), mcpp::package_name())
+            : opt.resource_namespace;
         const std::string odir = std::string(mcpp::out_dir()) + "/hrc";
         const std::string src  = (std::filesystem::path(mcpp::manifest_dir()) / opt.resources).string();
         const std::string dep  = odir + "/app.d";
@@ -354,10 +393,6 @@ inline std::vector<edge> plan_resources(const options& opt, bool application, bo
         // An installer interface's resources are compiled here for its header
         // alone: the package it reads is assembled by the application that
         // ships the interface (plan_setup_interface()).
-        if (!opt.bootstrapper)
-            mcpp::warning((std::string("huxerui.rules: ") + mcpp::package_name()
-                           + " is a library; its resources are compiled for its own header and do not "
-                             "reach the application's resource package under mcpp yet").c_str());
         return out;
     }
 
@@ -402,12 +437,38 @@ inline std::vector<edge> plan_resources(const options& opt, bool application, bo
         packages.push_back(odir + "/builtin/package");
     }
 
+    // THE LIBRARIES' RESOURCES, after the framework's and before the
+    // application's, in the order the manifest declares the libraries -- the
+    // order huxerui_use_library() appends their packages in, so a later package
+    // overrides an earlier one's variant of the same resource.
+    const std::vector<detail::library_resources> libraries = detail::direct_library_resources();
+    for (std::size_t i = 0; i < libraries.size(); ++i) {
+        const detail::library_resources& library = libraries[i];
+        const std::string lib_out = odir + "/library-" + std::to_string(i);
+        std::vector<std::string> outputs;
+        for (const std::string& p : huxerui::rules::sources::resource_outputs(library.root, library.ns))
+            outputs.push_back(lib_out + "/package/" + p);
+        const std::string index = lib_out + "/package/huxerui/resources.bin";
+        if (std::ranges::find(outputs, index) == outputs.end()) outputs.push_back(index);
+        out.push_back(edge{
+            .id          = "hrc:library-" + std::to_string(i),
+            .role        = "source",
+            .description = "library resources " + library.package,
+            .command     = { hrc, "--root", library.root, "--output", lib_out, "--namespace", library.ns,
+                             "--depfile", lib_out + ".d", "--depfile-target", index },
+            .inputs      = { hrc },
+            .outputs     = outputs,
+            .depfile     = lib_out + ".d",
+        });
+        packages.push_back(lib_out + "/package");
+    }
+
     if (!opt.resources.empty()) {
-        // The package name is not necessarily a C++ identifier; hrc requires
-        // one for the generated accessors.
+        // `app`, what CMake's application template states as RESOURCE_NAMESPACE;
+        // a stated namespace wins.
         const std::string ns =
             opt.resource_namespace.empty()
-                ? huxerui::rules::sources::identifier(mcpp::package_name())
+                ? std::string(huxerui::rules::sources::application_resource_namespace)
                 : opt.resource_namespace;
         // ABSOLUTE. An action's command runs with the BUILD directory as its
         // working directory, not the package root, so a relative root reaches
@@ -451,9 +512,12 @@ inline std::vector<edge> plan_resources(const options& opt, bool application, bo
         std::set<std::string> merged;
         for (const std::string& p : huxerui::rules::sources::resource_outputs(builtin_src, "huxerui"))
             merged.insert(p);
+        for (const detail::library_resources& library : libraries)
+            for (const std::string& p : huxerui::rules::sources::resource_outputs(library.root, library.ns))
+                merged.insert(p);
         if (!opt.resources.empty()) {
             const std::string ns = opt.resource_namespace.empty()
-                ? huxerui::rules::sources::identifier(mcpp::package_name()) : opt.resource_namespace;
+                ? std::string(huxerui::rules::sources::application_resource_namespace) : opt.resource_namespace;
             const std::string app_src =
                 (std::filesystem::path(mcpp::manifest_dir()) / opt.resources).string();
             for (const std::string& p : huxerui::rules::sources::resource_outputs(app_src, ns))
@@ -645,18 +709,21 @@ inline bool windows_bootstrapper(const options& opt, const std::string& root) {
 // beside it -- WiX's `mbanative.dll` and the interface's resource package, the
 // builtin package merged with its strings.
 //
-// The program is a host tool of the application's Windows rows:
+// The program is a host tool of the application's Windows rows, requested only
+// by a build that names the `windows-installer` feature:
 //
-//     [target.'cfg(os = "windows")'.build-dependencies]
+//     [features]
+//     windows-installer = []
+//
+//     [target.'cfg(os = "windows")'.feature-deps.windows-installer]
 //     installer = { path = "windows/installer", tools = ["<target>-Installer"] }
 //
-// CMake builds it only for a package build (HUXERUI_PACKAGE). mcpp builds a
-// tool for every build that declares it, once per source and toolchain, and
-// `mcpp pack` takes no `--features` a narrower declaration could hang on
-// (mcpp-community/mcpp#641), so the difference is the first build's time and
-// not the program. A tool publishes its binary and nothing beside it, which is
-// why the resource package is compiled here, in this build, and carried as
-// payloads.
+// As CMake builds it only for a package build (HUXERUI_PACKAGE): an ordinary
+// build does not compile it, and `huxerui package windows` runs
+// `mcpp pack --format setup --features windows-installer` (mcpp 2026.9.15.2
+// passes a pack's features to every build it performs, mcpp#641 item 4). A
+// tool publishes its binary and nothing beside it, which is why the resource
+// package is compiled here, in this build, and carried as payloads.
 inline bool plan_setup_interface(const options& opt, const installer_options& installer,
                                  const std::string& root, installer_interface& out) {
     const std::string target = opt.target.empty() ? std::string(mcpp::package_name()) : opt.target;
@@ -664,9 +731,12 @@ inline bool plan_setup_interface(const options& opt, const installer_options& in
     out.program = mcpp::dep_bin("installer", tool.c_str());
     if (out.program.empty()) {
         return refuse("huxerui.rules: a HuxerUI Setup.exe runs the application's own installer interface, "
-                      "and no `installer` package provides the tool " + tool + "; the application's "
-                      "manifest declares it:\n"
-                      "  [target.'cfg(os = \"windows\")'.build-dependencies]\n"
+                      "and no `installer` package provided the tool " + tool + " to this build. Pack with "
+                      "`mcpp pack --format setup --features windows-installer` (what `huxerui package windows` "
+                      "runs), from a manifest that declares it:\n"
+                      "  [features]\n"
+                      "  windows-installer = []\n"
+                      "  [target.'cfg(os = \"windows\")'.feature-deps.windows-installer]\n"
                       "  installer = { path = \"windows/installer\", tools = [\"" + tool + "\"] }");
     }
     const std::filesystem::path native =

@@ -62,6 +62,15 @@ kind = "shared"
 # as CMake's own tree builds them with the option's default, ON.
 [features]
 profiling = { defines = ["HUXERUI_ENABLE_PROFILING=1"], sources = ["src/runtime/profiling.cpp"] }
+# An application's Kotlin (`android/kotlin`) and Maven dependencies
+# (`android_options::maven`): each brings the payload that serves it --
+# `xim:kotlin`, `xim:coursier` -- through the build rules to mcpp:plugins'
+# `dist-apk-kotlin` / `dist-apk-maven`, so an application without them downloads
+# neither. What a Gradle project states by applying the Kotlin plugin or
+# declaring a dependency:
+#     huxerui.huxerui = { ..., features = ["android-kotlin"] }
+android-kotlin = ["huxerui.huxerui-build-rules/android-kotlin"]
+android-maven  = ["huxerui.huxerui-build-rules/android-maven"]
 
 [build]
 # Mirrors the core glob in cmake/HuxerUIBuild.cmake; `huxerui-build-check`

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -58,5 +59,14 @@ int RunProcess(const ProcessCommand& command);
 /// @return Exit code and UTF-8 output.
 /// @throws std::runtime_error if the process cannot be created or observed.
 [[nodiscard]] ProcessResult RunProcessCapture(const ProcessCommand& command);
+
+/// Runs a command, capturing its standard output while handing each chunk to a callback as it arrives.
+/// Standard error stays inherited.
+/// @param command Command to execute.
+/// @param on_output Receives the standard output in the order it is read.
+/// @return Exit code and the whole UTF-8 output.
+/// @throws std::runtime_error if the process cannot be created or observed.
+[[nodiscard]] ProcessResult RunProcessStreaming(const ProcessCommand& command,
+                                                const std::function<void(std::string_view)>& on_output);
 
 } // namespace huxerui::cli

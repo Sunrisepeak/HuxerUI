@@ -112,7 +112,7 @@ permissions:
 env:
   # Pinned rather than latest: an mcpp release changes build behaviour, and a
   # green PR should stay green until someone chooses to move this line.
-  MCPP_VERSION: '2026.9.14.3'
+  MCPP_VERSION: '2026.9.15.2'
   # The Linux clang leg. Pinned for the same reason mcpp is: a toolchain
   # release changes what compiles, and a green PR should stay green until
   # someone moves this line. Windows and macOS already build with clang --
@@ -504,15 +504,6 @@ jobs:
           mcpp --version | tee version.txt
           grep -q "${MCPP_VERSION}" version.txt || { echo "mcpp ${MCPP_VERSION} is not the active mcpp"; exit 1; }
 
-      # LLVM 22.1.8, which the applications' `llvm.libcxx` (libc++ 22) is
-      # measured with. Installed before the first build because a home without
-      # any llvm resolves that package's `requires = ["mcpp:compiler=llvm"]` to
-      # the Android NDK's version (mcpp-community/mcpp#641).
-      - name: Install the LLVM toolchain the Apple rows' standard library is built with
-        run: |
-          mcpp toolchain install llvm 22.1.8
-          mcpp toolchain default llvm@22.1.8
-
       # 25 Objective-C++ sources compiled with -fobjc-arc, and the frameworks
       # from the top-level [runtime] table -- which the engine renders only for
       # Mach-O, so the manifest states them once and unconditionally.
@@ -572,13 +563,22 @@ jobs:
       - name: Pack the example as a bundle and check its layout
         working-directory: mcpp/examples/01-import
         run: |
+          # An application's own Info.plist entries, where an Xcode project
+          # keeps them: `macos/Info.plist`, merged over the entries CMake's
+          # application template writes.
+          mkdir -p macos
+          printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' '<plist version="1.0"><dict>' \
+            '<key>NSCameraUsageDescription</key><string>Scans a code.</string></dict></plist>' > macos/Info.plist
           mcpp pack --format app 2>&1 | tee pack.log
           app=$(find target -type d -name '*.app' | head -1)
           test -n "$app" || { echo "dist-apple produced no bundle"; exit 1; }
           test -f "$app/Contents/MacOS/huxerui_example_import" || { echo "the bundle carries no executable under Contents/MacOS"; exit 1; }
           test -f "$app/Contents/Resources/HuxerUI/huxerui/resources.bin" || { echo "the resource package is not under Contents/Resources/HuxerUI"; exit 1; }
+          plutil -lint "$app/Contents/Info.plist"
           plutil -p "$app/Contents/Info.plist" | tee plist.txt
           grep -q '"CFBundleIdentifier" => "org.huxerui.example01"' plist.txt || { echo "CFBundleIdentifier is not the build program's"; exit 1; }
+          grep -q '"CFBundleDisplayName" => "huxerui_example_import"' plist.txt || { echo "the template's CFBundleDisplayName is missing"; exit 1; }
+          grep -q '"NSCameraUsageDescription" => "Scans a code."' plist.txt || { echo "macos/Info.plist did not reach the bundle"; exit 1; }
           # CMake builds for macOS 12. libc++ comes from the graph on this row,
           # compiled for the application's floor, so nothing in the program
           # needs a newer system and it loads no system libc++.
@@ -633,10 +633,12 @@ jobs:
           cd mcpp/examples/99-shared
           sed -i '' 's|^huxerui.huxerui = { path = "../../..", features = \["profiling"\] }$|huxerui.huxerui = { path = "../../..", features = ["profiling"], linkage = "shared" }|' mcpp.toml
           grep -n 'linkage = "shared"' mcpp.toml
-          # With the toolchain's libc++ and its 14.0 floor: a shared dependency
-          # is not linked against a graph-built standard library yet
-          # (mcpp-community/mcpp#641), so this option does not take the
-          # application's `llvm.libcxx`.
+          # With the toolchain's libc++ and its 14.0 floor: a C++ shared library
+          # in a graph whose C++ runtime is a package is refused
+          # (`shared-library-cxx-runtime`, mcpp-community/mcpp#641 item 5), so
+          # this option does not take the application's `llvm.libcxx`. Whether
+          # a std exception thrown in the dylib is caught by type in the program
+          # is mcpp-community/mcpp#646 F2, not measured here.
           sed -i '' -e "/^\[target.'cfg(any(os = \"macos\", os = \"ios\"))'.dependencies\]$/d" -e '/^llvm.libcxx = /d' \
             -e 's|^macos_deployment_target = "12.0"$|macos_deployment_target = "14.0"|' mcpp.toml
           ! grep -n '^llvm.libcxx' mcpp.toml
@@ -738,15 +740,6 @@ jobs:
           mcpp --version | tee version.txt
           grep -q "${MCPP_VERSION}" version.txt || { echo "mcpp ${MCPP_VERSION} is not the active mcpp"; exit 1; }
 
-      # LLVM 22.1.8, which the applications' `llvm.libcxx` (libc++ 22) is
-      # measured with. Installed before the first build because a home without
-      # any llvm resolves that package's `requires = ["mcpp:compiler=llvm"]` to
-      # the Android NDK's version (mcpp-community/mcpp#641).
-      - name: Install the LLVM toolchain the Apple rows' standard library is built with
-        run: |
-          mcpp toolchain install llvm 22.1.8
-          mcpp toolchain default llvm@22.1.8
-
       - name: Build the example for the simulator
         working-directory: mcpp/examples/01-import
         run: mcpp build --target aarch64-ios-sim
@@ -758,13 +751,26 @@ jobs:
       - name: Pack the bundle and check its shape
         working-directory: mcpp/examples/01-import
         run: |
+          # The application's own Info.plist entries, merged over the template's.
+          mkdir -p ios
+          printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' '<plist version="1.0"><dict>' \
+            '<key>NSCameraUsageDescription</key><string>Scans a code.</string></dict></plist>' > ios/Info.plist
           mcpp pack --target aarch64-ios-sim --format app 2>&1 | tee pack.log
           app=$(find target -type d -name '*.app' | head -1)
           test -n "$app" || { echo "dist-apple produced no bundle"; exit 1; }
           test -f "$app/huxerui_example_import" || { echo "the bundle carries no executable"; exit 1; }
+          plutil -lint "$app/Info.plist"
           plutil -p "$app/Info.plist" | tee plist.txt
           grep -q '"MinimumOSVersion" => "15.0"' plist.txt || { echo "MinimumOSVersion is not the manifest's 15.0"; exit 1; }
           grep -q '"CFBundleIdentifier" => "org.huxerui.example01"' plist.txt || { echo "CFBundleIdentifier is not the build program's"; exit 1; }
+          # The entries CMake's iOS template writes: without a launch screen iOS
+          # runs the application in compatibility mode, not at the device's
+          # resolution.
+          plutil -extract UILaunchScreen raw -o - "$app/Info.plist" || { echo "the bundle declares no launch screen"; exit 1; }
+          grep -q '"CFBundleDisplayName" => "huxerui_example_import"' plist.txt || { echo "the template's CFBundleDisplayName is missing"; exit 1; }
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :UISupportedInterfaceOrientations:2' "$app/Info.plist")" = UIInterfaceOrientationLandscapeRight ] \
+            || { echo "the iPhone orientations are not the template's"; exit 1; }
+          grep -q '"NSCameraUsageDescription" => "Scans a code."' plist.txt || { echo "ios/Info.plist did not reach the bundle"; exit 1; }
           test -f "$app/HuxerUI/huxerui/resources.bin" || { echo "the resource package is not at the bundle root"; exit 1; }
           echo "bundle: $app"
 
@@ -833,9 +839,11 @@ jobs:
                    classes.dex AndroidManifest.xml resources.arsc res/mipmap-anydpi-v26/ic_launcher.xml; do
             grep -qx "$f" contents.txt || { echo "the APK lacks $f"; exit 1; }
           done
-          grep -qE '^META-INF/.*\.(RSA|EC)$' contents.txt || { echo "the APK is not signed"; exit 1; }
-          apksigner=$(find ~/.mcpp/registry/data/xpkgs -name apksigner -type f | head -1)
-          test -n "$apksigner" && "$apksigner" verify --print-certs "$apk" | head -3
+          # A release package without a keystore is unsigned and aligned, as
+          # Gradle's release variant without a signing configuration is.
+          ! grep -qE '^META-INF/.*\.(RSA|EC)$' contents.txt || { echo "the release APK is signed without a keystore"; exit 1; }
+          zipalign=$(find ~/.mcpp/registry/data/xpkgs -name zipalign -type f | head -1)
+          "$zipalign" -c -p 4 "$apk" || { echo "the release APK is not aligned"; exit 1; }
           aapt2=$(find ~/.mcpp/registry/data/xpkgs -name aapt2 -type f | head -1)
           "$aapt2" dump badging "$apk" | tee badging.txt | grep -E "^(application:|targetSdkVersion)"
           grep -q "^application-icon" badging.txt || { echo "the manifest names no launcher icon"; exit 1; }
@@ -845,9 +853,71 @@ jobs:
           grep -q "launchable-activity: name='org.huxerui.example01.MainActivity'" badging.txt || { echo "the launcher is not the generated MainActivity"; exit 1; }
           grep -q "native-code: 'arm64-v8a' 'x86_64'" badging.txt || { echo "the APK does not carry both ABIs"; exit 1; }
           echo "apk: $apk"
+          # A debug package is signed with the Android debug key, as Gradle's
+          # debug variant is, so `huxerui run android` installs it.
+          mcpp pack --profile dev --target x86_64-linux-android --format apk 2>&1 | tee pack-dev.log
+          dev=$(sed -n 's/^ *Packed //p' pack-dev.log | tail -1)
+          apksigner=$(find ~/.mcpp/registry/data/xpkgs -name apksigner -type f | head -1)
+          "$apksigner" verify --print-certs "$dev" | tee certs.txt | head -3
+          grep -q 'CN=Android Debug' certs.txt || { echo "the debug APK is not signed with the debug key"; exit 1; }
           # The manifest names no runner: huxerui.rules supplies `adb-run`.
           mcpp run --target x86_64-linux-android --format apk --list-runners 2>&1 | tee runners.txt
           grep -q 'adb-run' runners.txt || { echo "the Android runner is not adb-run"; exit 1; }
+
+      # THE ANDROID EXTENSION POINTS a Gradle project has, on the example that
+      # depends on a library: the application's Kotlin (the framework's
+      # `android-kotlin` feature), its `android/libs` archives, a Maven
+      # dependency through the lock (`android-maven`), and the library's own
+      # Java, res/ and manifest. Written into the checkout for this job only.
+      - name: Kotlin, a library's Android sources, local archives and a Maven dependency reach the APK
+        working-directory: mcpp/examples/03-library
+        run: |
+          set -euo pipefail
+          sed -i 's|^huxerui.huxerui = { path = "../../..", features = \["profiling"\] }$|huxerui.huxerui = { path = "../../..", features = ["profiling", "android-kotlin", "android-maven"] }|' mcpp.toml
+          grep -q 'android-kotlin' mcpp.toml
+          sed -i 's|^        .bundle_identifier = "org.huxerui.example03",$|        .bundle_identifier = "org.huxerui.example03",\n        .android           = { .maven = { "androidx.startup:startup-runtime:1.1.1" } },|' build.mcpp
+          grep -q 'androidx.startup' build.mcpp
+          mkdir -p android/kotlin/org/huxerui/example03 android/libs \
+                   widgets/android/java/org/huxerui/widgets widgets/android/res/values
+          printf 'package org.huxerui.example03\n\nobject KotlinProbe {\n    fun greeting(name: String) = "hello, $name"\n}\n' \
+            > android/kotlin/org/huxerui/example03/KotlinProbe.kt
+          printf 'package org.huxerui.widgets;\n\npublic final class WidgetsProbe {\n    public static int label() { return R.string.widgets_label; }\n}\n' \
+            > widgets/android/java/org/huxerui/widgets/WidgetsProbe.java
+          printf '%s\n' '<?xml version="1.0" encoding="utf-8"?>' '<resources><string name="widgets_label">widgets</string></resources>' \
+            > widgets/android/res/values/strings.xml
+          printf '%s\n' '<?xml version="1.0" encoding="utf-8"?>' \
+            '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="org.huxerui.widgets">' \
+            '<uses-permission android:name="android.permission.VIBRATE"/></manifest>' > widgets/android/AndroidManifest.xml
+          jdk=$(find ~/.mcpp/registry/data/xpkgs/xim-x-jdk-temurin -mindepth 1 -maxdepth 1 -type d | head -1)
+          probe=$(mktemp -d)
+          mkdir -p "$probe/org/huxerui/archive"
+          printf 'package org.huxerui.archive;\npublic final class ArchiveProbe {}\n' > "$probe/org/huxerui/archive/ArchiveProbe.java"
+          "$jdk/bin/javac" -d "$probe/classes" "$probe/org/huxerui/archive/ArchiveProbe.java"
+          "$jdk/bin/jar" cf android/libs/archive-probe.jar -C "$probe/classes" .
+
+          MCPP_DIST_APK_MAVEN=update mcpp pack --profile dev --target x86_64-linux-android --format apk 2>&1 | tee pack.log
+          apk=$(sed -n 's/^ *Packed //p' pack.log | tail -1)
+          test -f "$apk" || { echo "the pack reported no APK"; exit 1; }
+          test -f android/maven.lock || { echo "no Maven lock was written beside the manifest"; exit 1; }
+          grep -q '^artifact androidx.startup:startup-runtime:1.1.1 ' android/maven.lock
+          bt=$(find ~/.mcpp/registry/data/xpkgs/xim-x-android-build-tools -mindepth 1 -maxdepth 1 -type d | head -1)
+          out=$(mktemp -d)
+          unzip -q "$apk" -d "$out"
+          for dex in "$out"/classes*.dex; do "$bt/dexdump" "$dex" 2>/dev/null; done \
+            | sed -n "s/^ *Class descriptor *: '\(.*\)'$/\1/p" | sort -u > classes.txt
+          for c in 'Lorg/huxerui/example03/KotlinProbe;' 'Lkotlin/jvm/internal/Intrinsics;' \
+                   'Lorg/huxerui/widgets/WidgetsProbe;' 'Lorg/huxerui/widgets/R$string;' \
+                   'Lorg/huxerui/archive/ArchiveProbe;' 'Landroidx/startup/InitializationProvider;'; do
+            grep -qxF "$c" classes.txt || { echo "the dex does not carry $c"; exit 1; }
+          done
+          "$bt/aapt2" dump permissions "$apk" | tee permissions.txt
+          grep -q 'android.permission.VIBRATE' permissions.txt || { echo "the library's manifest was not merged"; exit 1; }
+          "$bt/aapt2" dump xmltree "$apk" --file AndroidManifest.xml | grep -q 'org.huxerui.example03.androidx-startup' \
+            || { echo "the Maven library's provider did not reach the manifest"; exit 1; }
+          # An ordinary pack reads the lock and the cache and reaches no network.
+          mcpp pack --profile dev --target x86_64-linux-android --format apk > pack-offline.log 2>&1 \
+            || { cat pack-offline.log; echo "a pack with the lock and a warm cache failed"; exit 1; }
+          echo "Kotlin, the library's Java, res/ and manifest, a local JAR and a Maven AAR are in $apk"
 
   windows:
     name: mcpp build (windows x86_64)
@@ -1000,14 +1070,15 @@ jobs:
 
       # The Setup.exe CMake's `huxerui package` produces: a Burn bundle whose
       # interface is the application's own installer program, a host tool of
-      # the example's Windows row, with WiX's mbanative.dll and the interface's
-      # resource package beside it.
+      # the example's Windows row built only under the `windows-installer`
+      # feature (as CMake builds it for a package build only), with WiX's
+      # mbanative.dll and the interface's resource package beside it.
       - name: Build the Setup.exe and check what it carries
         if: runner.os == 'Windows'
         working-directory: mcpp/examples/02-module-units
         run: |
           set -euo pipefail
-          mcpp pack --format setup 2>&1 | tee setup.log
+          mcpp pack --format setup --features windows-installer 2>&1 | tee setup.log
           bundle=$(sed -n 's/^ *Packed //p' setup.log | tail -1 | tr -d '\r' | tr '\\' '/')
           case "$bundle" in
             */huxerui_example_module_units-Setup-0.1.0.exe) ;;

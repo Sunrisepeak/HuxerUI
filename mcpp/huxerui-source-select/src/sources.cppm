@@ -119,6 +119,133 @@ without_entry(std::span<const std::string> sources, std::string_view entry) {
     return out;
 }
 
+// THE DEFAULT RESOURCE NAMESPACES, as a CMake project gets them. CMake's
+// huxerui_add_app() and huxerui_add_library() require RESOURCE_NAMESPACE; what
+// a project states is what `huxerui create` wrote into it:
+//
+//   - an application: `app` (tools/huxerui_cli/templates/project/app);
+//   - a library: its public target `Package::Product` flattened to
+//     `package_product`, lower-cased, one segment when the two are equal
+//     (DeriveLibraryTargetProjection in tools/huxerui_cli/project.cpp).
+//
+// An mcpp package's namespace and name are that pair: `huxerui` and `live2d`
+// give `huxerui_live2d`. A package that states no namespace is in mcpp's
+// default one, `mcpplibs`, and a build program is told `mcpplibs` either way,
+// so that namespace is not a segment: `example-widgets` gives `example_widgets`
+// in its own build and in the application's that reads its manifest.
+inline constexpr std::string_view application_resource_namespace = "app";
+
+[[nodiscard]] inline std::string library_resource_namespace(std::string_view package_namespace,
+                                                            std::string_view name) {
+    const auto lower = [](std::string_view text) {
+        std::string out(text);
+        for (char& c : out) if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+        return out;
+    };
+    const std::string package = lower(package_namespace);
+    const std::string product = lower(name);
+    if (package.empty() || package == "mcpplibs" || package == product) return identifier(product);
+    return identifier(package + "_" + product);
+}
+
+// What the build rules read from a dependency's manifest, without a TOML
+// library: the identity `[package]` declares, and whether the package depends
+// on the framework itself (`huxerui.huxerui`, in `[dependencies]` or a
+// `[target.<selector>.dependencies]` table, spelled with the dotted key or as
+// a `[dependencies.huxerui]` table), which is what makes a dependency a HuxerUI
+// library whose resources belong in an application's package.
+struct dependency_manifest {
+    std::string package_namespace;
+    std::string name;
+    bool        uses_huxerui = false;
+};
+
+[[nodiscard]] inline dependency_manifest read_dependency_manifest(std::string_view text) {
+    dependency_manifest out;
+    std::string table;
+    const auto trim = [](std::string_view v) {
+        while (!v.empty() && (v.front() == ' ' || v.front() == '\t')) v.remove_prefix(1);
+        while (!v.empty() && (v.back() == ' ' || v.back() == '\t' || v.back() == '\r')) v.remove_suffix(1);
+        return v;
+    };
+    const auto string_value = [&](std::string_view line) -> std::string {
+        const auto eq = line.find('=');
+        if (eq == std::string_view::npos) return {};
+        std::string_view value = trim(line.substr(eq + 1));
+        if (value.size() < 2 || value.front() != '"') return {};
+        const auto close = value.find('"', 1);
+        return close == std::string_view::npos ? std::string() : std::string(value.substr(1, close - 1));
+    };
+    const auto is_key = [](std::string_view line, std::string_view key) {
+        if (!line.starts_with(key)) return false;
+        const std::string_view rest = line.substr(key.size());
+        return !rest.empty() && (rest.front() == ' ' || rest.front() == '\t' || rest.front() == '=');
+    };
+    std::size_t start = 0;
+    while (start <= text.size()) {
+        const std::size_t end = text.find('\n', start);
+        std::string_view line = trim(text.substr(start, (end == std::string_view::npos ? text.size() : end) - start));
+        start = end == std::string_view::npos ? text.size() + 1 : end + 1;
+        if (line.empty() || line.front() == '#') continue;
+        if (line.front() == '[') {
+            table = std::string(line);
+            continue;
+        }
+        if (table == "[package]") {
+            if (is_key(line, "name")) out.name = string_value(line);
+            else if (is_key(line, "namespace")) out.package_namespace = string_value(line);
+            continue;
+        }
+        const bool dependencies = table == "[dependencies]" || table.ends_with(".dependencies]");
+        if (dependencies && is_key(line, "huxerui.huxerui")) out.uses_huxerui = true;
+        const bool huxerui_table = table == "[dependencies.huxerui]" || table.ends_with(".dependencies.huxerui]");
+        if (huxerui_table && is_key(line, "huxerui")) out.uses_huxerui = true;
+    }
+    return out;
+}
+
+// The dependency keys a manifest declares, in the order it writes them: the
+// keys of `[dependencies]` and of every `[target.<selector>.dependencies]`
+// table, with a `[dependencies.<ns>]` table's keys qualified by its namespace.
+// `mcpp::dep_dir()` answers for exactly these. Each key once.
+[[nodiscard]] inline std::vector<std::string> dependency_keys(std::string_view text) {
+    std::vector<std::string> keys;
+    std::string table;
+    const auto trim = [](std::string_view v) {
+        while (!v.empty() && (v.front() == ' ' || v.front() == '\t')) v.remove_prefix(1);
+        while (!v.empty() && (v.back() == ' ' || v.back() == '\t' || v.back() == '\r')) v.remove_suffix(1);
+        return v;
+    };
+    std::size_t start = 0;
+    while (start <= text.size()) {
+        const std::size_t end = text.find('\n', start);
+        std::string_view line = trim(text.substr(start, (end == std::string_view::npos ? text.size() : end) - start));
+        start = end == std::string_view::npos ? text.size() + 1 : end + 1;
+        if (line.empty() || line.front() == '#') continue;
+        if (line.front() == '[') {
+            table = std::string(line);
+            continue;
+        }
+        std::string prefix;
+        if (table == "[dependencies]" || table.ends_with(".dependencies]")) {
+            prefix = "";
+        } else if (const auto at = table.find("dependencies."); at != std::string::npos &&
+                   (at == 1 || table.compare(at - 1, 1, ".") == 0) && table.ends_with("]") &&
+                   table.find("-dependencies") == std::string::npos) {
+            prefix = table.substr(at + 13, table.size() - at - 14) + ".";
+        } else {
+            continue;
+        }
+        const auto eq = line.find('=');
+        if (eq == std::string_view::npos) continue;
+        std::string key(trim(line.substr(0, eq)));
+        if (key.empty() || key.front() == '"') continue;
+        key = prefix + key;
+        if (std::ranges::find(keys, key) == keys.end()) keys.push_back(std::move(key));
+    }
+    return keys;
+}
+
 // What a module interface unit declares, so a GENERATED copy of it can say the
 // same thing.
 //

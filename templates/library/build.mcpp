@@ -4,12 +4,14 @@
 // so this file names no package of its own. configure() schedules the
 // composable transform (hcg) for every source it selects.
 //
-// A library has no resources of its own here; add `.resources = "resources"`
-// when it grows some, and the resource compiler joins the same build graph.
+// `resources/` is the library's own, as a CMake library's template carries it:
+// compiled here under the namespace huxerui_add_library() would be given
+// (`<namespace>_<name>`), for the library's own accessors, and merged into the
+// resource package of every application that depends on this library.
 
 import mcpp;
 import huxerui.rules;
 
 int main() {
-    return huxerui::rules::configure({}) ? 0 : 1;
+    return huxerui::rules::configure({ .resources = "resources" }) ? 0 : 1;
 }

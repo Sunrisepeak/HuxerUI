@@ -26,6 +26,12 @@ huxerui.huxerui-source-select = { path = "../huxerui-source-select", host-module
 huxerui-build-rules-dist = { path = "../huxerui-build-rules-dist", host-module = true, reexport = true }
 huxerui-build-rules-gtk  = { path = "../huxerui-build-rules-gtk",  host-module = true, reexport = true }
 
+# Forwarded from the framework's features of the same names to the
+# distribution rules, which forward them to mcpp:plugins.
+[features]
+android-kotlin = ["huxerui.huxerui-build-rules-dist/android-kotlin"]
+android-maven  = ["huxerui.huxerui-build-rules-dist/android-maven"]
+
 [lib]
 # The module this package publishes is `huxerui.rules`; the package name is
 # `huxerui-build-rules`, which is not a legal C++ module name and does not have to be.

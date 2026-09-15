@@ -24,6 +24,9 @@ using huxerui::rules::sources::scan_module_interface;
 using huxerui::rules::sources::strip_noncode;
 using huxerui::rules::sources::umbrella_includes;
 using huxerui::rules::sources::without_entry;
+using huxerui::rules::sources::library_resource_namespace;
+using huxerui::rules::sources::read_dependency_manifest;
+using huxerui::rules::sources::dependency_keys;
 
 void glob_single_star_stays_within_one_segment() {
     check(matches("src/*/*.cpp", "src/runtime/view.cpp"), "one directory matches src/*/*.cpp");
@@ -381,6 +384,50 @@ void a_template_without_the_replaced_line_is_refused() {
     check(!r.error.empty(), "a Package.wxs.in that names no icon or harvest is refused");
 }
 
+void resource_namespaces_match_what_the_cli_writes_for_cmake() {
+    // `huxerui create library` flattens Package::Product the same way.
+    check(library_resource_namespace("huxerui", "live2d") == "huxerui_live2d", "namespace_name");
+    check(library_resource_namespace("HuxerUI", "Live2D") == "huxerui_live2d", "lower-cased");
+    check(library_resource_namespace("", "example-widgets") == "example_widgets", "no namespace keeps the name");
+    // A build program is told `mcpplibs` for a package that states no namespace; the application reading that
+    // package's manifest sees none. Both must derive the same name.
+    check(library_resource_namespace("mcpplibs", "example-widgets") == "example_widgets", "the default namespace is not a segment");
+    check(library_resource_namespace("widgets", "widgets") == "widgets", "equal segments are one");
+    check(huxerui::rules::sources::application_resource_namespace == "app", "an application's is app");
+}
+
+void a_dependency_manifest_says_whether_it_is_a_huxerui_library() {
+    const auto live2d = read_dependency_manifest(
+        "# a comment\n[package]\nname        = \"live2d\"\nnamespace   = \"huxerui\"\n"
+        "version = \"0.1.0\"\n\n[dependencies]\nhuxerui.huxerui = { git = \"x\" }\n");
+    check(live2d.name == "live2d" && live2d.package_namespace == "huxerui", "the identity is read");
+    check(live2d.uses_huxerui, "a dotted huxerui.huxerui dependency is seen");
+
+    const auto table = read_dependency_manifest(
+        "[package]\nname = \"w\"\n[target.'cfg(os = \"ios\")'.dependencies.huxerui]\nhuxerui = \"0.3.0\"\n");
+    check(table.uses_huxerui, "a [*.dependencies.huxerui] table is seen");
+
+    const auto tool = read_dependency_manifest(
+        "[package]\nname = \"t\"\n[build-dependencies]\nhuxerui.huxerui = { path = \"..\" }\n");
+    check(!tool.uses_huxerui, "a build dependency on the framework is not a runtime use");
+
+    const auto plain = read_dependency_manifest("[package]\nname = \"fmt\"\n[dependencies]\nhuxerui-like = \"1\"\n");
+    check(!plain.uses_huxerui, "a key that only starts with huxerui is not the framework");
+}
+
+void dependency_keys_are_read_in_declaration_order() {
+    const auto keys = dependency_keys(
+        "[package]\nname = \"app\"\n\n[dependencies]\nhuxerui.huxerui = { path = \"../..\" }\n"
+        "example-widgets = { path = \"widgets\" }\n"
+        "[target.'cfg(any(os = \"macos\", os = \"ios\"))'.dependencies]\nllvm.libcxx = \"22.1.8.3\"\n"
+        "[dependencies.compat]\nfmt = \"11\"\n"
+        "[build-dependencies]\ninstaller = { path = \"x\" }\n"
+        "[target.'cfg(os = \"windows\")'.feature-deps.windows-installer]\ninstaller = { path = \"x\" }\n"
+        "[targets.app]\nkind = \"app\"\n");
+    check((keys == std::vector<std::string>{"huxerui.huxerui", "example-widgets", "llvm.libcxx", "compat.fmt"}),
+          "runtime dependency keys, qualified, in order, and no build or feature dependency");
+}
+
 int main() {
     sha1_matches_the_standard_vectors();
     upgrade_codes_are_the_ones_cmake_derives();
@@ -404,6 +451,9 @@ int main() {
     codegen_prefilter_matches_the_cmake_rule();
     entry_is_excluded_from_the_transform_set();
     resource_outputs_predict_what_hrc_writes();
+    resource_namespaces_match_what_the_cli_writes_for_cmake();
+    a_dependency_manifest_says_whether_it_is_a_huxerui_library();
+    dependency_keys_are_read_in_declaration_order();
     if (failures != 0) {
         std::cerr << failures << " check(s) failed\n";
         return 1;

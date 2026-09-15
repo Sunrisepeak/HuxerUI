@@ -28,7 +28,7 @@ McppTarget ResolveMcppTarget(std::string_view platform_id, bool physical_device,
     return {host + "-linux-gnu", "", "appimage", {host + "-linux-gnu"}};
   }
   if (platform_id == "windows") {
-    return {host + "-windows-msvc", "", "setup", {host + "-windows-msvc"}};
+    return {host + "-windows-msvc", "", "setup", {host + "-windows-msvc"}, {"windows-installer"}};
   }
   if (platform_id == "macos") {
     // A macOS application runs as its bundle, as `huxerui run macos` does
@@ -106,10 +106,11 @@ std::string McppPlatformsLine(std::span<const std::string> platform_ids) {
 
 namespace {
 
+// The profile is always named. `mcpp pack` has no `--release` and defaults to release, and every verb
+// otherwise follows a manifest's `[build] default-profile`; `--profile` is the spelling all three accept.
 ProcessCommand McppCommand(const std::filesystem::path& root, std::vector<std::string> arguments, bool release) {
-  if (release) {
-    arguments.push_back("--release");
-  }
+  arguments.push_back("--profile");
+  arguments.push_back(release ? "release" : "dev");
   return {"mcpp", std::move(arguments), root};
 }
 
@@ -141,6 +142,9 @@ std::vector<std::pair<std::string, std::string>> McppRunEnvironment(const McppTa
     environment.emplace_back("ANDROID_SERIAL", std::string(device_id));
   } else if (target.triple.ends_with("-ios-sim")) {
     environment.emplace_back("SIMCTL_RUN_UDID", std::string(device_id));
+  } else if (target.triple.ends_with("-ios")) {
+    // `devicectl-run` (xim:apple-device-tools) takes the device the way `devicectl --device` names one.
+    environment.emplace_back("DEVICECTL_RUN_DEVICE", std::string(device_id));
   }
   return environment;
 }
@@ -153,7 +157,57 @@ ProcessCommand McppPackCommand(const std::filesystem::path& root, const McppTarg
   }
   arguments.push_back("--format");
   arguments.push_back(target.pack_format);
+  if (!target.pack_features.empty()) {
+    std::string features;
+    for (const std::string& feature : target.pack_features) {
+      features += (features.empty() ? "" : ",") + feature;
+    }
+    arguments.push_back("--features");
+    arguments.push_back(std::move(features));
+  }
   return McppCommand(root, std::move(arguments), release);
+}
+
+std::vector<std::filesystem::path> McppPackedArtifacts(std::string_view output, const std::filesystem::path& root,
+                                                       const std::filesystem::path& home) {
+  std::vector<std::filesystem::path> artifacts;
+  std::size_t start = 0;
+  while (start < output.size()) {
+    std::size_t end = output.find('\n', start);
+    if (end == std::string_view::npos) {
+      end = output.size();
+    }
+    std::string_view line = output.substr(start, end - start);
+    start = end + 1;
+    while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) {
+      line.remove_suffix(1);
+    }
+    while (!line.empty() && line.front() == ' ') {
+      line.remove_prefix(1);
+    }
+    constexpr std::string_view verb = "Packed ";
+    if (!line.starts_with(verb) || line.starts_with("Packed leg")) {
+      continue;
+    }
+    std::string_view reported = line.substr(verb.size());
+    while (!reported.empty() && reported.front() == ' ') {
+      reported.remove_prefix(1);
+    }
+    if (reported.empty()) {
+      continue;
+    }
+    std::filesystem::path path;
+    if (reported.starts_with("~/")) {
+      path = home / std::filesystem::path(std::string(reported.substr(2)));
+    } else {
+      path = std::filesystem::path(std::string(reported));
+      if (path.is_relative()) {
+        path = root / path;
+      }
+    }
+    artifacts.push_back(path.lexically_normal());
+  }
+  return artifacts;
 }
 
 std::filesystem::path McppWebOutputDirectory(const std::filesystem::path& root) {

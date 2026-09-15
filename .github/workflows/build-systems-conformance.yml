@@ -1,0 +1,206 @@
+name: Build Systems Conformance
+
+# The default program model docs/design/build-systems-spec.md defines, checked
+# on what a user gets rather than on how it was built: one application is
+# created for CMake and for mcpp, each is packaged with `huxerui package
+# <platform>` and nothing else, and the facts program_model_facts.sh reads from
+# the two artifacts must agree apart from the differences the specification
+# lists with a reason.
+#
+# Linux, the Web and Android run on a pull request, since all three build on an
+# Ubuntu runner; every platform runs weekly and on request.
+
+on:
+  pull_request:
+    paths:
+      # What either build system reads to produce a default application.
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - 'platform/**'
+      - 'resources/**'
+      - 'mcpp.toml'
+      - 'build.mcpp'
+      - 'mcpp/**'
+      - 'templates/**'
+      - 'tools/huxerui_cli/**'
+      - 'tools/resource_compiler/**'
+      - 'tools/codegen/**'
+      # The specification's allowed differences are read by the check itself.
+      - 'docs/design/build-systems-spec.md'
+      - '.github/workflows/build-systems-conformance.yml'
+      - '.github/workflows/scripts/program_model_facts.sh'
+      - '.github/workflows/scripts/compare_program_model.sh'
+  schedule:
+    - cron: '23 3 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: conformance-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # The mcpp mcpp-build.yml pins, for the same reason.
+  MCPP_VERSION: '2026.9.15.2'
+  XLINGS_NON_INTERACTIVE: '1'
+  # appimagetool is an AppImage itself; a runner has no FUSE to mount it with.
+  APPIMAGE_EXTRACT_AND_RUN: '1'
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  conformance:
+    name: default program model (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ fromJSON(github.event_name == 'pull_request' && '["linux", "web", "android"]' || '["linux", "web", "android", "macos", "ios", "windows"]') }}
+    runs-on: ${{ (matrix.platform == 'macos' || matrix.platform == 'ios') && 'macos-15' || (matrix.platform == 'windows' && 'windows-2022' || 'ubuntu-24.04') }}
+    # Two framework builds per job, one of them from a cold mcpp cache.
+    timeout-minutes: 150
+    env:
+      # A source checkout is a valid SDK home: `create` resolves the Skill from
+      # it and gives the mcpp project a path dependency on this tree.
+      HUXERUI_HOME: ${{ github.workspace }}
+    steps:
+      - uses: actions/checkout@v5
+
+      # Outside the checkout, so neither project is inside the tree it depends on.
+      - name: Choose the work directory
+        run: echo "WORK=$RUNNER_TEMP/conformance" >> "$GITHUB_ENV"
+
+      - if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+
+      - name: Install the CLI's build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-4-dev libepoxy-dev libsoup-3.0-dev pkg-config ninja-build patchelf
+
+      - name: Build the huxerui CLI
+        run: |
+          generator=()
+          if command -v ninja >/dev/null 2>&1; then generator=(-G Ninja); fi
+          cmake -S . -B build-cli "${generator[@]}" -DCMAKE_BUILD_TYPE=Release \
+            -DHUXERUI_BUILD_EXAMPLES=OFF -DHUXERUI_BUILD_SHARED=OFF \
+            -DHUXERUI_BUILD_CLI=ON -DHUXERUI_BUILD_TESTS=OFF
+          cmake --build build-cli --config Release --target huxerui_cli --parallel
+          cli=$(find "$PWD/build-cli" -type f \( -name huxerui -o -name huxerui.exe \) -path '*bin*' | head -1)
+          test -n "$cli" || { echo "the CLI was not built"; exit 1; }
+          echo "CLI=$cli" >> "$GITHUB_ENV"
+
+      # The same application twice. The two templates demonstrate different
+      # code, so the mcpp project takes the CMake project's resources: the
+      # resource package then compares the build systems, not the templates.
+      - name: Create the application for each build system
+        run: |
+          mkdir -p "$WORK/cmake" "$WORK/mcpp"
+          ( cd "$WORK/cmake" && "$CLI" create app conformance --id org.huxerui.conformance -p ${{ matrix.platform }} --agent none )
+          ( cd "$WORK/mcpp" && "$CLI" create app conformance --build mcpp --id org.huxerui.conformance -p ${{ matrix.platform }} --agent none )
+          rm -rf "$WORK/mcpp/conformance/resources"
+          cp -R "$WORK/cmake/conformance/resources" "$WORK/mcpp/conformance/resources"
+
+      # ---------------------------------------------------------------- mcpp ----
+      # First, so the CMake toolchains installed below (emsdk's environment, a
+      # JDK) cannot reach the mcpp build, which provisions its own.
+      - name: Cache xlings and mcpp
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.xlings
+            ~/.mcpp
+          key: conformance-${{ matrix.platform }}-${{ runner.os }}-${{ runner.arch }}-${{ env.MCPP_VERSION }}-${{ hashFiles('mcpp.toml') }}
+          restore-keys: |
+            conformance-${{ matrix.platform }}-${{ runner.os }}-${{ runner.arch }}-${{ env.MCPP_VERSION }}-
+
+      - name: Install xlings and mcpp
+        if: runner.os != 'Windows'
+        run: |
+          if [ ! -x "$HOME/.xlings/bin/xlings" ]; then
+            curl -fsSL https://d2learn.org/xlings-install.sh | bash
+          fi
+          echo "$HOME/.xlings/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
+
+      - name: Install xlings and mcpp
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "$HOME\.xlings")) {
+            irm https://d2learn.org/xlings-install.ps1.txt | iex
+          }
+          "$HOME\.xlings\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          "$HOME\.xlings\subos\current\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: Select the pinned mcpp
+        run: |
+          xlings install "mcpp@${MCPP_VERSION}" -y --use
+          mcpp --version | tee "$RUNNER_TEMP/mcpp-version.txt"
+          grep -q "${MCPP_VERSION}" "$RUNNER_TEMP/mcpp-version.txt" || { echo "mcpp ${MCPP_VERSION} is not the active mcpp"; exit 1; }
+
+      - name: Package with mcpp
+        run: cd "$WORK/mcpp/conformance" && "$CLI" package ${{ matrix.platform }}
+
+      # --------------------------------------------------------------- CMake ----
+      - name: Install appimagetool
+        if: matrix.platform == 'linux'
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL -o "$RUNNER_TEMP/bin/appimagetool" \
+            https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+          chmod +x "$RUNNER_TEMP/bin/appimagetool"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - if: matrix.platform == 'web'
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 4.0.19
+
+      - if: matrix.platform == 'android'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install the Android SDK packages
+        if: matrix.platform == 'android'
+        run: |
+          set +o pipefail
+          yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
+          set -o pipefail
+          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "platform-tools" "ndk;29.0.14206865"
+
+      - name: Package with CMake
+        run: cd "$WORK/cmake/conformance" && "$CLI" package ${{ matrix.platform }} --source "$HUXERUI_HOME"
+
+      # ---------------------------------------------------------- the check ----
+      - name: Read the program model facts
+        run: |
+          mkdir -p "$WORK/facts"
+          scripts=.github/workflows/scripts
+          "$scripts/program_model_facts.sh" ${{ matrix.platform }} "$WORK/cmake/conformance" > "$WORK/facts/cmake-${{ matrix.platform }}.txt"
+          "$scripts/program_model_facts.sh" ${{ matrix.platform }} "$WORK/mcpp/conformance" > "$WORK/facts/mcpp-${{ matrix.platform }}.txt"
+          wc -l "$WORK"/facts/*.txt
+
+      - name: Upload the facts and both packages
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance-${{ matrix.platform }}
+          path: |
+            ${{ env.WORK }}/facts
+            ${{ env.WORK }}/cmake/conformance/dist
+            ${{ env.WORK }}/mcpp/conformance/dist
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Compare the program models
+        run: |
+          .github/workflows/scripts/compare_program_model.sh docs/design/build-systems-spec.md \
+            "$WORK/facts/cmake-${{ matrix.platform }}.txt" "$WORK/facts/mcpp-${{ matrix.platform }}.txt"

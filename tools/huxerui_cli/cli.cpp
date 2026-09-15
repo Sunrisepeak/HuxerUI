@@ -232,6 +232,8 @@ bool PrintEnvironmentDiagnostics(std::span<const EnvironmentDiagnostic> diagnost
 }
 
 void ExecuteCommands(std::span<const ProcessCommand> commands, std::ostream& output);
+void PublishPackageArtifacts(std::span<const PackageArtifact> artifacts, const std::filesystem::path& destination,
+                             std::ostream& output);
 
 std::vector<SetupAction> PlanCommonSetup(std::span<const EnvironmentDiagnostic> diagnostics) {
   std::vector<SetupAction> actions;
@@ -1028,10 +1030,6 @@ McppTarget McppTargetFor(std::string_view platform_id, BuildOptions& options, st
       output << "Device: " << options.selected_device->id << '\n';
     }
   }
-  if (physical && platform_id == "ios") {
-    // `aarch64-ios` links but has no runner: the mcpp path installs on simulators only.
-    throw UsageError("--device names a physical iOS device; the mcpp path installs on simulators only");
-  }
   const McppTarget target = ResolveMcppTarget(platform_id, physical, McppHostArchitecture());
   if (target.triple.empty()) {
     throw std::runtime_error("no mcpp target row for platform " + std::string(platform_id));
@@ -1085,10 +1083,40 @@ int RunMcppApplication(const Project& project, BuildOptions& options, std::ostre
 int RunMcppPackage(const Project& project, BuildOptions& options, std::ostream& output) {
   RejectCMakeOnlyOptions(options);
   const bool release = options.profile == "release";
+  const std::filesystem::path home =
+      ReadEnvironmentVariable("HOME").value_or(ReadEnvironmentVariable("USERPROFILE").value_or(std::string()));
   for (const std::string& id : ResolveMcppPlatformIds(project, options, {})) {
     const McppTarget target = McppTargetFor(id, options, output);
     output << "Packaging " << id << " (" << target.pack_format << ")\n";
-    ExecuteCommands(std::vector{McppPackCommand(project.root, target, release)}, output);
+    // THE ARTIFACTS ARE THE ONES MCPP REPORTS, published where a CMake project's
+    // `huxerui package` publishes them: `dist/<platform>/`. mcpp's output still
+    // reaches the terminal as it is written; only its `Packed <path>` lines are
+    // read back.
+    const ProcessCommand pack = McppPackCommand(project.root, target, release);
+    output << "> " << DescribeProcess(pack) << '\n';
+    output.flush();
+    const ProcessResult result = RunProcessStreaming(pack, [&output](std::string_view chunk) {
+      output << chunk;
+      output.flush();
+    });
+    if (result.exit_code != 0) {
+      throw std::runtime_error("command failed with exit code " + std::to_string(result.exit_code) + ": " +
+                               DescribeProcess(pack));
+    }
+    std::vector<PackageArtifact> artifacts;
+    for (const std::filesystem::path& artifact : McppPackedArtifacts(result.output, project.root, home)) {
+      // The Web format reports its static directory; CMake publishes the files in it, so its entries are
+      // the artifacts. Every other format's artifact is one file or one bundle directory.
+      if (target.pack_format == "web" && std::filesystem::is_directory(artifact)) {
+        for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(artifact)) {
+          artifacts.push_back({entry.path(), entry.path().filename()});
+        }
+        continue;
+      }
+      artifacts.push_back({artifact, artifact.filename()});
+    }
+    std::ranges::sort(artifacts, {}, &PackageArtifact::destination);
+    PublishPackageArtifacts(artifacts, project.root / "dist" / id, output);
   }
   return 0;
 }

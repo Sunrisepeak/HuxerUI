@@ -1,10 +1,10 @@
-# c++23 because this graph compiles the macOS and iOS rows' C++ standard
-# library (`llvm.libcxx`, below), whose sources need it, and a module graph has
-# one standard (mcpp-community/mcpp#641). HuxerUI itself is C++20.
+# c++20, the standard HuxerUI and a CMake application build at. The macOS and
+# iOS rows' C++ standard library (`llvm.libcxx`, below) states c++23 itself and
+# compiles its own sources at that level (mcpp 2026.9.15.2, mcpp#641).
 [package]
 name        = "huxerui-example-import"
 version     = "0.1.0"
-standard    = "c++23"
+standard    = "c++20"
 platforms   = ["linux", "windows", "macos", "ios", "android", "emscripten"]
 description = "The smallest HuxerUI application mcpp can build"
 
@@ -18,9 +18,9 @@ huxerui.huxerui = { path = "../../..", features = ["profiling"] }
 # The C++ standard library of the macOS and iOS rows, compiled for this
 # application's own floors: on macOS it keeps the 12.0 floor CMake builds for
 # (the toolchain's libc++ is built for 14.0), and on iOS it is the libc++ whose
-# objects match its headers. It needs the graph at c++23, above.
+# objects match its headers.
 [target.'cfg(any(os = "macos", os = "ios"))'.dependencies]
-llvm.libcxx = "22.1.8.2"
+llvm.libcxx = "22.1.8.3"
 
 [targets.huxerui_example_import]
 # `app`: an executable on the desktop rows, a `.js` launcher on the Web, the

@@ -2,9 +2,13 @@
 <!-- The manifest huxerui.rules hands dist-apk for a HuxerUI application.
 
      The six tokens are the values only the build knows; everything else is
-     the same document the CMake-path templates carry. An application that needs
-     more (permissions, URL schemes, a notification receiver) copies this
-     file into its tree and names it with `.android = { .manifest_template }`.
+     the application manifest of the SDK's Gradle template
+     (tools/huxerui_cli/templates/platform/android/app/app/src/main), which a
+     CMake project's `huxerui create` writes: no permission, the same
+     <application> and <activity> attributes. An application that needs more
+     (the INTERNET permission HttpClient uses, URL schemes, a notification
+     receiver) copies this file into its tree and names it with
+     `.android = { .manifest_template }`, as a Gradle project edits its own.
 
      The launcher activity is the application's own `<application id>.MainActivity`,
      a subclass the rule generates that loads the application's shared object,
@@ -16,10 +20,8 @@
     android:versionName="{{version_name}}"
     android:versionCode="{{version_code}}">
     <uses-sdk android:minSdkVersion="{{min_sdk}}" android:targetSdkVersion="{{target_sdk}}"/>
-    <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:allowBackup="true"
-        android:enableOnBackInvokedCallback="true"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
         android:label="{{label}}"

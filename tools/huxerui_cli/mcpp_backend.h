@@ -27,6 +27,9 @@ struct McppTarget {
   /// The target rows `mcpp pack` combines into that one artifact. The Android APK carries
   /// every ABI the Gradle template builds; every other platform packs its own row.
   std::vector<std::string> pack_triples;
+  /// The root-package features `mcpp pack` names. `windows-installer` on Windows: it builds the
+  /// Setup.exe's installer interface, which CMake also builds for a package build only.
+  std::vector<std::string> pack_features;
 };
 
 /// The architecture segment of the host's own triple.
@@ -48,17 +51,24 @@ struct McppTarget {
 /// Renders `[package] platforms` for a set of CLI platforms, in mcpp's own vocabulary.
 [[nodiscard]] std::string McppPlatformsLine(std::span<const std::string> platform_ids);
 
-/// `mcpp build --target <triple>`.
+/// `mcpp build --target <triple> --profile <dev|release>`.
 [[nodiscard]] ProcessCommand McppBuildCommand(const std::filesystem::path& root, const McppTarget& target, bool release);
-/// `mcpp run --target <triple> [--format <run format>]`.
+/// `mcpp run --target <triple> [--format <run format>] --profile <dev|release>`.
 [[nodiscard]] ProcessCommand McppRunCommand(const std::filesystem::path& root, const McppTarget& target, bool release);
 
 /// The environment a selected device reaches the row's runner through: `ANDROID_SERIAL` for `adb-run`,
-/// `SIMCTL_RUN_UDID` for `simctl-run`; empty for a row without a device or when no device was selected.
+/// `SIMCTL_RUN_UDID` for `simctl-run`, `DEVICECTL_RUN_DEVICE` for `devicectl-run` on the iOS device row;
+/// empty for a row without a device or when no device was selected.
 [[nodiscard]] std::vector<std::pair<std::string, std::string>> McppRunEnvironment(const McppTarget& target,
                                                                                    std::string_view device_id);
-/// `mcpp pack --target <triple>... --format <pack format>`.
+/// `mcpp pack --target <triple>... --format <pack format> [--features <pack features>] --profile <dev|release>`.
 [[nodiscard]] ProcessCommand McppPackCommand(const std::filesystem::path& root, const McppTarget& target, bool release);
+/// The artifacts `mcpp pack` reports on its `Packed <path>` lines, resolved against the package root
+/// (a path mcpp shortens to `~/...` is resolved against `home`). A multi-row pack's `Packed leg` lines
+/// name intermediate rows and are not artifacts.
+[[nodiscard]] std::vector<std::filesystem::path> McppPackedArtifacts(std::string_view output,
+                                                                     const std::filesystem::path& root,
+                                                                     const std::filesystem::path& home);
 /// The directory `mcpp pack --format web` writes.
 [[nodiscard]] std::filesystem::path McppWebOutputDirectory(const std::filesystem::path& root);
 

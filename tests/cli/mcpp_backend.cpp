@@ -63,26 +63,48 @@ TEST_CASE("HuxerUICliBuildsMcppCommandsFromATarget") {
   const auto android = ResolveMcppTarget("android", false, "x86_64");
   const auto build = McppBuildCommand("/p", android, false);
   REQUIRE(build.executable == "mcpp");
-  REQUIRE(build.arguments == std::vector<std::string>{"build", "--target", "x86_64-linux-android"});
+  REQUIRE(build.arguments == std::vector<std::string>{"build", "--target", "x86_64-linux-android", "--profile", "dev"});
   REQUIRE(build.working_directory == std::filesystem::path("/p"));
-  REQUIRE(McppBuildCommand("/p", android, true).arguments.back() == "--release");
+  REQUIRE(McppBuildCommand("/p", android, true).arguments.back() == "release");
   // An APK is what the runner installs, so the run packages first.
   REQUIRE(McppRunCommand("/p", android, false).arguments ==
-          std::vector<std::string>{"run", "--target", "x86_64-linux-android", "--format", "apk"});
+          std::vector<std::string>{"run", "--target", "x86_64-linux-android", "--format", "apk", "--profile", "dev"});
+  // A debug package names its profile: `mcpp pack` alone is a release pack, and it has no `--release`.
   REQUIRE(McppPackCommand("/p", android, false).arguments ==
           std::vector<std::string>{"pack", "--target", "aarch64-linux-android", "--target", "x86_64-linux-android",
-                                   "--format", "apk"});
+                                   "--format", "apk", "--profile", "dev"});
   const auto linux = ResolveMcppTarget("linux", false, "x86_64");
-  REQUIRE(McppRunCommand("/p", linux, false).arguments == std::vector<std::string>{"run", "--target", "x86_64-linux-gnu"});
+  REQUIRE(McppRunCommand("/p", linux, false).arguments ==
+          std::vector<std::string>{"run", "--target", "x86_64-linux-gnu", "--profile", "dev"});
   REQUIRE(McppPackCommand("/p", linux, true).arguments ==
-          std::vector<std::string>{"pack", "--target", "x86_64-linux-gnu", "--format", "appimage", "--release"});
+          std::vector<std::string>{"pack", "--target", "x86_64-linux-gnu", "--format", "appimage", "--profile", "release"});
   const auto macos = ResolveMcppTarget("macos", false, "aarch64");
   REQUIRE(McppRunCommand("/p", macos, false).arguments ==
-          std::vector<std::string>{"run", "--target", "aarch64-macos", "--format", "app"});
+          std::vector<std::string>{"run", "--target", "aarch64-macos", "--format", "app", "--profile", "dev"});
   REQUIRE(McppPackCommand("/p", macos, false).arguments ==
-          std::vector<std::string>{"pack", "--target", "aarch64-macos", "--format", "dmg"});
+          std::vector<std::string>{"pack", "--target", "aarch64-macos", "--format", "dmg", "--profile", "dev"});
+  // The Setup.exe's installer interface is built only for a pack, as CMake builds it for a package build.
   REQUIRE(McppPackCommand("/p", ResolveMcppTarget("windows", false, "x86_64"), false).arguments ==
-          std::vector<std::string>{"pack", "--target", "x86_64-windows-msvc", "--format", "setup"});
+          std::vector<std::string>{"pack", "--target", "x86_64-windows-msvc", "--format", "setup",
+                                   "--features", "windows-installer", "--profile", "dev"});
+}
+
+TEST_CASE("HuxerUICliReadsTheArtifactsAnMcppPackReports") {
+  const std::filesystem::path root = std::filesystem::current_path() / "p";
+  const std::filesystem::path home = std::filesystem::current_path() / "home";
+  const std::filesystem::path elsewhere = std::filesystem::current_path() / "abs" / "app.AppImage";
+  const std::string output = "   Compiling app v0.1.0 (.)\n"
+                             "  Packed leg x86_64-linux-android  [x86_64]\n"
+                             "      Packed target/.build-mcpp/out/app.apk\r\n"
+                             "      Packed ~/elsewhere/app.dmg\n"
+                             "      Packed " + elsewhere.generic_string() + "\n"
+                             "    Finished release\n";
+  const auto artifacts = huxerui::cli::McppPackedArtifacts(output, root, home);
+  REQUIRE(artifacts == std::vector<std::filesystem::path>{
+                           (root / "target/.build-mcpp/out/app.apk").lexically_normal(),
+                           (home / "elsewhere/app.dmg").lexically_normal(),
+                           elsewhere.lexically_normal()});
+  REQUIRE(huxerui::cli::McppPackedArtifacts("nothing packed\n", root, home).empty());
 }
 
 TEST_CASE("HuxerUICliHandsTheSelectedDeviceToTheRunner") {
@@ -91,6 +113,10 @@ TEST_CASE("HuxerUICliHandsTheSelectedDeviceToTheRunner") {
   REQUIRE(McppRunEnvironment(android, "emulator-5554") == Environment{{"ANDROID_SERIAL", "emulator-5554"}});
   const auto ios = ResolveMcppTarget("ios", false, "aarch64");
   REQUIRE(McppRunEnvironment(ios, "1234-ABCD") == Environment{{"SIMCTL_RUN_UDID", "1234-ABCD"}});
+  // A physical iOS device selects the device row, whose runner is devicectl-run.
+  const auto device = ResolveMcppTarget("ios", true, "aarch64");
+  REQUIRE(device.triple == "aarch64-ios");
+  REQUIRE(McppRunEnvironment(device, "00008110-ABCD") == Environment{{"DEVICECTL_RUN_DEVICE", "00008110-ABCD"}});
   // No device selected: nothing is set, so the runner's own default applies.
   REQUIRE(McppRunEnvironment(android, "").empty());
   // A desktop row has no device to select.
@@ -142,6 +168,34 @@ TEST_CASE("HuxerUICliDoctorLeavesAnMcppProjectsToolchainsToMcpp") {
   REQUIRE(android.result == 1);
   REQUIRE(android.output.find("[error] platform is not enabled by this project: android") != std::string::npos);
 }
+
+#if !defined(_WIN32)
+TEST_CASE("HuxerUICliPublishesAnMcppPackageWhereCMakePublishesOne") {
+  TemporaryDirectory temporary;
+  const std::filesystem::path root = temporary.Path() / "sample";
+  const std::filesystem::path bin = temporary.Path() / "bin";
+  std::filesystem::create_directories(root);
+  std::filesystem::create_directories(bin);
+  Write(root / "mcpp.toml", "[package]\nname = \"sample\"\nplatforms = [\"linux\"]\n");
+  Write(root / "build.mcpp", "int main() { return 0; }\n");
+  // A stand-in for `mcpp pack`: it writes the artifact where a dist member would and reports it the way mcpp does.
+  const std::filesystem::path fake = bin / "mcpp";
+  Write(fake, "#!/bin/sh\n"
+              "mkdir -p target/.build-mcpp/out\n"
+              "printf 'appimage' > target/.build-mcpp/out/sample-x86_64.AppImage\n"
+              "echo '   Compiling sample v0.1.0 (.)'\n"
+              "echo '      Packed target/.build-mcpp/out/sample-x86_64.AppImage'\n");
+  std::filesystem::permissions(fake, std::filesystem::perms::owner_all);
+  const std::string path = huxerui::cli::ReadEnvironmentVariable("PATH").value_or("");
+  huxerui::cli::SetProcessEnvironmentVariable("PATH", bin.string() + ":" + path);
+  const Invocation package = Invoke(root, {"package", "linux"});
+  huxerui::cli::SetProcessEnvironmentVariable("PATH", path);
+
+  REQUIRE(package.result == 0);
+  REQUIRE(package.output.find("Packed target/.build-mcpp/out/sample-x86_64.AppImage") != std::string::npos);
+  REQUIRE(Read(root / "dist" / "linux" / "sample-x86_64.AppImage") == "appimage");
+}
+#endif
 
 TEST_CASE("HuxerUICliCreatesAnMcppProjectForSelectedPlatforms") {
   TemporaryDirectory temporary;

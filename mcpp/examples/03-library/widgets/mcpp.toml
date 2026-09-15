@@ -1,10 +1,9 @@
-# c++23, the standard of the applications this library is built into: their
-# graph compiles the macOS and iOS rows' C++ standard library, which needs it,
-# and a module graph has one standard (mcpp-community/mcpp#641).
+# c++20, the standard of HuxerUI and of the applications this library is built
+# into.
 [package]
 name        = "example-widgets"
 version     = "0.1.0"
-standard    = "c++23"
+standard    = "c++20"
 description = "A HuxerUI component library, consumed as a module"
 
 # The identity the framework's manifest declares, which the application uses

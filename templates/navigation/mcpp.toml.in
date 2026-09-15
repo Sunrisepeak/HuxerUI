@@ -1,10 +1,10 @@
-# c++23 because this graph compiles the macOS and iOS rows' C++ standard
-# library (`llvm.libcxx`, below), whose sources need it, and a module graph has
-# one standard (mcpp-community/mcpp#641). HuxerUI itself is C++20.
+# c++20, the standard HuxerUI and a CMake application build at. The macOS and
+# iOS rows' C++ standard library (`llvm.libcxx`, below) states c++23 itself and
+# compiles its own sources at that level (mcpp 2026.9.15.2, mcpp#641).
 [package]
 name     = "{{project.name}}"
 version  = "0.1.0"
-standard = "c++23"
+standard = "c++20"
 platforms = ["linux", "windows", "macos", "ios", "android", "emscripten"]
 
 # The EXACT package identity, not a bare name: namespace omission means
@@ -17,9 +17,9 @@ platforms = ["linux", "windows", "macos", "ios", "android", "emscripten"]
 # The C++ standard library of the macOS and iOS rows, compiled for this
 # application's own floors: on macOS it keeps the 12.0 floor CMake builds for
 # (the toolchain's libc++ is built for 14.0), and on iOS it is the libc++ whose
-# objects match its headers. It needs the graph at c++23, above.
+# objects match its headers.
 [target.'cfg(any(os = "macos", os = "ios"))'.dependencies]
-llvm.libcxx = "22.1.8.2"
+llvm.libcxx = "22.1.8.3"
 
 [targets.{{project.name}}]
 # `app`: an executable on the desktop rows, the shared object the Java host
@@ -29,11 +29,15 @@ main = "src/main.cpp"
 # No console window behind the application on Windows; inert elsewhere.
 windows_subsystem = "windows"
 
-# The interface this application's Setup.exe runs (windows/installer), built as
-# a host tool on the Windows rows -- once, then cached -- for
-# `mcpp pack --format setup`, as CMake builds `<target>-Installer.exe` for a
-# package build.
-[target.'cfg(os = "windows")'.build-dependencies]
+# The interface this application's Setup.exe runs (windows/installer): a host
+# tool of the Windows rows, built only when a build names the
+# `windows-installer` feature -- `huxerui package windows` does, through
+# `mcpp pack --format setup --features windows-installer` -- as CMake builds
+# `<target>-Installer.exe` for a package build only.
+[features]
+windows-installer = []
+
+[target.'cfg(os = "windows")'.feature-deps.windows-installer]
 installer = { path = "windows/installer", tools = ["{{project.name}}-Installer"] }
 
 [build]

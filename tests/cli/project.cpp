@@ -67,10 +67,10 @@ TEST_CASE("HuxerUICliCreatesMcppProjects") {
   REQUIRE(manifest.find("#   huxerui.huxerui = ") != std::string::npos);
   // Commented out, not active -- two [dependencies] entries would be one too many.
   REQUIRE(manifest.find("\nhuxerui.huxerui = \"") == std::string::npos);
-  // The floors CMake builds HuxerUI applications for. The standard is c++23
-  // because the graph compiles the Apple rows' standard library, which the
-  // manifest declares itself.
-  REQUIRE(manifest.find("standard = \"c++23\"") != std::string::npos);
+  // The floors and the standard CMake builds HuxerUI applications at. The Apple
+  // rows' standard library, which the manifest declares itself, states its own.
+  REQUIRE(manifest.find("standard = \"c++20\"") != std::string::npos);
+
   REQUIRE(manifest.find("[target.'cfg(any(os = \"macos\", os = \"ios\"))'.dependencies]\nllvm.libcxx = \"") !=
           std::string::npos);
   REQUIRE(manifest.find("macos_deployment_target = \"12.0\"") != std::string::npos);
@@ -82,8 +82,10 @@ TEST_CASE("HuxerUICliCreatesMcppProjects") {
   REQUIRE(build_program.find(".bundle_identifier = \"com.example.sampleapp\"") != std::string::npos);
 
   // The Setup.exe's interface is a package of its own, a host tool of the
-  // Windows rows; its HuxerUI dependency names the same checkout.
-  REQUIRE(manifest.find("[target.'cfg(os = \"windows\")'.build-dependencies]") != std::string::npos);
+  // Windows rows requested by the `windows-installer` feature; its HuxerUI
+  // dependency names the same checkout.
+  REQUIRE(manifest.find("[features]\nwindows-installer = []") != std::string::npos);
+  REQUIRE(manifest.find("[target.'cfg(os = \"windows\")'.feature-deps.windows-installer]") != std::string::npos);
   REQUIRE(manifest.find("installer = { path = \"windows/installer\", tools = [\"Sample-App-Installer\"] }") !=
           std::string::npos);
   const std::string installer_manifest = Read(project / "windows/installer/mcpp.toml");
@@ -152,6 +154,10 @@ TEST_CASE("HuxerUICliCreatesMcppLibraries") {
   REQUIRE(manifest.find("kind = \"lib\"") != std::string::npos);
   REQUIRE(manifest.find("path = \"src/component.cppm\"") != std::string::npos);
   REQUIRE(Read(project / "src/component.cppm").find("export module component;") != std::string::npos);
+  // Resources, as the CMake library template carries them, compiled by the library's build program and merged
+  // into the resource package of an application that depends on it.
+  REQUIRE(Read(project / "resources/strings/default.properties") == "library_name = \"my-widgets\"\n");
+  REQUIRE(Read(project / "build.mcpp").find(".resources = \"resources\"") != std::string::npos);
 }
 
 TEST_CASE("HuxerUICliRejectsUnsupportedBuildSystems") {
