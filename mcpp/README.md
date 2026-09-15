@@ -115,16 +115,17 @@ mcpp build --target x86_64-linux-android
 
 NDK, emsdk, JDK, simulator and emulator tooling are xlings payloads mcpp
 installs on first use; iOS additionally needs Xcode on the machine, because
-Apple's SDK is located rather than installed. **Floor: mcpp 2026.9.14.3 and
-`mcpp:plugins` 0.10.1** — the framework states its Android form per row
+Apple's SDK is located rather than installed. **Floor: mcpp 2026.9.15.2 and
+`mcpp:plugins` 0.11.1** — the framework states its Android form per row
 (`[target.<row>.targets.huxerui] kind = "shared"`) and its platform floors as
 `version-floor` requirements, the test suites are packages with `[test]
-discover`, and the distribution members read the closure the engine stages;
-none of that exists below those releases. On macOS and iOS an application
-builds its own C++ standard library (`llvm.libcxx`, at c++23, which is why the
-templates state that standard); install LLVM 22.1.8 once first
-(`mcpp toolchain install llvm 22.1.8`), because a home without any LLVM
-resolves that package's compiler requirement to a version that does not exist
+discover`, the distribution members read the closure the engine stages and
+take the platform code, metadata and signing of the
+[specification's extension points](../docs/design/build-systems-spec.md#3-developer-extension-points),
+and `mcpp pack --features` builds the Windows installer interface for a package
+only; none of that exists below those releases. On macOS and iOS an application
+builds its own C++ standard library (`llvm.libcxx` 22.1.8.3), which states the
+c++23 its sources need, so the application stays at c++20
 (mcpp-community/mcpp#641).
 
 ## Distribution formats

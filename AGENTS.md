@@ -282,10 +282,12 @@ change to them may alter what CMake compiles.
   macro name: `hcg` injects the expansion of `HUXERUI_SCOPE`, which is also
   what hand-written module code should spell.
 - An mcpp application contains no `#include`. `import std;` is what makes
-  `std::type_info` visible to a caller that instantiates `typeid`, and the
-  `standard = "c++23"` pin that goes with it is a workaround for
-  [mcpp#603](https://github.com/mcpp-community/mcpp/issues/603), not a language
-  requirement — one line per manifest changes back when that closes.
+  `std::type_info` visible to a caller that instantiates `typeid`, at
+  `standard = "c++20"` like the rest of the project.
+- CMake and mcpp produce the same program by default. A change to what a
+  default build produces changes `docs/design/build-systems-spec.md`, both build
+  systems, and the conformance facts together; the conformance workflow fails
+  on a difference the specification does not list.
 - A change to the framework's sources, defines or platform link interface must
   be made in `mcpp.toml` as well as in `cmake/`. `huxerui-build-check` compares
   the two and names what is missing.

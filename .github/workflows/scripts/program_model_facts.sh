@@ -282,7 +282,9 @@ PY
     plist="$app/Contents/Info.plist"
     plist_facts "$plist" > "$work/macos.txt"
     facts_from "$work/macos.txt"
-    exe="$app/Contents/MacOS/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$plist")"
+    # Without CFBundleExecutable the system runs the executable named after the bundle.
+    exe_name=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$plist" 2>/dev/null || basename "$app" .app)
+    exe="$app/Contents/MacOS/$exe_name"
     icon_file=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$plist" 2>/dev/null || true)
     if [ -n "$icon_file" ]; then
       icon="$app/Contents/Resources/$icon_file"
@@ -312,7 +314,8 @@ PY
     plist_facts "$app/Info.plist" > "$work/ios.txt"
     facts_from "$work/ios.txt"
     fact icon.container "$([ -f "$app/Assets.car" ] && echo asset-catalog || echo png)"
-    exe="$app/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Info.plist")"
+    exe_name=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Info.plist" 2>/dev/null || basename "$app" .app)
+    exe="$app/$exe_name"
     otool -L "$exe" > "$work/libs.txt"
     fact runtime.libcxx "$(grep -q 'libc++' "$work/libs.txt" && echo system || echo static)"
     fact framework.linkage "$(grep -q 'libhuxerui' "$work/libs.txt" && echo shared || echo static)"
@@ -326,11 +329,90 @@ PY
     fact artifact.kind setup
     fact artifact.count "$(artifacts '*' | wc -l | tr -d ' ')"
     fact artifact.name "$(basename "$setup")"
-    if command -v wix >/dev/null 2>&1; then
-      wix burn extract "$setup" -oba "$work/ba" -o "$work/payloads" >/dev/null
-      fact bundle.interface "$(find "$work/ba" -type f -iname '*-Installer.exe' | wc -l | tr -d ' ')"
-      fact bundle.mbanative "$(find "$work/ba" -type f -iname 'mbanative.dll' | wc -l | tr -d ' ')"
-      fact bundle.msi "$(find "$work/payloads" -type f -iname '*.msi' | wc -l | tr -d ' ')"
+    winpath() { if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"; else printf '%s' "$1"; fi; }
+    python=$(command -v python || command -v python3)
+    # The interface container and the manifest that names its payloads, read with 7-Zip.
+    mkdir -p "$work/ux"
+    (cd "$work/ux" && 7z x -y "$(winpath "$setup")" > /dev/null)
+    [ -f "$work/ux/0" ] || { echo "7-Zip found no Burn manifest in $setup" >&2; exit 1; }
+    "$python" - "$work/ux" > "$work/bundle.txt" <<'PY'
+import hashlib, os, sys, xml.etree.ElementTree as ET
+ux = sys.argv[1]
+root = ET.fromstring(open(os.path.join(ux, "0"), "rb").read().decode("utf-8-sig"))
+tag = lambda e: e.tag.split("}")[1]
+for el in root:
+    t = tag(el)
+    if t == "Variable":
+        print(f"bundle.variable.{el.get('Id')}={el.get('Value')}")
+    elif t == "RelatedBundle":
+        print(f"bundle.upgrade_code={el.get('Id')}")
+    elif t == "Registration":
+        print(f"bundle.registration.executable={el.get('ExecutableName')}")
+        print(f"bundle.registration.per_machine={el.get('PerMachine')}")
+        print(f"bundle.registration.version={el.get('Version')}")
+    elif t == "UX":
+        # A payload's content where the program reads it (its resources); a
+        # program, a library or a generated data file only by its presence.
+        for payload in el:
+            path = payload.get("FilePath").replace("\\", "/")
+            source = os.path.join(ux, payload.get("SourcePath"))
+            value = "present"
+            if ".resources/" in path:
+                value = hashlib.sha256(open(source, "rb").read()).hexdigest()
+            print(f"bundle.payload.{path}={value}")
+    elif t == "Chain":
+        for package in el:
+            if tag(package) != "MsiPackage":
+                continue
+            print(f"bundle.msi.upgrade_code={package.get('UpgradeCode')}")
+            print(f"bundle.msi.version={package.get('Version')}")
+            for child in package:
+                if tag(child) == "MsiProperty":
+                    print(f"bundle.msi.property.{child.get('Id')}={child.get('Value')}")
+                elif tag(child) == "Provides":
+                    print(f"bundle.msi.display_name={child.get('DisplayName')}")
+PY
+    facts_from "$work/bundle.txt"
+    # The MSI the bundle chains, taken out by WiX and installed administratively,
+    # which lays its files out without registering anything.
+    wix=$(command -v wix 2>/dev/null || { find "$HOME/.mcpp/registry/data/xpkgs" -iname wix.exe -type f 2>/dev/null || true; } | LC_ALL=C sort | tail -1)
+    if [ -n "$wix" ]; then
+      "$wix" burn extract "$(winpath "$setup")" -o "$(winpath "$work/payloads")" > /dev/null
+      msi="$work/product.msi"
+      cp "$(find "$work/payloads" -type f | head -1)" "$msi"
+      "$wix" msi decompile "$(winpath "$msi")" -o "$(winpath "$work/product.wxs")" > /dev/null
+      printf '%s\n' "Start-Process msiexec.exe -Wait -ArgumentList @('/a', '\"$(winpath "$msi")\"', '/qn', 'TARGETDIR=\"$(winpath "$work/image")\"')" > "$work/admin.ps1"
+      powershell -NoProfile -ExecutionPolicy Bypass -File "$(winpath "$work/admin.ps1")"
+      "$python" - "$work/product.wxs" "$work/image" > "$work/msi.txt" <<'PY'
+import hashlib, os, sys, xml.etree.ElementTree as ET
+root = ET.parse(sys.argv[1]).getroot()
+tag = lambda e: e.tag.split("}")[-1]
+for el in root.iter():
+    t = tag(el)
+    if t == "Package":
+        print(f"msi.name={el.get('Name')}")
+        print(f"msi.manufacturer={el.get('Manufacturer')}")
+        print(f"msi.scope={el.get('Scope', 'perMachine')}")
+    elif t == "Shortcut":
+        print(f"msi.shortcut.{el.get('Name')}={el.get('Directory')}")
+    elif t == "Property" and el.get("Id", "").startswith("ARP"):
+        print(f"msi.property.{el.get('Id')}={el.get('Value')}")
+# The installed files, relative to the program's folder.
+image, program = sys.argv[2], None
+for base, _, files in os.walk(image):
+    if any(f.lower().endswith(".exe") for f in files) and program is None:
+        program = base
+if program:
+    for base, _, files in os.walk(program):
+        for f in sorted(files):
+            full = os.path.join(base, f)
+            rel = os.path.relpath(full, program).replace("\\", "/")
+            if rel.lower().endswith(".msi"):
+                continue
+            value = hashlib.sha256(open(full, "rb").read()).hexdigest() if ".resources/" in rel else "present"
+            print(f"msi.file.{rel}={value}")
+PY
+      facts_from "$work/msi.txt"
     fi
     ;;
 

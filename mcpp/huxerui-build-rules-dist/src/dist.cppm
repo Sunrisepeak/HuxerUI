@@ -50,12 +50,11 @@ struct installer_interface {
 };
 
 // What an application may state about its AppImage; `dist-appimage` does the
-// rest, with a placeholder icon when none is named. The Windows counterpart
-// is installer_options above.
+// rest. The Windows counterpart is installer_options above.
 struct appimage_options {
     std::string target;                  // the [targets.*] app to package; default: options::target
     std::string display_name;            // default: the target name
-    std::string icon;                    // a .png, relative to the manifest
+    std::string icon;                    // a .png or .svg, relative to the manifest; default: the SDK template's SVG
     std::vector<std::string> categories; // freedesktop categories; default "Utility"
 };
 
@@ -64,7 +63,7 @@ struct appimage_options {
 // is a DIRECTORY of flat PNGs, which the member lists under CFBundleIcons.
 struct apple_options {
     std::string target;         // the [targets.*] app to bundle; default: options::target
-    std::string display_name;   // CFBundleName and CFBundleDisplayName; default: the target name
+    std::string display_name;   // CFBundleName and CFBundleDisplayName; default: the target name, and the project's for CFBundleDisplayName
     std::string bundle_id;      // CFBundleIdentifier; default: derived from namespace + name
     std::string icon;           // .icns (macOS) or a directory of .png (iOS), relative to the manifest
     // THE APPLICATION'S OWN Info.plist ENTRIES, a plist relative to the manifest -- usage descriptions, URL
@@ -203,7 +202,8 @@ namespace detail {
 // `systemBackgroundColor` view, which an empty `UILaunchScreen` dictionary is
 // too, with no storyboard to compile (Xcode's `ibtool` is not redistributable).
 inline std::string template_info_plist(bool ios, const std::string& display_name) {
-    std::string entries = "<key>CFBundleDisplayName</key><string>" + display_name + "</string>";
+    std::string entries = "<key>CFBundleDisplayName</key><string>" +
+                          huxerui::rules::sources::xml_escape(display_name) + "</string>";
     if (ios) {
         entries += "<key>CFBundleDevelopmentRegion</key><string>en</string>"
                    "<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>"
@@ -408,7 +408,10 @@ inline bool provide_formats(const formats& opt, const std::string& root) {
         mcpp::dist::appimage::options a;
         a.target     = target_or(opt.appimage.target);
         a.app_name   = opt.appimage.display_name;
-        a.icon       = opt.appimage.icon;
+        // The icon CMake's Linux template installs, unless the application names its own.
+        a.icon       = !opt.appimage.icon.empty()
+                     ? (std::filesystem::path(mcpp::manifest_dir()) / opt.appimage.icon).string()
+                     : root + "/tools/huxerui_cli/templates/platform/linux/app/package/@TARGET_NAME@.svg";
         a.categories = opt.appimage.categories;
         a.terminal   = false;
         // Named as `huxerui package linux` names CMake's, `<target>-<version>.AppImage`.
@@ -435,6 +438,10 @@ inline bool provide_formats(const formats& opt, const std::string& root) {
         a.identity             = opt.apple.identity;
         a.entitlements         = under_manifest(opt.apple.entitlements);
         a.provisioning_profile = under_manifest(opt.apple.provisioning_profile);
+        // The disk image is named as `huxerui package macos` names CMake's, `<target>-<version>.dmg`.
+        a.dmg = (std::filesystem::path(mcpp::out_dir()) /
+                 ((a.target.empty() ? std::string(mcpp::package_name()) : a.target) + "-" +
+                  std::string(mcpp::package_version()) + ".dmg")).string();
         // THE Info.plist: the entries CMake's template writes, with the
         // application's own merged over them. Written only when this build
         // packs a bundle; every other build only declares the formats.
@@ -451,7 +458,9 @@ inline bool provide_formats(const formats& opt, const std::string& root) {
                     return detail::refuse("huxerui.rules: the Info.plist " + application_plist + " was not found");
                 mcpp::rerun_if_changed(application_plist.c_str());
             }
-            const std::string display = !opt.apple.display_name.empty() ? opt.apple.display_name : a.target;
+            // The display name is the project's, as CMake's template writes it.
+            const std::string display = !opt.apple.display_name.empty() ? opt.apple.display_name
+                                                                         : std::string(mcpp::package_name());
             const std::filesystem::path merged =
                 std::filesystem::path(mcpp::out_dir()) / "huxerui-apple" / (ios ? "ios-Info.plist" : "macos-Info.plist");
             std::string error;

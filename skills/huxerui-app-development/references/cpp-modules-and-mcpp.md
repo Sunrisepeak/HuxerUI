@@ -31,7 +31,7 @@ windows/installer/   the interface the Windows Setup.exe runs, a package of its 
 
 ```toml
 [package]
-standard = "c++23"
+standard = "c++20"
 
 [dependencies]
 huxerui.huxerui = "0.3.0"
@@ -75,10 +75,10 @@ View Counter() {
 - **`import std;` is load-bearing.** `UseState()`, `View` and `Layout`
   instantiate `typeid` in their caller, GCC checks that per translation unit,
   and a global module fragment's includes do not reach an importer — so
-  `import huxerui;` cannot supply `<typeinfo>`. The framework is C++20; an
-  application is c++23 because its graph also compiles the macOS and iOS rows'
-  C++ standard library (`llvm.libcxx`, which the template declares), whose
-  sources need it, and a module graph has one standard.
+  `import huxerui;` cannot supply `<typeinfo>`. The framework and an
+  application are C++20; the macOS and iOS rows' C++ standard library
+  (`llvm.libcxx`, which the template declares) states the c++23 its own sources
+  need.
 - **Keep the entry empty.** `src/main.cpp` calls `RunApplication()` and nothing
   else, so it instantiates nothing and needs no imports beyond `huxerui` and
   the app module. It is also the one file `huxerui.rules` never transforms.
@@ -127,13 +127,19 @@ mcpp toolchain default llvm@22.1.8
 mcpp test --toolchain llvm@22.1.8
 ```
 
-**Keep the program model CMake's.** The framework states how it is linked on
-each row (static, and its own `libhuxerui.so` on Android), so the manifest
-names neither a `linkage` nor a runner; the platform floors (Android API 23,
-iOS 15.0, macOS 12.0) are written in the template and enforced by the
-framework; compile-time profiling is the `profiling` feature, off unless the
-dependency asks for it. The Windows Setup.exe's interface is
-`windows/installer`, a package of its own the Windows rows build as a tool.
+**Keep the program model CMake's**, as the
+[Build Systems Specification](../../../docs/design/build-systems-spec.md)
+defines it. The framework states how it is linked on each row (static, and its
+own `libhuxerui.so` on Android), so the manifest names neither a `linkage` nor a
+runner; the platform floors (Android API 23, iOS 15.0, macOS 12.0) are written
+in the template and enforced by the framework; compile-time profiling is the
+`profiling` feature, off unless the dependency asks for it. The Windows
+Setup.exe's interface is `windows/installer`, a package of its own built only
+for `huxerui package windows` (the `windows-installer` feature). Platform code
+and metadata go where the guide's
+[Platform code, metadata and dependencies](../../../docs/guide/cpp-modules-and-mcpp.md#platform-code-metadata-and-dependencies)
+says: `android/java`, `android/kotlin`, `android/res`, `ios/Info.plist`, a
+library's own `resources/` and `android/`.
 
 ## Reading further
 

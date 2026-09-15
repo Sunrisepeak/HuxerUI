@@ -45,9 +45,9 @@ built. A CMake project gets it from `#include <huxerui/huxerui.h>`; an importer
 cannot, because a global module fragment's includes do not reach whoever
 imports it. Importing `std` answers it without a header.
 
-Each example pins `standard = "c++23"` for that, and it is a workaround:
-C++20 is enough for every implementation here, but mcpp's clang-on-Windows path
-hardcodes a c++23 floor for `import std;` rather than probing the STL it found
+Each example states `standard = "c++20"`: every implementation here offers the
+std module in C++20 mode, and the c++23 floor mcpp's clang-on-Windows path once
+imposed for `import std;` is gone
 ([mcpp#603](https://github.com/mcpp-community/mcpp/issues/603)).
 
 There is no exception. `02-module-units/src/banner.cppm` writes a scope by hand

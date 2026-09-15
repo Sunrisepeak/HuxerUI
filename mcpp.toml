@@ -194,11 +194,11 @@ frameworks = ["AppKit", "Carbon"]
 #
 # THE C++ STANDARD LIBRARY OF THE APPLE ROWS IS THE APPLICATION'S, NOT THIS
 # PACKAGE'S. `llvm.libcxx` -- the libc++ an iOS program's objects match, and
-# the one that keeps macOS at the application's own 12.0 floor -- compiles its
-# sources only at c++23, and a module graph has one standard
-# (mcpp-community/mcpp#641). Declared here it would raise every consumer's
-# graph and this package's own c++20 root build with it, so the templates and
-# the examples declare it beside their `standard`.
+# the one that keeps macOS at the application's own 12.0 floor -- is chosen
+# for the application's floors, so the templates and the examples declare it.
+# 22.1.8.3 states the c++23 its own sources need, which mcpp 2026.9.15.2
+# compiles them at (mcpp-community/mcpp#641, item 2), and a c++20 application
+# takes it as it is.
 [target.'cfg(os = "ios")'.dependencies]
 llvm.compiler-rt-builtins = "22.1.8.5"
 

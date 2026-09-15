@@ -246,18 +246,18 @@ Desktop CMake build commands leave concurrency to CMake and its selected build t
 
 ### mcpp projects
 
-A project created with `--build mcpp` — `mcpp.toml` and `build.mcpp`, no `CMakeLists.txt` — is discovered like a CMake project and drives mcpp instead. Its platforms are `[package] platforms` (mcpp says `emscripten` where the CLI says `web`), and `create --platform` narrows that list rather than writing shell directories. The verbs map onto mcpp's, with a platform as a target row and a distribution format:
+A project created with `--build mcpp` — `mcpp.toml` and `build.mcpp`, no `CMakeLists.txt` — is discovered like a CMake project and drives mcpp instead. What it must produce, and the rules the CLI follows for both build systems, are the [Build Systems Specification](build-systems-spec.md)'s: one interface, the same kind of artifact in the same place, and an option that does not apply refused with the reason. Its platforms are `[package] platforms` (mcpp says `emscripten` where the CLI says `web`), and `create --platform` narrows that list rather than writing shell directories. The verbs map onto mcpp's, with a platform as a target row and a distribution format:
 
 | Platform | `build` / `run` target | `package` format |
 |---|---|---|
 | linux | the host's architecture on that OS | `appimage` |
-| windows | the host's architecture on that OS | `setup`: the Setup.exe and its installer interface, as a CMake package build produces |
+| windows | the host's architecture on that OS | `setup` with the `windows-installer` feature: the Setup.exe and its installer interface, built for the package only, as a CMake package build produces |
 | macos | the host's architecture; `run` passes `--format app` and runs the bundle | `dmg` |
 | web | `wasm32-emscripten`; `run` packs and serves the directory | `web` |
 | android | `x86_64-linux-android`, or `aarch64-linux-android` for a physical `--device`; `run` passes `--format apk`, and the selected device reaches `adb-run` as `ANDROID_SERIAL` | `apk` for both `aarch64-linux-android` and `x86_64-linux-android`, the ABIs the Gradle template builds |
-| ios | `aarch64-ios-sim`; `run` passes `--format app`, and the selected simulator reaches `simctl-run` as `SIMCTL_RUN_UDID`; a physical `--device` is refused (`aarch64-ios` links but has no runner) | `app` |
+| ios | `aarch64-ios-sim`, or `aarch64-ios` for a physical `--device`; `run` passes `--format app`, and the selected simulator reaches `simctl-run` as `SIMCTL_RUN_UDID`, a device `devicectl-run` as `DEVICECTL_RUN_DEVICE` | `app` |
 
-`--profile release` is `mcpp --release`. `--generator`, `--java-home` and `--source` are refused with the reason: the toolchain, the JDK and the HuxerUI dependency are mcpp's, a payload's and the manifest's. `platform add` adds the rows to `[package] platforms`. `doctor` stays read-only: it reports the `mcpp` executable and whether the requested platforms are enabled, and points at `mcpp self doctor` without running it, because inside a package that command resolves the build and can install a toolchain. `setup` installs the CMake path's platform tools; an mcpp project's payloads arrive on first use. The CMake platform drivers are not involved and are unchanged; the mapping is `tools/huxerui_cli/mcpp_backend.cpp`.
+`package` publishes what `mcpp pack` reports on its `Packed` lines to `dist/<platform>/`, where a CMake project's `package` publishes. `--profile` is passed on as `mcpp --profile dev|release`, named every time because `mcpp pack` builds release unless told otherwise. `--generator`, `--java-home` and `--source` are refused with the reason: the toolchain, the JDK and the HuxerUI dependency are mcpp's, a payload's and the manifest's. `platform add` adds the rows to `[package] platforms`. `doctor` stays read-only: it reports the `mcpp` executable and whether the requested platforms are enabled, and points at `mcpp self doctor` without running it, because inside a package that command resolves the build and can install a toolchain. `setup` installs the CMake path's platform tools; an mcpp project's payloads arrive on first use. The CMake platform drivers are not involved and are unchanged; the mapping is `tools/huxerui_cli/mcpp_backend.cpp`.
 
 ### Create and platform add
 

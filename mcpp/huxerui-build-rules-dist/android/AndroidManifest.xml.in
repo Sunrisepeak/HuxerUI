@@ -14,7 +14,9 @@
      a subclass the rule generates that loads the application's shared object,
      exactly as a Gradle project's does; the framework's Java is the same under
      both build systems. `version_name` / `version_code` come from
-     `[package] version`. -->
+     `[package] version`. `android:extractNativeLibs="false"` is what the
+     Android Gradle plugin writes into the manifest it packages from minSdk 23:
+     the libraries are loaded from the APK in place, stored uncompressed. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="{{application_id}}"
     android:versionName="{{version_name}}"
@@ -22,6 +24,7 @@
     <uses-sdk android:minSdkVersion="{{min_sdk}}" android:targetSdkVersion="{{target_sdk}}"/>
     <application
         android:allowBackup="true"
+        android:extractNativeLibs="false"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
         android:label="{{label}}"

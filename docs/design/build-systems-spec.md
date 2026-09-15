@@ -37,11 +37,14 @@ Every build system must produce this for a default build.
 | Resource location | `<executable>.resources/` on Linux and Windows, `Contents/Resources/HuxerUI` on macOS, the bundle root on iOS, `assets/` on Android, the preloaded file system on the Web. |
 | Platform floors | Android API 23, iOS 15.0, macOS 12.0. |
 | Profiling | Off in an SDK application. |
-| Application identity | The bundle identifier and the Android application id come from `--id`; the display name from the project name. |
-| Android manifest | The SDK application template's: no permission, and its `<application>` and `<activity>` attributes. |
+| Application identity | The bundle identifier, the Android application id and the Web page's storage key come from `--id`; the display name from the project name. |
+| Icons | The SDK templates': the Linux SVG, the macOS `.icns`, the iOS icon set, the Android launcher set, and the Web favicon and touch icon. |
+| Android manifest | The SDK application template's as the Android Gradle plugin packages it: no permission, its `<application>` and `<activity>` attributes, and `android:extractNativeLibs="false"`. |
+| Android code | The launcher `<id>.MainActivity`, which loads the application's library through `BuildConfig`, and `BuildConfig` with the variant's fields. |
+| Android native libraries | Stripped of their symbol tables and debug information, stored uncompressed and aligned to 16 KB pages. |
 | Apple Info.plist | The SDK application template's entries: the display name on both platforms; on iOS a launch screen, the development region, the dictionary version and the supported orientations (iPhone: portrait and both landscapes; iPad: all four). |
 | Windows | The GUI subsystem with a `main()` entry; the installer is a Burn Setup.exe chaining the MSI, whose interface is the application's own installer program, built for a package build only. |
-| Package artifacts | An AppImage, a Setup.exe, a DMG, one APK for the template's two ABIs, an iOS `.app` and a Web directory, published to `dist/<platform>/`. |
+| Package artifacts | An AppImage (`<target>-<version>.AppImage`), a Setup.exe, a DMG, one APK for the template's two ABIs, an iOS `.app` and a Web directory, published to `dist/<platform>/`. |
 | Signing | Android: a release package is unsigned and a debug package is signed with the Android debug key; macOS: signed ad hoc; the iOS simulator and Windows: not signed. |
 | Library template | Carries `resources/` with its strings. |
 | Test suites | unit, runtime, ui and smoke. |
@@ -55,7 +58,7 @@ A row whose support is incomplete names what is missing and where it is tracked.
 |---|---|---|
 | Application Java | Gradle project | `android/java` |
 | Application manifest and `res/` | Gradle project | `.android.manifest_template`, `android/res` |
-| Resources from code (R classes) | Gradle | Generated when the package has code |
+| Resources from code (R classes), `BuildConfig` | Gradle | Generated when the package has code; `BuildConfig` always |
 | Application Kotlin | Gradle Kotlin plugin | `android/kotlin`, with the framework's `android-kotlin` feature |
 | Info.plist entries | Xcode project, `Info.plist.in` | `ios/Info.plist`, `macos/Info.plist` |
 | Signing: identity, entitlements, keystore | Xcode and Gradle configuration | `.apple.identity`, `.apple.entitlements`, `.android.keystore` |
@@ -88,6 +91,10 @@ ios.plist.launch_screen_form                 Xcode compiles the template's Launc
 ios.icon.container                           Xcode compiles an asset catalog; mcpp lists flat PNGs under CFBundleIcons, because actool is not redistributable
 ios.plist.CFBundleVersion                    the Xcode template writes 1; mcpp takes [package] version
 macos.plist.CFBundle*Version                 the macOS template writes none; mcpp takes [package] version
+macos.plist.CFBundleExecutable               dist-apple names the executable; CMake's template leaves the system to find the one named after the bundle, the same file
+macos.plist.NSHighResolutionCapable          dist-apple states it true, and a project's Info.plist can change the value but not remove the key; CMake's template states none, and whether a CMake bundle renders at full resolution without it is not measured
+windows.*.msvcp140*.dll                      CMake links the MSVC runtime as DLLs and installs them beside each program; mcpp links it into the program, so there is none to install
+windows.*.vcruntime140*.dll                  the same: the MSVC runtime is in the program under mcpp
 android.version.*                            the Gradle template writes 1.0 and 1; mcpp takes [package] version, one source for every platform
 android.artifact.name                        Gradle names the APK after its module and variant (app-release-unsigned.apk); dist-apk names it after the target
 android.dex.class.org.huxerui.R              Gradle generates an R class for the framework's library module, which has no resources; nothing reads it
@@ -125,6 +132,10 @@ A capability one build system has and another does not is allowed when it is ena
   2. `program_model_facts.sh` reads each artifact into sorted `<platform>.<fact>=<value>` lines.
   3. `compare_program_model.sh` fails on a difference §4 does not allow.
   4. Linux, Web and Android run on pull requests; every platform runs weekly and on request.
+- **What the check does not cover:**
+  - The two templates demonstrate different code, so the mcpp project takes the CMake project's `resources/`; the resource package then compares the build systems.
+  - The CMake project builds the framework from the checkout (`--source`), which compiles profiling in as the repository's own build does, so profiling is not a fact.
+  - An iOS device build is not packaged, because no runner has a device.
 
 ## 8. Changing the program model
 

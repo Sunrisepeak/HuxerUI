@@ -1,6 +1,7 @@
 # The interface this application's Setup.exe runs: the installer program a
 # CMake project builds as `<target>-Installer.exe`. The application builds it
-# as a host tool on the Windows rows (../../mcpp.toml).
+# for a package build only, through its `windows-installer` feature
+# (../../mcpp.toml).
 # huxerui.rules gives it the page and the strings of the SDK's Windows
 # template; a `src/app.cpp` or a `resources/` here replaces them.
 [package]

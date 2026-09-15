@@ -11,16 +11,19 @@ version     = "0.3.0"
 description = "mcpp build rules for HuxerUI: the distribution formats"
 license     = "MIT"
 
-# 0.11.0 is the floor. From 0.10.x: dist-apk and dist-apple read the closure the
+# 0.11.1 is the floor. From 0.10.x: dist-apk and dist-apple read the closure the
 # engine stages (the framework's own `libhuxerui.so` on the Android row, one APK
 # for several ABIs), dist-apple adds `dmg` and supplies the `app` runner,
 # dist-wix adds `setup`, the Burn bundle the Windows installer is, installs the
 # files staged beside the program and takes the inputs HuxerUI's own definitions
 # name. From 0.11.0: dist-apk's Kotlin, R classes, libraries, archives, Maven
 # lock and unsigned packages, and dist-apple's Info.plist entries, provisioning
-# profile and device runner, which the options in src/dist.cppm pass on.
+# profile and device runner, which the options in src/dist.cppm pass on. From
+# 0.11.1: dist-apk strips the native libraries and stores them in place when the
+# manifest asks, as Gradle packages them, and dist-appimage takes the SDK's SVG
+# icon.
 [build-dependencies.mcpp]
-plugins = { version = "0.11.0", features = ["dist-wix", "dist-appimage", "dist-apple", "dist-apk", "dist-web"], host-module = true }
+plugins = { version = "0.11.1", features = ["dist-wix", "dist-appimage", "dist-apple", "dist-apk", "dist-web"], host-module = true }
 
 # The pure half of the rules, for the WiX definitions this package renders from
 # the SDK's Windows template and the upgrade codes CMake derives.

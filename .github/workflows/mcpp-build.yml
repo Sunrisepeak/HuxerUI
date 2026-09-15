@@ -1,10 +1,8 @@
 name: mcpp Build
 
-# Developing HuxerUI and its applications with mcpp.
-#
-# CMake remains the full-platform path and the only path for Android, iOS and
-# Web; this workflow covers what mcpp builds today. The design is
-# docs/design/mcpp-build-system.md.
+# Developing HuxerUI and its applications with mcpp, on the six platforms CMake
+# builds. The design is docs/design/mcpp-build-system.md; that a default package
+# is the program CMake's is checked by build-systems-conformance.yml.
 #
 # `parity` is first and cheap on purpose: it builds two small programs and no
 # framework, so the failure it catches -- a source added to one build system
@@ -267,6 +265,23 @@ jobs:
           # The repository's examples ask for profiling, as CMake builds its tree.
           strings "$exe" | grep -q 'profiling mode must be' \
             || { echo "example 01 was built without the profiling feature it asks for"; exit 1; }
+
+      # One package per application, as CMake merges it: the builtin resources,
+      # then each library's under its `package_product` namespace, then the
+      # application's. Example 03's library states `.resources` in its own
+      # build program and nothing in the application names it.
+      - name: Assert a library's resources reach the application's package
+        working-directory: mcpp/examples/03-library
+        run: |
+          exe=$(find target -type f -name huxerui_example_library -path '*/bin/*' | head -1)
+          test -n "$exe" || { echo "03 produced no executable"; exit 1; }
+          index="$(dirname "$exe")/huxerui_example_library.resources/huxerui/resources.bin"
+          test -f "$index" || { echo "no resource index beside $exe"; exit 1; }
+          strings "$index" > index.txt
+          grep -qx 'example_widgets' index.txt || { echo "the library's namespace is not in the application's package"; exit 1; }
+          grep -qx 'strings/library_name' index.txt || { echo "the library's string is not in the application's package"; exit 1; }
+          grep -qx 'app' index.txt || { echo "the application's namespace is not app"; exit 1; }
+          echo "the application's package carries the library's resources under example_widgets"
 
       # The AppImage is mcpp:plugins' dist-appimage, reached through
       # huxerui.rules; the payload it runs is declared by the member itself.
@@ -577,7 +592,7 @@ jobs:
           plutil -lint "$app/Contents/Info.plist"
           plutil -p "$app/Contents/Info.plist" | tee plist.txt
           grep -q '"CFBundleIdentifier" => "org.huxerui.example01"' plist.txt || { echo "CFBundleIdentifier is not the build program's"; exit 1; }
-          grep -q '"CFBundleDisplayName" => "huxerui_example_import"' plist.txt || { echo "the template's CFBundleDisplayName is missing"; exit 1; }
+          grep -q '"CFBundleDisplayName" => "huxerui-example-import"' plist.txt || { echo "the display name is not the project's"; exit 1; }
           grep -q '"NSCameraUsageDescription" => "Scans a code."' plist.txt || { echo "macos/Info.plist did not reach the bundle"; exit 1; }
           # CMake builds for macOS 12. libc++ comes from the graph on this row,
           # compiled for the application's floor, so nothing in the program
@@ -767,7 +782,7 @@ jobs:
           # runs the application in compatibility mode, not at the device's
           # resolution.
           plutil -extract UILaunchScreen raw -o - "$app/Info.plist" || { echo "the bundle declares no launch screen"; exit 1; }
-          grep -q '"CFBundleDisplayName" => "huxerui_example_import"' plist.txt || { echo "the template's CFBundleDisplayName is missing"; exit 1; }
+          grep -q '"CFBundleDisplayName" => "huxerui-example-import"' plist.txt || { echo "the display name is not the project's"; exit 1; }
           [ "$(/usr/libexec/PlistBuddy -c 'Print :UISupportedInterfaceOrientations:2' "$app/Info.plist")" = UIInterfaceOrientationLandscapeRight ] \
             || { echo "the iPhone orientations are not the template's"; exit 1; }
           grep -q '"NSCameraUsageDescription" => "Scans a code."' plist.txt || { echo "ios/Info.plist did not reach the bundle"; exit 1; }
