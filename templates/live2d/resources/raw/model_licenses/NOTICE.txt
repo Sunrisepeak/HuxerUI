@@ -1,0 +1,18 @@
+Live2D sample model notices
+
+Mao, Haru, and Hiyori are copied without modification from:
+CubismSdkForNative-5-r.5/Samples/Resources/
+https://cubism.live2d.com/sdk-native/bin/CubismSdkForNative-5-r.5.zip
+
+The archive SHA-256 is:
+7ff3a4bbc19c0a8728965aa522ab77eb11b252916453e68a8a78d3b71188bb12
+
+The upstream SDK license notice is preserved without modification in
+CubismSdkForNative-LICENSE.txt. Its Free Material License section lists
+these models and refers to the following agreements:
+
+https://www.live2d.com/eula/live2d-free-material-license-agreement_en.html
+https://www.live2d.com/eula/live2d-sample-model-terms_en.html
+
+These model assets are not covered by the HuxerUI Live2D wrapper's MIT
+license. Preserve their applicable notices when redistributing them.
