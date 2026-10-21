@@ -528,6 +528,8 @@ configuration. mcpp 2026.9.15.2 lets an application state a per-row linkage and
 a build program read it (`mcpp::dep_linkage`); the Java host's side of that
 configuration is a follow-up.
 
+**Application windowless tests.** `mcpp/huxerui-testing` exposes the explicit `huxerui.testing` module and the same three `testing/` sources as CMake's `HuxerUI::testing`. The production package does not depend on it, and consumers add it as a dev-dependency without Catch2 or internal include paths.
+
 **The smoke is windowless, as CMake's is.** `tests/platform/testing/smoke.cpp`
 runs under `mcpp test` in `mcpp/huxerui-tests` on the desktop rows (§8), on
 virtual frames. No CI row starts a real window; the Android and iOS rows

@@ -1,0 +1,18 @@
+[package]
+name = "huxerui-testing"
+namespace = "huxerui"
+version = "0.3.0"
+standard = "c++20"
+description = "Windowless HuxerUI application tests with a deterministic clock"
+license = "MIT"
+
+[dependencies]
+huxerui.huxerui = { path = "../.." }
+
+[lib]
+path = "src/testing.cppm"
+
+[build]
+sources = ["src/*.cppm", "../../testing/ui_test.cpp", "../../testing/testing_platform_adapter.cpp", "../../testing/ui_snapshot.cpp"]
+include_dirs = ["../../src"]
+private_include_dirs = ["../../src"]

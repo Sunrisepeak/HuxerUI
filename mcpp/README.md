@@ -30,6 +30,7 @@ payloads declared in `../mcpp.toml`, which mcpp provisions on the first build.
 |---|---|
 | `huxerui-build-rules/` | `huxerui.rules`, the module a consumer's `build.mcpp` imports |
 | `huxerui-source-select/` | the pure half of the rules -- globbing, the composable pre-filter, header scanning, the Windows installer definitions -- split out so `mcpp test` can reach it |
+| `huxerui-testing/` | optional `huxerui.testing` module and windowless test library for application dev-dependencies, without Catch2 |
 | `huxerui-tools/` | `huxerui-build-check` (parity) and `huxerui-module-gen` (the module shell and scope prelude) |
 | `huxerui-tests/` | the unit, runtime, UI testing and smoke suites, one package each, as CMake builds one executable per suite |
 

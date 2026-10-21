@@ -58,6 +58,17 @@ Destruction and initialization failure destroy Runtime and then perform a best-e
 This drain builds no frames, waits for no external work, and uses `maximum_callbacks_per_frame` as its total callback budget.
 Cleanup exceptions do not replace an initialization error or escape destruction; after the budget is exhausted, remaining callbacks are discarded and late posts are rejected.
 
+## C++ Modules with mcpp
+
+The optional `huxerui.huxerui-testing` package exposes `import huxerui.testing;` and links the same three implementation files as `HuxerUI::testing` without an assertion framework. It is separate from the production framework and its module umbrella. Add it as a development dependency in an application's manifest:
+
+```toml
+[dev-dependencies]
+huxerui.huxerui-testing = { git = "https://github.com/Sunrisepeak/HuxerUI.git", branch = "meditor" }
+```
+
+A test imports `std`, `huxerui` and `huxerui.testing`, creates an `Application` and `huxerui::testing::UiTest`, and runs with `mcpp test`. The package owns its internal include paths; consumers use only the public modules. No window or display server is needed. The API and native-boundary limitations below apply unchanged.
+
 ## Query mounted content
 
 Queries do not require accessibility labels, Semantics, or testing tags.

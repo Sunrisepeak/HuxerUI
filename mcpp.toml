@@ -10,7 +10,7 @@
 # huxerui-build-rules is absent on purpose: it imports mcpp, so it compiles only
 # inside a build program's compile and a fan-out dies on it. huxerui-tools is
 # present despite pinning c++23, which a member that declares the key keeps.
-members = ["mcpp/huxerui-source-select", "mcpp/huxerui-tests",
+members = ["mcpp/huxerui-testing", "mcpp/huxerui-source-select", "mcpp/huxerui-tests",
            "mcpp/huxerui-tests/unit", "mcpp/huxerui-tests/runtime", "mcpp/huxerui-tests/ui",
            "mcpp/huxerui-tests/smoke", "mcpp/huxerui-tools",
            "tools/codegen", "tools/resource_compiler"]
