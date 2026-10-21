@@ -94,6 +94,12 @@ void module_interface_is_read_from_the_source() {
     check(m.imports.size() == 2 && m.imports[0] == "huxerui" && m.imports[1] == "std",
           "every import is read");
 
+    const auto implementation = scan_module_interface(
+        "module app;\nimport std;\nimport huxerui;\n");
+    check(implementation.name.empty(), "an implementation does not provide the interface");
+    check(implementation.imports == std::vector<std::string>{"app", "std", "huxerui"},
+          "a generated implementation imports its own interface and explicit dependencies");
+
     const auto none = scan_module_interface("#include <x>\nint main() { return 0; }\n");
     check(none.name.empty(), "an ordinary translation unit declares no module");
 

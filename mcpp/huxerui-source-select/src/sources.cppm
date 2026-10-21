@@ -286,6 +286,9 @@ struct module_interface {
 
         if (line.starts_with("export module ")) {
             out.name = take_name(line.substr(std::string_view("export module ").size()));
+        } else if (line.starts_with("module ")) {
+            const std::string name = take_name(line.substr(std::string_view("module ").size()));
+            if (!name.empty()) out.imports.push_back(name);
         } else if (line.starts_with("import ")) {
             const std::string name = take_name(line.substr(std::string_view("import ").size()));
             if (!name.empty()) out.imports.push_back(name);

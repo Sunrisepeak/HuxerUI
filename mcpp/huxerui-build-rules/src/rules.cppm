@@ -274,11 +274,11 @@ inline std::vector<edge> plan_codegen(std::span<const std::string> sources,
             .inputs      = { abs.string(), hcg },
             .outputs     = { gen },
         };
-        if (abs.extension() == ".cppm") {
-            const auto declared = huxerui::rules::sources::scan_module_interface(text);
-            e.provides = declared.name;
-            e.imports  = declared.imports;
-        }
+        const auto declared = huxerui::rules::sources::scan_module_interface(text);
+        if (abs.extension() == ".cppm") e.provides = declared.name;
+        // Generated implementation units need explicit imports too: prepare
+        // cannot scan their output before hcg has run.
+        e.imports = declared.imports;
         out.push_back(std::move(e));
     }
     return out;
