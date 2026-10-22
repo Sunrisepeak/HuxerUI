@@ -269,7 +269,8 @@ public:
   [[nodiscard]] virtual bool IsFocused() const noexcept = 0;
 
   /// Requests keyboard/text-input focus on the Runtime UI thread.
-  /// Returns false without moving focus when this node is not mounted, enabled, focusable, or inside the active focus trap.
+  /// Returns false without moving focus when the node is unmounted, disabled, non-focusable,
+  /// or outside the active focus trap.
   /// Call from an event callback after mounting; borrowed node references must not outlive their mounted node.
   /// focus_visible selects the keyboard focus indication; it does not control platform accessibility focus.
   bool RequestFocus(bool focus_visible = true);
