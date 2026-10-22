@@ -238,4 +238,74 @@ TEST_CASE("LinuxExecutablePathDoesNotDependOnTheWorkingDirectory") {
   REQUIRE(File(after).Parent()->Path() != temporary.Path());
 }
 
+namespace {
+
+class BundleDirectoryScope final {
+public:
+  explicit BundleDirectoryScope(const std::string& value) {
+    const char* previous = std::getenv("MCPP_BUNDLE_DIR");
+    if (previous != nullptr) {
+      previous_ = previous;
+    }
+    setenv("MCPP_BUNDLE_DIR", value.c_str(), 1);
+  }
+  ~BundleDirectoryScope() {
+    if (previous_.has_value()) {
+      setenv("MCPP_BUNDLE_DIR", previous_->c_str(), 1);
+    } else {
+      unsetenv("MCPP_BUNDLE_DIR");
+    }
+  }
+  BundleDirectoryScope(const BundleDirectoryScope&) = delete;
+  BundleDirectoryScope& operator=(const BundleDirectoryScope&) = delete;
+
+private:
+  std::optional<std::string> previous_;
+};
+
+} // namespace
+
+TEST_CASE("LinuxProgramPathPrefersTheUniqueBundleExecutable") {
+  TemporaryDirectory temporary;
+  const fs::path bundle = fs::path(temporary.Path()) / "bundle";
+  const fs::path binary = bundle / "bin" / "sample-app";
+  fs::create_directories(binary.parent_path());
+  fs::copy_file("/proc/self/exe", binary);
+  fs::permissions(binary, fs::perms::owner_exec, fs::perm_options::add);
+
+  BundleDirectoryScope bundle_directory(bundle.generic_string());
+  const std::string program = detail::ResolveLinuxProgramPath();
+
+  REQUIRE(program == binary.generic_string());
+}
+
+TEST_CASE("LinuxProgramPathFallsBackWhenTheBundleIsAmbiguousOrMissing") {
+  const std::string executable = detail::ResolveLinuxExecutablePath();
+
+  SECTION("without the bundle variable") {
+    REQUIRE(detail::ResolveLinuxProgramPath() == executable);
+  }
+
+  SECTION("with several executables in the bundle") {
+    TemporaryDirectory temporary;
+    const fs::path bundle = fs::path(temporary.Path()) / "bundle";
+    for (const char* name : {"sample-app", "helper-tool"}) {
+      const fs::path binary = bundle / "bin" / name;
+      fs::create_directories(binary.parent_path());
+      fs::copy_file("/proc/self/exe", binary);
+      fs::permissions(binary, fs::perms::owner_exec, fs::perm_options::add);
+    }
+    BundleDirectoryScope bundle_directory(bundle.generic_string());
+    REQUIRE(detail::ResolveLinuxProgramPath() == executable);
+  }
+
+  SECTION("with a bundle that has no bin directory") {
+    TemporaryDirectory temporary;
+    const fs::path bundle = fs::path(temporary.Path()) / "empty-bundle";
+    fs::create_directories(bundle);
+    BundleDirectoryScope bundle_directory(bundle.generic_string());
+    REQUIRE(detail::ResolveLinuxProgramPath() == executable);
+  }
+}
+
 } // namespace huxerui::test

@@ -13,6 +13,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <algorithm>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -138,6 +139,37 @@ std::string ResolveLinuxExecutablePath() {
   }
 }
 
+std::string ResolveLinuxProgramPath() {
+  // mcpp's self-contained launcher execs the bundled dynamic loader directly,
+  // so /proc/self/exe names the loader instead of the application. The bundle
+  // contract exports MCPP_BUNDLE_DIR, and its bin/ holds exactly one
+  // application executable beside the <application>.resources package. When
+  // that unique executable exists, prefer it; otherwise keep /proc/self/exe.
+  if (const char* bundle = std::getenv("MCPP_BUNDLE_DIR")) {
+    if (bundle[0] == '/') {
+      std::error_code error;
+      std::vector<fs::path> candidates;
+      for (const auto& entry : fs::directory_iterator(fs::path(bundle) / "bin", error)) {
+        if (error) break;
+        if (entry.is_regular_file(error) && !error
+            && (entry.status(error).permissions() & fs::perms::owner_exec) != fs::perms::none && !error) {
+          candidates.push_back(entry.path());
+        }
+      }
+      std::sort(candidates.begin(), candidates.end());
+      if (candidates.size() == 1) {
+        try {
+          File file(candidates.front().generic_string());
+          if (file.Parent().has_value() && !file.Name().empty()) return file.Path();
+        } catch (const std::invalid_argument&) {
+          throw std::runtime_error("HuxerUI Linux bundle program path is not valid UTF-8");
+        }
+      }
+    }
+  }
+  return ResolveLinuxExecutablePath();
+}
+
 AppDirectories
 ResolveLinuxAppDirectories(std::string_view executable_path, const LinuxAppDirectoryEnvironment& environment) {
   if (executable_path.empty() || executable_path.front() != '/') {
@@ -215,7 +247,7 @@ AppDirectories CreateLinuxAppDirectories() {
   }
 
   return CreateLinuxAppDirectories(
-      ResolveLinuxExecutablePath(),
+      ResolveLinuxProgramPath(),
       {
           .home_directory = EnvironmentVariable("HOME"),
           .passwd_home_directory = PasswdHomeDirectory(user_id),

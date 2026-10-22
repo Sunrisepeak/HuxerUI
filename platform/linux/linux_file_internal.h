@@ -40,6 +40,7 @@ struct LinuxAppDirectoryEnvironment {
 };
 
 [[nodiscard]] std::string ResolveLinuxExecutablePath();
+[[nodiscard]] std::string ResolveLinuxProgramPath();
 [[nodiscard]] AppDirectories
 ResolveLinuxAppDirectories(std::string_view executable_path, const LinuxAppDirectoryEnvironment& environment);
 [[nodiscard]] AppDirectories

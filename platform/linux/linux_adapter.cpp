@@ -910,7 +910,7 @@ private:
     if (const char* override_directory = std::getenv("HUXERUI_RESOURCES_DIR")) {
       return std::filesystem::path(override_directory);
     }
-    std::filesystem::path root(ResolveLinuxExecutablePath());
+    std::filesystem::path root(ResolveLinuxProgramPath());
     root.replace_extension(".resources");
     return root;
   }
