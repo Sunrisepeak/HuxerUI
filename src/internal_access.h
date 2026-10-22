@@ -59,6 +59,7 @@ struct InternalAccess {
   static void NotifyScrollActivity(Runtime& runtime, MountedNode& node, const ScrollActivity& activity);
   static void RequestFrame(Runtime& runtime);
   static void FocusNode(Runtime& runtime, std::uint64_t identity);
+  static bool RequestFocus(Runtime& runtime, MountedNode& node, bool focus_visible);
   static std::optional<std::uint64_t> FocusedNodeIdentity(const Runtime& runtime) noexcept;
   static void InvalidateLayout(Runtime& runtime, MountedNode& node);
   static std::optional<std::uint64_t> HitTestPlatformView(const Runtime& runtime, Point position);

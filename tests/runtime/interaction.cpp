@@ -2281,6 +2281,30 @@ TEST_CASE("TestFocusTraversalKeyboardAndThemeVisuals") {
   REQUIRE(focus_changes.back() == "third:on");
 }
 
+TEST_CASE("TestViewNodeFocusRequestsPreserveFocusOnRejectedTargets") {
+  TestPlatform platform;
+  Runtime runtime{FocusApp, platform};
+  runtime.SetWindowMetrics({.viewport = {240.0F, 240.0F}});
+  runtime.BuildFrame();
+  auto request = [&](std::string_view text, bool visible = true) {
+    auto* node = const_cast<detail::MountedNode*>(FindMountedText(*runtime.RootNode(), text));
+    REQUIRE(node != nullptr);
+    return node->RequestFocus(visible);
+  };
+  REQUIRE(request("custom focus"));
+  REQUIRE(FindMountedText(*runtime.RootNode(), "custom focus")->IsFocused());
+  REQUIRE_FALSE(request("disabled"));
+  REQUIRE(FindMountedText(*runtime.RootNode(), "custom focus")->IsFocused());
+  REQUIRE_FALSE(const_cast<detail::MountedNode*>(runtime.RootNode())->RequestFocus());
+  REQUIRE(FindMountedText(*runtime.RootNode(), "custom focus")->IsFocused());
+  REQUIRE(request("first", false));
+  REQUIRE_FALSE(FindMountedText(*runtime.RootNode(), "first")->Interaction().focus_visible);
+  REQUIRE(request("first"));
+  REQUIRE(FindMountedText(*runtime.RootNode(), "first")->Interaction().focus_visible);
+  detail::MountedNode unmounted;
+  REQUIRE_FALSE(unmounted.RequestFocus());
+}
+
 TEST_CASE("TestKeyRoutingConsumptionAndActivation") {
   key_route.clear();
   consume_root_key = false;

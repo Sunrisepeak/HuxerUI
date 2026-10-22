@@ -69,6 +69,8 @@ Use a property modifier for reusable declaration data that applies directly to `
 Use a retained modifier with `NodeExtension` when one mounted node needs lifecycle, gesture, animation, semantics, or foreground paint state.
 
 `NodeExtension` is not a general plugin registry.
+
+Custom focusable controls may call `ViewNode::RequestFocus(focus_visible)` on the Runtime UI thread from an event callback after mounting. Runtime transfers keyboard and text-input focus through its normal focus path and rejects disabled, non-focusable, unmounted, or out-of-modal-scope requests without clearing the current focus. The return value reports whether the requested node owns focus. Node references are borrowed: an extension may retain its own mounted owner only for the extension lifetime and must not expose it past unmounting. This API does not request screen-reader accessibility focus.
 Update compatible declarative configuration without discarding retained state, request timing through `FrameResult`, and invalidate paint when paint-visible retained state changes.
 
 Use the protected `EmitEvent<Key>(...)` operation to report semantic output to `.On<Key>()` on the View carrying the extension.

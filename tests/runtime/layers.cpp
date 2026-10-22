@@ -1482,6 +1482,10 @@ TEST_CASE("TestPointerFocusDoesNotEscapeTrappedLayer") {
   runtime.SetWindowMetrics({.viewport = {240.0F, 120.0F}});
   runtime.BuildFrame();
 
+  auto* background = const_cast<detail::MountedNode*>(FindMountedText(*runtime.RootNode(), "application focus"));
+  REQUIRE(background != nullptr);
+  REQUIRE(background->RequestFocus());
+
   layer_popup->ShowAt(
       {120.0F, 40.0F},
       [] {
@@ -1493,6 +1497,13 @@ TEST_CASE("TestPointerFocusDoesNotEscapeTrappedLayer") {
       }
   );
   runtime.BuildFrame();
+
+  const auto* mounted = detail::InternalAccess::MountedRoot(runtime.CoreRuntime());
+  auto* popup = const_cast<detail::MountedNode*>(FindMountedText(*mounted, "popup focus"));
+  REQUIRE(popup != nullptr);
+  REQUIRE(popup->RequestFocus());
+  REQUIRE_FALSE(background->RequestFocus());
+  REQUIRE(popup->IsFocused());
 
   ClickAt(runtime, {20.0F, 15.0F}, 122);
   REQUIRE(layer_background_clicks == 1);

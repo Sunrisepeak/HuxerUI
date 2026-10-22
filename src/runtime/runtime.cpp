@@ -1062,6 +1062,19 @@ void InternalAccess::FocusNode(Runtime& runtime, std::uint64_t identity) {
   runtime.SetFocusedNode(identity, true);
 }
 
+bool InternalAccess::RequestFocus(Runtime& runtime, MountedNode& node, bool focus_visible) {
+  auto* root = runtime.state_->mounted_root_.get();
+  if (!root || FindNode(*root, node.identity) != &node || !node.interaction.enabled || !node.focusable) {
+    return false;
+  }
+  const auto* trap = runtime.ActiveFocusTrapRoot();
+  if (trap && !ContainsNodeIdentity(*trap, node.identity)) {
+    return false;
+  }
+  runtime.SetFocusedNode(node.identity, focus_visible);
+  return runtime.state_->focused_node_identity_ == node.identity;
+}
+
 std::optional<std::uint64_t> InternalAccess::FocusedNodeIdentity(const Runtime& runtime) noexcept {
   return runtime.state_->focused_node_identity_;
 }
@@ -1104,6 +1117,11 @@ std::optional<PlatformValue> InternalAccess::DispatchPlatformViewEvent(
 namespace huxerui {
 
 using namespace detail;
+
+bool ViewNode::RequestFocus(bool focus_visible) {
+  auto* node = dynamic_cast<MountedNode*>(this);
+  return node && node->runtime && InternalAccess::RequestFocus(*node->runtime, *node, focus_visible);
+}
 
 Runtime::State::State(Runtime& owner, const Application& application, PlatformAdapter& platform)
     : owner_(owner), root_factory_(application.root_factory), platform_(&platform),
