@@ -33,7 +33,9 @@ A project has one build system, identified by the native build file at its root.
 The CLI offers one set of verbs and dispatches each to the project's integration; it exposes no command named after a build system.
 An application root that declares more than one build system requires an explicit selection, and the CLI diagnoses the ambiguity instead of choosing.
 A library is built by the build system of the application that consumes it, so a library root may carry several native declarations without ambiguity.
-An option that does not apply to the project's build system is rejected with the reason and never ignored.
+An option that does not apply to the project's build system is never silent.
+An option that would change the product, such as an ABI, optimization, LTO, or package-format choice, is rejected as invalid usage with the reason.
+An option that only steers the driver, such as a native generator or a tool location, is reported with a warning and not applied, and the operation continues.
 
 `huxerui create` selects the build system by generating its native build file, from an explicit option or the CLI's default.
 
@@ -230,3 +232,39 @@ The list is currently empty.
 
 Unavailable hosts or devices are reported separately from passed checks.
 Acceptance checks observable outcomes; internal target names, helper organization, and compiler flag sequences may differ across build systems.
+
+### Clauses
+
+Each checkable requirement has a stable identifier.
+The conformance suite names the clauses each of its checks covers, and its [coverage table](../cts/README.md#coverage) shows which clauses it checks today; this table does not record coverage.
+
+| Clause | Requirement | Section |
+| --- | --- | --- |
+| `DEFAULT-PROFILE` | The default profile is `debug` for `build` and `run`, and `release` for `package`. | [CLI build intent](#cli-build-intent) |
+| `EXIT-CODES` | The CLI exits with `0` for success, `2` for invalid usage, and `1` for an operation failure. | [CLI build intent](#cli-build-intent) |
+| `ABI-SELECT` | An explicit ABI selection is satisfied in full or rejected, and the ABIs of each produced artifact are reported. | [CLI build intent](#cli-build-intent) |
+| `DISPATCH-ROOT` | The native build file at the project root identifies its build system, and the CLI dispatches one set of verbs to it. | [Build-system selection and dispatch](#build-system-selection-and-dispatch) |
+| `DISPATCH-AMBIGUOUS` | An application root that declares several build systems requires an explicit selection. | [Build-system selection and dispatch](#build-system-selection-and-dispatch) |
+| `OPTION-INAPPLICABLE` | An inapplicable option is never silent: a product option is invalid usage, a driver option is reported and not applied. | [Build-system selection and dispatch](#build-system-selection-and-dispatch) |
+| `CREATE-SELECT` | `huxerui create` generates the native declaration of each selected build system around the common layout. | [Build-system selection and dispatch](#build-system-selection-and-dispatch) |
+| `LAYOUT-COMMON` | Common sources, `resources/`, and the `platform/<platform-id>` shells have the same layout and meaning under every integration. | [Build-system selection and dispatch](#build-system-selection-and-dispatch) |
+| `SETTINGS-PRECEDENCE` | Explicit CLI values take precedence over project options, which take precedence over integration defaults; omission is distinct from explicit `off` and `default`. | [Common settings](#common-settings) |
+| `SETTINGS-DIAGNOSE` | An unsupported explicit choice is diagnosed and never replaced by another mode. | [Common settings](#common-settings) |
+| `SETTINGS-EFFECTIVE` | Effective settings and their scope are reported; a default build reports no override. | [Common settings](#common-settings) |
+| `LINK-STATIC` | Applications link HuxerUI statically by default. | [Linkage and artifact names](#linkage-and-artifact-names) |
+| `LINK-SHARED` | Shared framework linkage requires an explicit selection and declared support. | [Linkage and artifact names](#linkage-and-artifact-names) |
+| `NAME-FRAMEWORK` | Published framework libraries use the basenames `huxerui_static` and `huxerui`. | [Linkage and artifact names](#linkage-and-artifact-names) |
+| `NAME-ARTIFACT` | The application's binary, modules, and bundle take the declared application target's basename. | [Linkage and artifact names](#linkage-and-artifact-names) |
+| `CORE-SHELL` | The integration produces the application core each platform shell consumes, with the records naming it. | [Platform shells and the application core](#platform-shells-and-the-application-core) |
+| `ENTRY-POINTS` | Entry points the platform discovers by name, such as Android's JNI entries, are exported and survive linking. | [Targets and dependencies](#targets-and-dependencies) |
+| `LIB-GRAPH` | The ordered library-graph record lists each source-backed library once, depth-first in declaration order. | [Libraries](#libraries) |
+| `LIB-IDENTITY` | A library declared for several build systems projects the same identity, resource namespace, and dependencies under each. | [Libraries](#libraries) |
+| `RES-PACKAGE` | One final resource package holds built-in, library, and application resources in the contract's order and namespaces. | [Code generation and resources](#code-generation-and-resources) |
+| `RES-LOCATION` | The final resource package is at the platform's runtime location. | [Code generation and resources](#code-generation-and-resources) |
+| `SOURCE-SDK` | Framework libraries, resources, headers, and host tools resolve consistently from an SDK and from a source checkout. | [Code generation and resources](#code-generation-and-resources) |
+| `INCREMENTAL` | A build of unchanged inputs succeeds, and changed sources, resources, tools, or options rebuild what depends on them. | [Generated results](#generated-results) |
+| `RECORD-SCHEMA` | Records carry a schema version; an unsupported version or a missing required artifact is diagnosed. | [Generated results](#generated-results) |
+| `RECORD-EQUIVALENCE` | For the same project content, every integration generates equal project and library-graph records. | [Conformance](#conformance) |
+| `PKG-KIND` | `package` produces the platform's standard distributable kind and publishes it below `dist/<platform>`. | [Conformance](#conformance) |
+| `PKG-PUBLISH` | Publication validates the staged result before replacing the previous published output. | [Generated results](#generated-results) |
+| `LAUNCH` | A default build starts on an available target environment and resolves its resources at run time. | [Conformance](#conformance) |

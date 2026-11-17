@@ -91,5 +91,30 @@ class RebuildTests(unittest.TestCase):
         self.assertIn("second build of unchanged inputs", result["reason"])
 
 
+class CoverageTests(unittest.TestCase):
+    def test_contract_has_clauses(self):
+        clauses = cts.contract_clauses()
+        self.assertIn("LINK-STATIC", clauses)
+        self.assertIn("PKG-KIND", clauses)
+
+    def test_checkpoints_name_only_known_clauses(self):
+        _, problems = cts.coverage_rows()
+        self.assertEqual(problems, [])
+
+    def test_unknown_clause_is_reported(self):
+        checks = {"build": {"title": "", "facts": {"profile": ["NO-SUCH-CLAUSE"]}, "equivalent": {}}}
+        with mock.patch.object(cts, "CHECKS", checks):
+            _, problems = cts.coverage_rows()
+        self.assertTrue(any("NO-SUCH-CLAUSE" in problem for problem in problems))
+
+    def test_compared_facts_do_not_count_as_checked(self):
+        rows = {clause: state for clause, state, _ in cts.coverage_rows()[0]}
+        self.assertEqual(rows["RES-PACKAGE"], "compared only")
+        self.assertEqual(rows["RES-LOCATION"], "checked")
+
+    def test_readme_table_is_current(self):
+        self.assertEqual(cts.command_coverage(argparse.Namespace(check=True, write=False)), 0)
+
+
 if __name__ == "__main__":
     unittest.main()
