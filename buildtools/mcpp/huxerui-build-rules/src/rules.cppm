@@ -777,6 +777,10 @@ inline std::vector<edge> plan_resources(const options& opt, const project_graph&
                 mcpp::rerun_if_changed(plist_template.string().c_str());
                 script += "; cp \"" + rendered + "\" \"" + bundle + "/Contents/Info.plist\"";
                 assemble.inputs.push_back(rendered);
+            } else {
+                // A bundle without Info.plist has no identifier, and AppKit services refuse to start in it.
+                mcpp::warning(("huxerui.rules: " + plist_template.string() +
+                               " is missing; the macOS bundle will have no Info.plist").c_str());
             }
             const std::filesystem::path icon = shell / "AppIcon.icns";
             if (std::filesystem::exists(icon)) {
