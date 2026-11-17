@@ -27,6 +27,29 @@ Any shared request or result records are generated metadata, not another user-ma
 The default logical profile is `debug` for `build` and `run`, and `release` for `package`.
 The CLI reports exit code `0` for success, `2` for invalid command usage, and `1` for an operation failure, preserving the failing step and underlying tool diagnostics.
 
+### Build-system selection and dispatch
+
+A project has one build system, identified by the native build file at its root.
+The CLI offers one set of verbs and dispatches each to the project's integration; it exposes no command named after a build system.
+A root that declares more than one build system requires an explicit selection, and the CLI diagnoses the ambiguity instead of choosing.
+An option that does not apply to the project's build system is rejected with the reason and never ignored.
+
+`huxerui create` selects the build system from the requested project style unless one is named: a header-based project defaults to CMake and a C++ modules project defaults to mcpp.
+This is a creation default; it does not bind a language style to a build system.
+
+The common sources, the `resources/` root, and the `platform/<platform-id>` shells have the same layout and meaning under every integration, so the following work needs no build-system-specific knowledge:
+
+- Creating a project and adding platforms.
+- Building, running, packaging, and testing through the CLI.
+- Editing common sources and resources.
+- Editing identity, permissions, icons, signing, and other platform metadata in the platform shells.
+
+Declaring a library dependency is one statement in the native build file.
+The CLI may delegate that edit to a build system's own dependency command where one exists; it never rewrites a native build script as text.
+A capability that only one build system offers is used through that build system's native configuration or commands and is not wrapped by the CLI.
+
+The CLI currently dispatches `build`, `run`, and `package` for CMake projects and offers `huxerui mcpp build` as a separate frontend; this draft replaces that frontend with dispatch.
+
 The shared request carries the following information where applicable:
 
 | Information | Meaning |
@@ -96,6 +119,28 @@ For the same declared target, platform, configuration, and naming settings, all 
 Applications may explicitly override their output basename through native project settings.
 Application overrides and any configuration postfixes must be reflected in generated artifact metadata; the shell must not require a second manual library-name setting.
 
+## Platform shells and the application core
+
+Platform shells are part of the standard project model.
+A shell is created with the project, lives in version control, and owns the same platform facts under every integration, so platform metadata, signing, and platform extension points are configured once and survive a change of build system.
+The integration's output toward the shell is the application core:
+
+| Platform | Shell | Application core produced by the integration |
+| --- | --- | --- |
+| Android | Gradle application project; owns the application ID, SDK levels, ABI selection, manifest, Java or Kotlin sources, dependencies, signing, and the APK. | `lib<application-target>.so` for each requested ABI with HuxerUI linked in, the final resource package, and one application-integration record per ABI naming the actual library. |
+| iOS | Xcode application project; owns the process entry, Info.plist, launch screen, asset catalog, capabilities, signing, and the application bundle. | The application-core static archive, its linker inputs, and the final resource package at a stable location for the selected destination. |
+| Windows, macOS, Linux | Source inputs under `platform/<platform-id>`: the process entry and the platform's manifest or bundle metadata. | The application executable or bundle, the final resource package at its runtime location, and the installation content from which the platform's distribution container is produced. |
+| Web | The HTML entry and host-element mount code. | The application's ES module and WebAssembly module, with the final resource package available to the Runtime. |
+
+A shell that is a platform build project invokes the project's integration to produce the application core and consumes only the generated records and the artifacts they name.
+That invocation is the only part of a shell that differs between integrations.
+The shell does not assume a filename, and the integration does not read or duplicate shell configuration such as application identifiers, SDK levels, permissions, or signing.
+
+Producing a platform package without its standard shell is a capability of the integration that offers it.
+It requires an explicit selection, and its result is not a default build.
+
+Open question: the current Android shell reaches CMake through Gradle's `externalNativeBuild`, which accepts only CMake and ndk-build. Invoking another integration needs a Gradle task that supplies the application core to the same variant, and this has not been prototyped.
+
 ## Targets and dependencies
 
 The framework dependency must communicate its public includes, minimum C++20 requirement, and required compile/link usage requirements.
@@ -111,6 +156,28 @@ The compiler, the linker, and the source of toolchains and dependencies are inte
 Entry points discovered by the platform must survive archive extraction, dead stripping, and LTO.
 On Android, static framework integration retains the required named JNI entries and loads the application's actual shared-library name before HuxerUI Java services are used.
 Libraries retain ownership of their initialization; linking archives does not combine multiple `JNI_OnLoad` implementations.
+
+## Libraries
+
+A HuxerUI library has one standard form, so one library source tree serves every integration it declares:
+
+- Public headers under `include/`, implementation under `src/`, optional resources under `resources/`, and optional platform packages under `platform/<platform-id>`.
+- One public identity. The implementation name, resource namespace, and primary header derive from it through the deterministic projection in [SDK, CLI, Platform Shell, and Library](sdk-cli.md#libraries-and-platform-integration), and each integration maps its native package identity to that same public identity.
+- One native declaration per supported build system. It states the public identity, sources, public includes, resource root, dependencies on other libraries, and external link requirements; it does not restate platform configuration.
+- Platform packages shared by all integrations. A library's Android, iOS, or other platform code is attached by the application's platform shell from the library graph, independently of the integration that compiled its C++ sources.
+
+Public headers are the authoritative library interface.
+A module interface that a library offers names the same entities as its headers.
+A library that offers only a module interface is usable only by integrations that declare C++ module support and is outside the standard form.
+
+An application declares a library dependency with one native statement naming the public identity and its local path or pinned source revision.
+Every integration then generates the same ordered library-graph record for the same declarations: the public identity and resolved source root of each source-backed library, following dependencies depth-first in declaration order, each library once.
+Platform shells consume that record to attach platform packages, and the final resource package includes each library's resources in the same order, transitive dependencies included.
+
+A library that declares several build systems must project the same identity, resource namespace, and dependencies under each.
+A difference is a library defect, and validation reports it by comparing the records each integration generates.
+
+Open question: an mcpp build program currently sees only its direct dependencies. Whether mcpp's own machine-readable output provides the full ordered graph has not been confirmed.
 
 ## Code generation and resources
 
@@ -139,9 +206,25 @@ An unsupported schema version or a missing required artifact must produce a diag
 Changes to target, toolchain, framework selection, profile, or effective options must trigger the appropriate reconfiguration or rebuild; cache directory layout remains build-system-owned.
 Package publication validates the staged result before replacing the previous published output.
 
-## Minimum acceptance
+## Conformance
 
-An integration's declared support is checked with:
+An integration declares its supported hosts, targets, framework distribution forms, and capabilities.
+Conformance is judged against this contract with a shared fixture project, not by comparing one integration's output with another's.
+
+**Record equivalence.** For the same project content, every integration that can build it generates equal project and library-graph records.
+
+**Default model.** A default build, meaning a project from `huxerui create` built, run, or packaged with no option beyond platform and destination, is checked for these facts, read from the generated records and the produced artifacts:
+
+- The profile is `debug` for `build` and `run` and `release` for `package`, and the effective settings report no optimization override, no LTO, and no explicit departure from a default.
+- HuxerUI is linked statically into the application; on Android the framework is inside `lib<application-target>.so` and the shell loads the library named by the record.
+- One final resource package exists, with built-in, library, and application resources in the contract's order and namespaces, at the platform's runtime location.
+- The application's binary or modules carry the default basename from the declared application target.
+- `package` produces the platform's standard distributable kind and publishes it below `dist/<platform>`.
+
+A difference in one of these facts is permitted only when this section lists it with its reason.
+No difference is currently listed.
+
+**Minimum acceptance.** An integration's declared support is checked with:
 
 - CLI and direct native builds using equivalent project settings and producing equivalent application behavior.
 - Clean and incremental builds in declared SDK/source modes and Debug/Release configurations.
