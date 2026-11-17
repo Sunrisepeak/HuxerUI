@@ -66,8 +66,7 @@
     "android": {
       "hosts": [
         "linux",
-        "macos",
-        "windows"
+        "macos"
       ],
       "checks": [
         "build",

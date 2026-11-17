@@ -64,7 +64,6 @@ jobs:
           - { integration: cmake, target: web,     host: windows, os: windows-2022, python: python }
           - { integration: mcpp,  target: web,     host: windows, os: windows-2022, python: python }
           - { integration: cmake, target: android, host: windows, os: windows-2022, python: python }
-          - { integration: mcpp,  target: android, host: windows, os: windows-2022, python: python }
     steps:
       - uses: actions/checkout@v5
 
@@ -203,8 +202,7 @@ jobs:
           if-no-files-found: error
 
   # CMake rows use Intel runners because GitHub's macOS arm64 runners are capacity constrained and can leave
-  # jobs unassigned. mcpp's toolchain supports arm64 macOS only, so its rows stay on arm64 runners,
-  # on the image whose pool has assigned jobs most reliably.
+  # jobs unassigned. mcpp's toolchain supports arm64 macOS only, so its rows stay on arm64 runners.
   conformance-macos:
     name: ${{ matrix.integration }} (${{ matrix.target }} on ${{ matrix.host }})
     runs-on: ${{ matrix.os }}
@@ -214,13 +212,13 @@ jobs:
       matrix:
         include:
           - { integration: cmake, target: macos,   host: macos,   os: macos-15-intel, python: python3 }
-          - { integration: mcpp,  target: macos,   host: macos,   os: macos-26,       python: python3 }
+          - { integration: mcpp,  target: macos,   host: macos,   os: macos-15,       python: python3 }
           - { integration: cmake, target: ios,     host: macos,   os: macos-15-intel, python: python3 }
           - { integration: cmake, target: web,     host: macos,   os: macos-15-intel, python: python3 }
           - { integration: cmake, target: android, host: macos,   os: macos-15-intel, python: python3 }
-          - { integration: mcpp,  target: android, host: macos,   os: macos-26,       python: python3 }
-          - { integration: mcpp,  target: web,     host: macos,   os: macos-26,       python: python3 }
-          - { integration: mcpp,  target: ios,     host: macos,   os: macos-26,       python: python3 }
+          - { integration: mcpp,  target: android, host: macos,   os: macos-15,       python: python3 }
+          - { integration: mcpp,  target: web,     host: macos,   os: macos-15,       python: python3 }
+          - { integration: mcpp,  target: ios,     host: macos,   os: macos-15,       python: python3 }
     steps:
       - uses: actions/checkout@v5
 

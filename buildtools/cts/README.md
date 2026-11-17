@@ -69,6 +69,7 @@ The `launch` checkpoint starts each application with `HUXERUI_CTS_PROBE` set and
 | `ios` | The application core the Xcode shell links: `lib<target>_huxerui.a` for the Simulator with the framework inside it, its link inputs, and the final resource package. |
 
 Which hosts build each target is stated per integration in its `support.json`, and the workflow has one job for every declared combination.
+mcpp does not declare Android on Windows hosts: its Android NDK package cannot be installed there.
 
 The Android and iOS checks stop at the application core; building the APK or the application bundle through the platform shell is not yet a checkpoint.
 
