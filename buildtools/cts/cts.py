@@ -7,9 +7,11 @@ build-system integration and records the facts the build-system contract defines
 `compare` checks that the integrations which ran agree on the facts that have no fixed
 expected value, such as the content of the final resource package.
 
-An integration is checked for what it declares in `buildtools/<integration>/support.json`:
-a target, host, checkpoint, or capability it does not declare is reported as undeclared
-and skipped, never failed.
+An integration is a directory `buildtools/<integration>/` with a `support.json`; the runner
+discovers it there and builds through the adapter beside it, `cts_adapter.py` (see
+`adapter_api.py`). An integration is checked for what it declares in its `support.json`: a
+target, host, checkpoint, or capability it does not declare is reported as undeclared and
+skipped, never failed.
 
 The expected facts belong to the project, never to an integration: no integration's
 output is the reference.
@@ -20,6 +22,7 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import hashlib
+import importlib.util
 import json
 import os
 import platform as host_platform
@@ -31,6 +34,7 @@ from pathlib import Path
 
 CTS_ROOT = Path(__file__).resolve().parent
 REPOSITORY = CTS_ROOT.parent.parent
+BUILDTOOLS = REPOSITORY / "buildtools"
 PROJECTS = CTS_ROOT / "projects"
 ALLOWED_DIFFERENCES = CTS_ROOT / "allowed-differences.json"
 
@@ -65,30 +69,12 @@ CHECKS: dict[str, dict] = {
 }
 
 
-class Unavailable(Exception):
-    """The environment cannot run a check; reported separately from a failure."""
-
-
-def log(message: str = "") -> None:
-    print(message, flush=True)
+sys.path.insert(0, str(CTS_ROOT))
+from adapter_api import Unavailable, load_json, log, validate_record  # noqa: E402
 
 
 def current_host() -> str:
     return {"Linux": "linux", "Darwin": "macos", "Windows": "windows"}.get(host_platform.system(), host_platform.system().lower())
-
-
-def run_command(command: list[str], cwd: Path, env: dict[str, str] | None = None) -> str:
-    log(f"  $ {' '.join(command)}  (in {cwd})")
-    completed = subprocess.run(command, cwd=cwd, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    if completed.returncode != 0:
-        tail = "\n".join(completed.stdout.splitlines()[-60:])
-        raise RuntimeError(f"command failed with exit code {completed.returncode}: {' '.join(command)}\n{tail}")
-    return completed.stdout
-
-
-def load_json(path: Path):
-    with path.open(encoding="utf-8") as stream:
-        return json.load(stream)
 
 
 def write_json(path: Path, value) -> None:
@@ -97,7 +83,7 @@ def write_json(path: Path, value) -> None:
 
 
 def target_support(integration: str, target: str, host: str) -> tuple[dict | None, str]:
-    declaration = load_json(REPOSITORY / "buildtools" / integration / "support.json")
+    declaration = load_json(BUILDTOOLS / integration / "support.json")
     support = declaration["targets"].get(target)
     if support is None:
         return None, f"target {target} is not declared"
@@ -125,158 +111,49 @@ def result_path(out: Path, integration: str, target: str, project: str) -> Path:
 # ---------------------------------------------------------------- integrations
 
 
-class CMakeIntegration:
-    name = "cmake"
-
-    def __init__(self, arguments: argparse.Namespace) -> None:
-        self.home = Path(arguments.cmake_home).resolve() if arguments.cmake_home else REPOSITORY
-        self.launcher = arguments.cmake_compiler_launcher
-
-    def build(self, project: Path, work: Path, target: str) -> dict:
-        graph = work / "libraries.json"
-        run_command(
-            ["cmake", "-S", str(project), "-B", str(work / "graph"), f"-DHUXERUI_HOME={self.home}",
-             "-DHUXERUI_LIBRARY_GRAPH_ONLY=ON", f"-DHUXERUI_LIBRARY_GRAPH_OUTPUT={graph}"],
-            project,
-        )
-        configure = ["cmake", "-S", str(project), "-B", str(work / "build"), "-G", "Ninja",
-                     "-DCMAKE_BUILD_TYPE=Debug", f"-DHUXERUI_HOME={self.home}"]
-        if target == "web":
-            configure.insert(0, shutil.which("emcmake") or "emcmake")
-        if target == "android":
-            ndk = os.environ.get("ANDROID_NDK_HOME") or os.environ.get("ANDROID_NDK_ROOT") or os.environ.get("ANDROID_NDK_LATEST_HOME")
-            if not ndk:
-                raise Unavailable("the Android NDK was not found; set ANDROID_NDK_HOME")
-            configure += [f"-DCMAKE_TOOLCHAIN_FILE={ndk}/build/cmake/android.toolchain.cmake",
-                          "-DANDROID_ABI=arm64-v8a", "-DANDROID_PLATFORM=android-23"]
-        if self.launcher:
-            configure += [f"-DCMAKE_C_COMPILER_LAUNCHER={self.launcher}", f"-DCMAKE_CXX_COMPILER_LAUNCHER={self.launcher}"]
-        if target == "ios":
-            # What the Xcode shell's build phase passes for a Simulator destination.
-            configure += ["-DCMAKE_SYSTEM_NAME=iOS", "-DCMAKE_OSX_SYSROOT=iphonesimulator", "-DCMAKE_OSX_ARCHITECTURES=arm64",
-                          "-DCMAKE_OSX_DEPLOYMENT_TARGET=15.0", "-DHUXERUI_BUILD_SHARED=OFF", "-DHUXERUI_BUILD_TESTS=OFF",
-                          "-DHUXERUI_BUILD_EXAMPLES=OFF", "-DHUXERUI_BUILD_CLI=OFF"]
-        run_command(configure, project)
-        build = ["cmake", "--build", str(work / "build")]
-        if target == "ios":
-            name = load_json(project / "expected.json")["target"]
-            build += ["--target", f"{name}_huxerui_ios_core"]
-        run_command(build, project)
-        # A second build of unchanged inputs must also succeed.
-        run_command(build, project)
-        if target == "ios":
-            # The application core the Xcode shell links: one archive, its link inputs, and the resource package.
-            core = work / "build" / "huxerui-ios" / name
-            return {
-                "target": name,
-                "artifact": str(core / f"lib{name}_huxerui.a"),
-                "bundle": "",
-                "link_inputs": str(core / "link.rsp"),
-                "resources": str(core / "resources" / "package"),
-                "profile": "debug",
-                "libraries": load_json(graph)["libraries"] if graph.exists() else [],
-                "launch_environment": {},
-            }
-
-        plans = sorted((work / "build" / "huxerui-integration").rglob("app.json"))
-        if not plans:
-            raise RuntimeError("the CMake build generated no application-integration record")
-        plan = load_json(plans[0])
-        return {
-            "target": plan["target"],
-            "artifact": plan["artifact"],
-            "bundle": plan.get("bundle") or "",
-            "resources": str(work / "build" / "huxerui-resources" / plan["target"] / "package"),
-            "profile": "debug",
-            "libraries": load_json(graph)["libraries"] if graph.exists() else [],
-            "launch_environment": {},
-        }
+def discover_integrations() -> dict[str, Path]:
+    """Every directory below `buildtools` that declares support is an integration."""
+    return {path.parent.name: path.parent for path in sorted(BUILDTOOLS.glob("*/support.json"))}
 
 
-class McppIntegration:
-    name = "mcpp"
-    # Targets built by cross-compilation name their triple; a desktop target is the host's own.
-    TRIPLES = {"web": "wasm32-emscripten", "android": "aarch64-linux-android", "ios": "aarch64-ios-sim"}
-
-    def __init__(self, arguments: argparse.Namespace) -> None:
-        self.toolchain = arguments.mcpp_toolchain
-
-    def build(self, project: Path, work: Path, target: str) -> dict:
-        command = ["mcpp", "build", "--message-format", "json"]
-        if target in self.TRIPLES:
-            command += ["--target", self.TRIPLES[target]]
-        if self.toolchain:
-            command += ["--toolchain", self.toolchain]
-        graph = project / ".huxerui" / "generated" / "libraries.json"
-        if graph.exists():
-            graph.unlink()
-        self._build(command, project)
-        # A second build of unchanged inputs must also succeed.
-        envelope = self._build(command, project)
-
-        name = load_json(project / "expected.json")["target"]
-        artifacts = [a for a in envelope["data"]["artifacts"] if a["name"] == name and a["kind"] in ("bin", "app", "shared")]
-        if not artifacts:
-            raise RuntimeError(f"mcpp reported no program artifact named {name}")
-        profile = envelope["data"]["configuration"]["profile"]
-        artifact = Path(artifacts[0]["path"])
-        launch = (artifacts[0].get("launch") or {}).get("env") or {}
-        bundle = artifact.parent / f"{name}.app"
-        if target == "macos" and (bundle / "Contents" / "MacOS" / name).is_file():
-            # The integration assembles the bundle beside the linked program; the program in the bundle is the artifact.
-            return {
-                "target": name,
-                "artifact": str(bundle / "Contents" / "MacOS" / name),
-                "bundle": str(bundle),
-                "profile": {"dev": "debug", "release": "release"}.get(profile, profile),
-                "libraries": load_json(graph)["libraries"] if graph.exists() else [],
-                "launch_environment": launch,
-            }
-        if target == "ios":
-            # The application core the integration assembles beside the linked program.
-            core = artifact.parent / "huxerui-ios" / name
-            return {
-                "target": name,
-                "artifact": str(core / f"lib{name}_huxerui.a"),
-                "bundle": "",
-                "link_inputs": str(core / "link.rsp"),
-                "resources": str(core / "resources" / "package"),
-                "profile": {"dev": "debug", "release": "release"}.get(profile, profile),
-                "libraries": load_json(graph)["libraries"] if graph.exists() else [],
-                "launch_environment": {},
-            }
-        return {
-            "target": name,
-            "bundle": "",
-            "resources": str(artifact.parent / f"{name}.resources"),
-            "artifact": artifacts[0]["path"],
-            "profile": {"dev": "debug", "release": "release"}.get(profile, profile),
-            "libraries": load_json(graph)["libraries"] if graph.exists() else [],
-            "launch_environment": (artifacts[0].get("launch") or {}).get("env") or {},
-        }
-
-    @staticmethod
-    def _build(command: list[str], project: Path) -> dict:
-        log(f"  $ {' '.join(command)}  (in {project})")
-        completed = subprocess.run(command, cwd=project, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        envelope = None
-        for line in completed.stdout.splitlines():
-            line = line.strip()
-            if not line.startswith("{"):
-                continue
-            try:
-                document = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if document.get("kind") == "mcpp.build":
-                envelope = document
-        if completed.returncode != 0 or envelope is None or envelope["data"].get("status") != "ok":
-            tail = "\n".join((completed.stderr or completed.stdout).splitlines()[-60:])
-            raise RuntimeError(f"mcpp build failed with exit code {completed.returncode}\n{tail}")
-        return envelope
+def load_adapter(name: str, directory: Path):
+    """Imports an integration's adapter module, or returns None when it ships none."""
+    path = directory / "cts_adapter.py"
+    if not path.is_file():
+        return None
+    spec = importlib.util.spec_from_file_location(f"cts_adapter_{name}", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    for required in ("add_arguments", "Adapter"):
+        if not hasattr(module, required):
+            raise SystemExit(f"{path}: an adapter defines {required}")
+    return module
 
 
-INTEGRATIONS = {"cmake": CMakeIntegration, "mcpp": McppIntegration}
+def load_adapters() -> dict[str, object]:
+    adapters = {}
+    for name, directory in discover_integrations().items():
+        module = load_adapter(name, directory)
+        if module is not None:
+            adapters[name] = module
+    return adapters
+
+
+class PrefixedOptions:
+    """Adds an adapter's options and refuses an option that does not carry the integration's name."""
+
+    def __init__(self, parser, name: str) -> None:
+        self.parser = parser
+        self.prefix = f"--{name}-"
+
+    def add_argument(self, *flags, **options):
+        for flag in flags:
+            if not flag.startswith(self.prefix):
+                raise SystemExit(f"adapter option {flag} does not start with {self.prefix}")
+        return self.parser.add_argument(*flags, **options)
+
+
+ADAPTERS = load_adapters()
 
 
 # ----------------------------------------------------------------------- facts
@@ -307,7 +184,8 @@ def collect_facts(target: str, project: Path, record: dict) -> dict:
     if target == "web":
         return {**facts, **web_facts(artifact), **library_facts(project, record)}
     if target == "android":
-        return {**facts, **android_facts(artifact, Path(record["resources"])), **library_facts(project, record)}
+        package = Path(record["resources"]) if record.get("resources") else None
+        return {**facts, **android_facts(artifact, package), **library_facts(project, record)}
     if target == "ios":
         return {**facts, **ios_facts(artifact, record), **library_facts(project, record)}
     # The contract fixes the basename; the platform adds its own extension.
@@ -352,12 +230,14 @@ def library_facts(project: Path, record: dict) -> dict:
 
 
 def find_readelf() -> str:
-    """An ELF reader for a cross-built artifact: the host's, or the one an installed Android NDK carries."""
+    """An ELF reader for a cross-built artifact: the host's, or the one an installed Android NDK carries.
+    Adapters may name the directories where their integration installs such an NDK."""
     found = shutil.which("readelf") or shutil.which("llvm-readelf")
     if found:
         return found
     roots = [os.environ.get(name) for name in ("ANDROID_NDK_HOME", "ANDROID_NDK_ROOT", "ANDROID_NDK_LATEST_HOME")]
-    roots += [str(path) for path in (Path.home() / ".mcpp" / "registry" / "data" / "xpkgs").glob("xim-x-android-ndk/*")]
+    for module in ADAPTERS.values():
+        roots += [str(path) for path in getattr(module, "tool_search_roots", lambda: [])()]
     for root in filter(None, roots):
         for candidate in Path(root).glob("toolchains/llvm/prebuilt/*/bin/llvm-readelf*"):
             if candidate.is_file():
@@ -365,7 +245,7 @@ def find_readelf() -> str:
     raise Unavailable("no ELF reader was found on this host")
 
 
-def android_facts(artifact: Path, package: Path) -> dict:
+def android_facts(artifact: Path, package: Path | None) -> dict:
     """Facts of an Android application core: the application's shared library and the final resource package
     the platform shell stages into the APK."""
     facts: dict = {"artifact.bundle": "<none>"}
@@ -387,11 +267,10 @@ def android_facts(artifact: Path, package: Path) -> dict:
     else:
         facts["android.exports"] = "JNI entries only"
 
-    index = package / "huxerui" / "resources.bin"
     facts["resources.location"] = "<missing>"
-    if index.is_file():
+    if package is not None and (package / "huxerui" / "resources.bin").is_file():
         facts["resources.location"] = "application core"
-        facts["resources.sha256"] = hashlib.sha256(index.read_bytes()).hexdigest()
+        facts["resources.sha256"] = hashlib.sha256((package / "huxerui" / "resources.bin").read_bytes()).hexdigest()
         facts["resources.files"] = sorted(path.relative_to(package).as_posix() for path in package.rglob("*") if path.is_file())
     return facts
 
@@ -409,10 +288,10 @@ def ios_facts(artifact: Path, record: dict) -> dict:
     link_inputs = Path(record.get("link_inputs") or "")
     facts["ios.link_inputs"] = "present" if link_inputs.is_file() and link_inputs.stat().st_size > 0 else "<missing>"
 
-    package = Path(record.get("resources") or "")
-    index = package / "huxerui" / "resources.bin"
+    package = Path(record["resources"]) if record.get("resources") else None
+    index = package / "huxerui" / "resources.bin" if package is not None else None
     facts["resources.location"] = "<missing>"
-    if index.is_file():
+    if index is not None and index.is_file():
         facts["resources.location"] = "application core"
         facts["resources.sha256"] = hashlib.sha256(index.read_bytes()).hexdigest()
         facts["resources.files"] = sorted(path.relative_to(package).as_posix() for path in package.rglob("*") if path.is_file())
@@ -487,11 +366,11 @@ def launch_facts(record: dict, expected: dict, work: Path, timeout: float) -> di
 # ----------------------------------------------------------------------- build
 
 
-def build_project(integration, target: str, host: str, project: Path, out: Path) -> dict:
+def build_project(name: str, adapter, target: str, host: str, project: Path, out: Path) -> dict:
     expected = expected_for(project, target)
-    result: dict = {"project": project.name, "integration": integration.name, "target": target, "host": host,
+    result: dict = {"project": project.name, "integration": name, "target": target, "host": host,
                     "status": "built", "reason": "", "record": {}, "facts": {}}
-    support, reason = target_support(integration.name, target, host)
+    support, reason = target_support(name, target, host)
     if support is None:
         result.update(status="undeclared", reason=reason)
         return result
@@ -500,11 +379,16 @@ def build_project(integration, target: str, host: str, project: Path, out: Path)
         result.update(status="undeclared", reason="capabilities not declared: " + ", ".join(missing))
         return result
 
-    work = out / "work" / f"{integration.name}-{target}" / project.name
+    work = out / "work" / f"{name}-{target}" / project.name
     work.mkdir(parents=True, exist_ok=True)
     try:
-        result["record"] = integration.build(project, work, target)
-        result["facts"] = collect_facts(target, project, result["record"])
+        validate_record(name, adapter.build(project, work, target))
+        # A second build of unchanged inputs must also succeed; its record is the one checked.
+        try:
+            result["record"] = validate_record(name, adapter.build(project, work, target))
+        except RuntimeError as failure:
+            raise RuntimeError(f"the second build of unchanged inputs failed: {failure}") from failure
+        result["facts"] = {**collect_facts(target, project, result["record"]), "rebuild": "succeeded"}
     except Unavailable as unavailable:
         result.update(status="unavailable", reason=str(unavailable))
     except RuntimeError as failure:
@@ -513,12 +397,12 @@ def build_project(integration, target: str, host: str, project: Path, out: Path)
 
 
 def command_build(arguments) -> int:
-    integration = INTEGRATIONS[arguments.integration](arguments)
+    adapter = ADAPTERS[arguments.integration].Adapter(arguments, REPOSITORY)
     out = Path(arguments.out).resolve()
     failed = False
     for project in selected_projects(arguments.project):
         log(f"== build  {arguments.integration} / {arguments.target} / {project.name}")
-        result = build_project(integration, arguments.target, arguments.host, project, out)
+        result = build_project(arguments.integration, adapter, arguments.target, arguments.host, project, out)
         write_json(result_path(out, arguments.integration, arguments.target, project.name), result)
         log(f"   {result['status'].upper()}" + (f": {result['reason']}" if result["reason"] else ""))
         failed = failed or result["status"] == "failed"
@@ -700,6 +584,10 @@ def command_matrix(arguments) -> int:
 
 
 def command_list(arguments) -> int:
+    for name, directory in discover_integrations().items():
+        targets = sorted(load_json(directory / "support.json")["targets"])
+        state = "" if name in ADAPTERS else "  (no cts_adapter.py; not buildable by the suite)"
+        log(f"integration  {name}: {', '.join(targets)}{state}")
     for name, check in CHECKS.items():
         log(f"check    {name}: {check['title']}")
     for project in selected_projects(None):
@@ -713,14 +601,13 @@ def main() -> int:
     commands = parser.add_subparsers(dest="command", required=True)
 
     def add_selection(command, with_checks: bool) -> None:
-        command.add_argument("--integration", required=True, choices=sorted(INTEGRATIONS))
+        command.add_argument("--integration", required=True, choices=sorted(ADAPTERS))
         command.add_argument("--target", required=True, help="target platform, for example linux")
         command.add_argument("--host", default=current_host(), help="host platform; defaults to this machine")
         command.add_argument("--out", required=True, help="directory for build output and result files")
         command.add_argument("--project", action="append", help="limit to the named project; repeatable")
-        command.add_argument("--cmake-home", help="HuxerUI SDK or source checkout for CMake projects; defaults to this checkout")
-        command.add_argument("--cmake-compiler-launcher", help="compiler launcher such as ccache for CMake builds")
-        command.add_argument("--mcpp-toolchain", help="toolchain passed to mcpp, for example llvm@22.1.8")
+        for name, module in sorted(ADAPTERS.items()):
+            module.add_arguments(PrefixedOptions(command.add_argument_group(f"{name} integration"), name))
         if with_checks:
             command.add_argument("--check", nargs="+", choices=[*CHECKS, "all"], help="checkpoints to evaluate")
             command.add_argument("--launch-timeout", type=float, default=30.0)
@@ -751,7 +638,7 @@ def main() -> int:
     listing.set_defaults(handler=command_list)
 
     arguments = parser.parse_args()
-    if getattr(arguments, "check", None) is None and arguments.command == "check":
+    if arguments.command == "check" and arguments.check is None:
         arguments.check = ["all"]
     return arguments.handler(arguments) or 0
 
