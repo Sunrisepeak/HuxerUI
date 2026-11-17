@@ -98,9 +98,12 @@ jobs:
           test -f "$ANDROID_HOME/ndk/29.0.14206865/build/cmake/android.toolchain.cmake"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/29.0.14206865" >> "$GITHUB_ENV"
 
+      # The Xcode the SDK release builds with; the runner's default lacks parts of the C++20 library.
       - name: Install macOS prerequisites
-        if: matrix.host == 'macos' && matrix.integration == 'cmake'
-        run: brew install ninja
+        if: matrix.host == 'macos'
+        run: |
+          echo "DEVELOPER_DIR=/Applications/Xcode_26.2.app/Contents/Developer" >> "$GITHUB_ENV"
+          if [ "${{ matrix.integration }}" = cmake ]; then brew install ninja; fi
 
       - name: Cache compiler output
         if: matrix.integration == 'cmake' && matrix.target == 'linux'
@@ -238,9 +241,12 @@ jobs:
           test -f "$ANDROID_HOME/ndk/29.0.14206865/build/cmake/android.toolchain.cmake"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/29.0.14206865" >> "$GITHUB_ENV"
 
+      # The Xcode the SDK release builds with; the runner's default lacks parts of the C++20 library.
       - name: Install macOS prerequisites
-        if: matrix.host == 'macos' && matrix.integration == 'cmake'
-        run: brew install ninja
+        if: matrix.host == 'macos'
+        run: |
+          echo "DEVELOPER_DIR=/Applications/Xcode_26.2.app/Contents/Developer" >> "$GITHUB_ENV"
+          if [ "${{ matrix.integration }}" = cmake ]; then brew install ninja; fi
 
       - name: Cache compiler output
         if: matrix.integration == 'cmake' && matrix.target == 'linux'
