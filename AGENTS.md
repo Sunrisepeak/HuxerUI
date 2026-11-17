@@ -253,7 +253,7 @@ Enable `[[huxerui::composable]]` transformation with `huxerui_enable_codegen(tar
 
 Host tools in `tools/prebuilt/<host>/<architecture>` run on the development host, not the target. Composable syntax, transformation, source discovery, generated code, or entry-point changes update codegen tests, Runtime tests, CMake, documentation, and required host tools together. Do not edit generated files.
 
-Place tests by ownership under `tests/unit`, `tests/runtime`, `tests/platform`, or `tests/codegen`. Tests verify public outcomes and invariants rather than private steps. Cover mount, compatible recomposition, replacement, unmount, keyed movement, Cancel and disabled input paths, deterministic animation time, and exception categories where relevant.
+Place tests by ownership under `tests/unit`, `tests/runtime`, `tests/platform`, or `tests/codegen`. Build-system conformance projects live under `buildtools/cts/projects`; each has one set of sources and one native declaration per build system, and its expected facts never name an integration. Tests verify public outcomes and invariants rather than private steps. Cover mount, compatible recomposition, replacement, unmount, keyed movement, Cancel and disabled input paths, deterministic animation time, and exception categories where relevant.
 
 Use the existing compatible build directory and host platform toolchain; do not delete owner-managed output or let a generic command select another compiler, generator, ABI, or binary format.
 
@@ -296,6 +296,7 @@ Documentation has distinct ownership:
 - `docs/development/` documents repository builds, validation, and SDK packaging.
 - `docs/design/` records internal architecture, ownership, invariants, and unsupported boundaries.
 - `buildtools/mcpp/README.md`, `buildtools/mcpp/examples/` and `modules/README.md` document the mcpp build for someone driving it; the design behind it is `docs/design/mcpp-build-system.md`.
+- `buildtools/specs/` holds the Build System Integration Contract that every build-system integration implements, and `buildtools/cts/README.md` documents the conformance suite that checks it.
 - `docs/roadmap.md` summarizes future capability areas without promising release dates.
 
 Public API or behavior changes update the owning user and design documents. Update README only when its project overview, installation, first-use flow, supported platforms, or top-level documentation links change; keep details in the owning document.

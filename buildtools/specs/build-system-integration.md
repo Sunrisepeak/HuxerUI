@@ -31,7 +31,8 @@ The CLI reports exit code `0` for success, `2` for invalid command usage, and `1
 
 A project has one build system, identified by the native build file at its root.
 The CLI offers one set of verbs and dispatches each to the project's integration; it exposes no command named after a build system.
-A root that declares more than one build system requires an explicit selection, and the CLI diagnoses the ambiguity instead of choosing.
+An application root that declares more than one build system requires an explicit selection, and the CLI diagnoses the ambiguity instead of choosing.
+A library is built by the build system of the application that consumes it, so a library root may carry several native declarations without ambiguity.
 An option that does not apply to the project's build system is rejected with the reason and never ignored.
 
 `huxerui create` selects the build system by generating its native build file, from an explicit option or the CLI's default.
@@ -165,14 +166,12 @@ A HuxerUI library has one standard form, so one library source tree serves every
 - One native declaration per supported build system. It states the public identity, sources, public interface, resource root, dependencies on other libraries, and external link requirements; it does not restate platform configuration.
 - Platform packages shared by all integrations. A library's Android, iOS, or other platform code is attached by the application's platform shell from the library graph, independently of the integration that compiled its C++ sources.
 
-An application declares a library dependency with one native statement naming the public identity and its local path or pinned source revision.
+An application declares a library dependency with one native statement naming the library and its local path or pinned source revision.
 Every integration then generates the same ordered library-graph record for the same declarations: the public identity and resolved source root of each source-backed library, following dependencies depth-first in declaration order, each library once.
 Platform shells consume that record to attach platform packages, and the final resource package includes each library's resources in the same order, transitive dependencies included.
 
 A library that declares several build systems must project the same identity, resource namespace, and dependencies under each.
 A difference is a library defect, and validation reports it by comparing the records each integration generates.
-
-Open question: an mcpp build program currently sees only its direct dependencies. Whether mcpp's own machine-readable output provides the full ordered graph has not been confirmed.
 
 ## Code generation and resources
 
@@ -204,7 +203,8 @@ Package publication validates the staged result before replacing the previous pu
 ## Conformance
 
 An integration declares its supported hosts, targets, framework distribution forms, and capabilities.
-Conformance is judged against this contract with a shared fixture project, not by comparing one integration's output with another's.
+Conformance is judged against this contract with shared projects, not by comparing one integration's output with another's.
+The [conformance test suite](../cts/README.md) holds those projects, each with its expected facts, and the integrations' [support declarations](../README.md) state what each one is checked for.
 
 **Record equivalence.** For the same project content, every integration that can build it generates equal project and library-graph records.
 
@@ -216,8 +216,8 @@ Conformance is judged against this contract with a shared fixture project, not b
 - The application's binary or modules carry the default basename from the declared application target.
 - `package` produces the platform's standard distributable kind and publishes it below `dist/<platform>`.
 
-A difference in one of these facts is permitted only when this section lists it with its reason.
-No difference is currently listed.
+A difference in one of these facts is permitted only when the suite's allowed-differences list names it with its reason.
+The list is currently empty.
 
 **Minimum acceptance.** An integration's declared support is checked with:
 

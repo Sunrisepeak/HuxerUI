@@ -88,6 +88,23 @@ the manifest stays out of it.
 The target's entry is the one file the rule never transforms, for the same
 reason: a transformed copy of `main.cpp` would link beside the original.
 
+### Resources and libraries
+
+`configure()` produces the one final resource package the [Build System Integration Contract](../../buildtools/specs/build-system-integration.md) requires and deploys it to `<program>.resources/` beside the program, where the Runtime looks for it.
+An application's own root uses the namespace `app` unless the build program states another.
+
+A HuxerUI library states its public identity and resource root about itself:
+
+```toml
+[package.metadata.huxerui]
+library   = "CameraKit::CameraKit"
+resources = "resources"
+```
+
+The application's build program reads the resolved graph through `mcpp::graph_file()`, which carries that table for every package in the closure, including libraries the application does not name.
+It compiles each library's root under the namespace its identity projects to, merges builtin, library, and application packages in contract order, and writes the ordered library-graph record to `.huxerui/generated/libraries.json` with the schema the CMake integration uses.
+A library's own build program reads the same table from its own manifest to generate its resource header.
+
 ## 4. The module surface
 
 `modules/huxerui.cppm` includes the public headers in its global module
