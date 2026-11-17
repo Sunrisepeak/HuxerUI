@@ -40,6 +40,18 @@
         "launch"
       ],
       "capabilities": []
+    },
+    "web": {
+      "hosts": [
+        "linux"
+      ],
+      "checks": [
+        "build",
+        "linkage",
+        "resources",
+        "libraries"
+      ],
+      "capabilities": []
     }
   }
 }

@@ -58,6 +58,8 @@ jobs:
           - { integration: mcpp,  target: windows, host: windows, os: windows-2022, python: python }
           - { integration: cmake, target: macos,   host: macos,   os: macos-15,     python: python3 }
           - { integration: mcpp,  target: macos,   host: macos,   os: macos-15,     python: python3 }
+          - { integration: cmake, target: web,     host: linux,   os: ubuntu-24.04, python: python3 }
+          - { integration: mcpp,  target: web,     host: linux,   os: ubuntu-24.04, python: python3 }
     steps:
       - uses: actions/checkout@v5
 
@@ -78,6 +80,10 @@ jobs:
             echo "CXX=g++-14" >> "$GITHUB_ENV"
             echo "CTS_BUILD_ARGUMENTS=--cmake-compiler-launcher ccache" >> "$GITHUB_ENV"
           fi
+
+      - name: Install Emscripten
+        if: matrix.target == 'web' && matrix.integration == 'cmake'
+        uses: mymindstorm/setup-emsdk@v14
 
       - name: Install macOS prerequisites
         if: matrix.host == 'macos' && matrix.integration == 'cmake'

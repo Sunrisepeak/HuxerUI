@@ -141,6 +141,8 @@ class CMakeIntegration:
         )
         configure = ["cmake", "-S", str(project), "-B", str(work / "build"), "-G", "Ninja",
                      "-DCMAKE_BUILD_TYPE=Debug", f"-DHUXERUI_HOME={self.home}"]
+        if target == "web":
+            configure.insert(0, "emcmake")
         if self.launcher:
             configure += [f"-DCMAKE_C_COMPILER_LAUNCHER={self.launcher}", f"-DCMAKE_CXX_COMPILER_LAUNCHER={self.launcher}"]
         run_command(configure, project)
@@ -164,12 +166,16 @@ class CMakeIntegration:
 
 class McppIntegration:
     name = "mcpp"
+    # Targets built by cross-compilation name their triple; a desktop target is the host's own.
+    TRIPLES = {"web": "wasm32-emscripten"}
 
     def __init__(self, arguments: argparse.Namespace) -> None:
         self.toolchain = arguments.mcpp_toolchain
 
     def build(self, project: Path, work: Path, target: str) -> dict:
         command = ["mcpp", "build", "--message-format", "json"]
+        if target in self.TRIPLES:
+            command += ["--target", self.TRIPLES[target]]
         if self.toolchain:
             command += ["--toolchain", self.toolchain]
         graph = project / ".huxerui" / "generated" / "libraries.json"
@@ -251,10 +257,12 @@ def dynamic_dependencies(target: str, artifact: Path) -> list[str]:
 
 
 def collect_facts(target: str, project: Path, record: dict) -> dict:
-    if target not in ("linux", "windows", "macos"):
+    if target not in ("linux", "windows", "macos", "web"):
         raise Unavailable(f"fact collection is not implemented for target {target}")
     artifact = Path(record["artifact"])
     facts: dict = {"profile": record["profile"]}
+    if target == "web":
+        return {**facts, **web_facts(artifact), **library_facts(project, record)}
     # The contract fixes the basename; the platform adds its own extension.
     name = artifact.name[:-4] if target == "windows" and artifact.name.lower().endswith(".exe") else artifact.name
     facts["artifact.name"] = name if artifact.is_file() else "<missing>"
@@ -282,11 +290,44 @@ def collect_facts(target: str, project: Path, record: dict) -> dict:
     else:
         facts["resources.location"] = "<missing>"
 
-    facts["libraries"] = [entry["target"] for entry in record["libraries"]]
-    facts["libraries.roots"] = [
-        os.path.relpath(os.path.realpath(entry["sourceRoot"]), os.path.realpath(project)).replace(os.sep, "/")
-        for entry in record["libraries"]
-    ]
+    facts.update(library_facts(project, record))
+    return facts
+
+
+def library_facts(project: Path, record: dict) -> dict:
+    return {
+        "libraries": [entry["target"] for entry in record["libraries"]],
+        "libraries.roots": [
+            os.path.relpath(os.path.realpath(entry["sourceRoot"]), os.path.realpath(project)).replace(os.sep, "/")
+            for entry in record["libraries"]
+        ],
+    }
+
+
+def web_facts(artifact: Path) -> dict:
+    """Facts of a Web application: its ES module, WebAssembly module, and preloaded resource package."""
+    facts: dict = {"artifact.bundle": "<none>", "framework.linkage": "static"}
+    name = artifact.name[:-3] if artifact.name.endswith(".js") else artifact.name
+    wasm = artifact.with_suffix(".wasm")
+    facts["artifact.name"] = name if artifact.is_file() and wasm.is_file() else "<missing>"
+
+    # Emscripten's loader lists each preloaded file with its byte range in the data package.
+    data = artifact.with_suffix(".data")
+    facts["resources.location"] = "<missing>"
+    if not data.is_file():
+        return facts
+    import re
+    loader = artifact.read_text(encoding="utf-8", errors="replace")
+    ranges = {}
+    for match in re.finditer(r'\{"filename":\s*"([^"]+)",\s*"start":\s*(\d+),\s*"end":\s*(\d+)', loader):
+        ranges[match.group(1)] = (int(match.group(2)), int(match.group(3)))
+    index = ranges.get("/huxerui/resources.bin")
+    if index is None:
+        return facts
+    content = data.read_bytes()
+    facts["resources.location"] = "<artifact>.data:/huxerui/resources.bin"
+    facts["resources.sha256"] = hashlib.sha256(content[index[0]:index[1]]).hexdigest()
+    facts["resources.files"] = sorted(path.lstrip("/") for path in ranges)
     return facts
 
 

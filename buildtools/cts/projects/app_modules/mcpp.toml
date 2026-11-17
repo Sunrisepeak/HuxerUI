@@ -22,3 +22,7 @@ main = "platform/macos/main.cpp"
 
 [build]
 sources = []
+
+# The Web build's exception model; HuxerUI requires it, and only the root package can grant it.
+[target.'cfg(os = "emscripten")'.abi]
+exceptions = true

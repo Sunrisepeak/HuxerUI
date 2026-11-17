@@ -24,6 +24,11 @@
         "artifact.bundle": "cts_app_library.app",
         "resources.location": "<bundle>/Contents/Resources/HuxerUI/huxerui/resources.bin"
       }
+    },
+    "web": {
+      "facts": {
+        "resources.location": "<artifact>.data:/huxerui/resources.bin"
+      }
     }
   }
 }

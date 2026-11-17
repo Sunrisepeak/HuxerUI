@@ -789,6 +789,14 @@ inline std::vector<edge> plan_resources(const options& opt, const project_graph&
         return out;
     }
 
+    if (std::string_view(mcpp::target_os()) == "emscripten") {
+        // The Web has no directory beside the program: the package is preloaded
+        // into the module's virtual file system at its root.
+        mcpp::link_flag("--preload-file");
+        mcpp::link_flag((final_package + "@/").c_str());
+        return out;
+    }
+
     // Where the Runtime looks on the other desktop platforms: `<program>.resources/`
     // beside the program, the directory every integration stages the package into.
     for (const std::string& program : graph.programs) {

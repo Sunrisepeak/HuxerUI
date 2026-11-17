@@ -169,6 +169,17 @@ libraries = ["advapi32", "d2d1", "d3d11", "dwrite", "dwmapi", "dxguid", "dxgi",
              "dcomp", "windowsapp", "crypt32", "propsys",
              "kernel32", "gdi32", "winspool", "uuid", "comdlg32"]
 # ---------------------------------------------------------------- macOS ----
+# The Web. Sources mirror cmake/platform/Web.cmake. Exceptions are a property of
+# the whole module graph on this target, so the framework states the
+# requirement and the application's manifest grants it under
+# `[target.'cfg(os = "emscripten")'.abi]`; the link options an application
+# needs are emitted by build.mcpp.
+[target.'cfg(os = "emscripten")']
+requires_abi = { exceptions = true }
+
+[target.'cfg(os = "emscripten")'.build]
+sources = ["platform/web/*.cpp"]
+
 [target.macos.build]
 # `.mm` is a first-class source kind but is not in the default glob.
 sources  = ["platform/macos/*.mm"]

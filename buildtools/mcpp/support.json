@@ -46,6 +46,20 @@
       "capabilities": [
         "modules"
       ]
+    },
+    "web": {
+      "hosts": [
+        "linux"
+      ],
+      "checks": [
+        "build",
+        "linkage",
+        "resources",
+        "libraries"
+      ],
+      "capabilities": [
+        "modules"
+      ]
     }
   }
 }

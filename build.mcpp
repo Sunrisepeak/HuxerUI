@@ -120,6 +120,21 @@ bool probe(std::string_view module_spec, const std::string& libdir) {
 int main() {
     if (!huxerui::rules::builtin_resources()) return 1;
 
+    if (std::string_view(mcpp::target_os()) == "emscripten") {
+        // The link interface of cmake/platform/Web.cmake for an application.
+        const std::string web = std::string(mcpp::manifest_dir()) + "/platform/web";
+        for (const char* flag : { "--bind", "--no-entry", "-lidbfs.js", "-sMODULARIZE=1", "-sEXPORT_ES6=1",
+                                  "-sEXPORT_NAME=createHuxerUIApp", "-sEXPORTED_RUNTIME_METHODS=stringToNewUTF8",
+                                  "-sENVIRONMENT=web", "-sALLOW_MEMORY_GROWTH=1", "-sSTACK_SIZE=1048576",
+                                  "-sNO_EXIT_RUNTIME=1" }) {
+            mcpp::link_flag(flag);
+        }
+        for (const char* script : { "/web_platform_registry.js", "/web_file.js" }) {
+            mcpp::link_flag("--pre-js");
+            mcpp::link_flag((web + script).c_str());
+        }
+        return 0;
+    }
     if (std::string_view(mcpp::target_os()) != "linux") return 0;
 
     const std::string libdir = pkg_config_libdir();
