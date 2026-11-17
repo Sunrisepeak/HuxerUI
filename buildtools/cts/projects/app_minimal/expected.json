@@ -7,11 +7,20 @@
     "artifact.name": "cts_app_minimal",
     "framework.linkage": "static",
     "resources.location": "<artifact>.resources/huxerui/resources.bin",
-    "libraries": []
+    "libraries": [],
+    "artifact.bundle": "<none>"
   },
   "launch": {
     "app.title": "CTS minimal application",
     "app.greeting": "Hello from the application package",
     "composable.state": "1"
+  },
+  "targets": {
+    "macos": {
+      "facts": {
+        "artifact.bundle": "cts_app_minimal.app",
+        "resources.location": "<bundle>/Contents/Resources/HuxerUI/huxerui/resources.bin"
+      }
+    }
   }
 }

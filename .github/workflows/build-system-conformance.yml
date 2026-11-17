@@ -20,7 +20,7 @@ on:
       - 'modules/**'
       - 'include/**'
       - 'src/**'
-      - 'platform/linux/**'
+      - 'platform/**'
       - 'resources/**'
       - 'tools/codegen/**'
       - 'tools/resource_compiler/**'
@@ -44,21 +44,47 @@ defaults:
     shell: bash
 
 jobs:
-  cmake-linux:
-    name: CMake (linux x86_64)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
+  conformance:
+    name: ${{ matrix.integration }} (${{ matrix.target }} on ${{ matrix.host }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { integration: cmake, target: linux,   host: linux,   os: ubuntu-24.04, python: python3 }
+          - { integration: mcpp,  target: linux,   host: linux,   os: ubuntu-24.04, python: python3 }
+          - { integration: cmake, target: windows, host: windows, os: windows-2022, python: python }
+          - { integration: mcpp,  target: windows, host: windows, os: windows-2022, python: python }
+          - { integration: cmake, target: macos,   host: macos,   os: macos-15,     python: python3 }
+          - { integration: mcpp,  target: macos,   host: macos,   os: macos-15,     python: python3 }
     steps:
       - uses: actions/checkout@v5
 
-      - name: Install the CMake build's dependencies
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+        if: matrix.host == 'windows'
+
+      # The mcpp integration takes its GTK stack from the xlings payloads the
+      # manifest declares; only the virtual display comes from the machine.
+      - name: Install Linux prerequisites
+        if: matrix.host == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libgtk-4-dev libepoxy-dev libsoup-3.0-dev pkg-config ninja-build \
-            gcc-14 g++-14 ccache xvfb xauth fonts-dejavu-core
+          sudo apt-get install -y --no-install-recommends xvfb xauth fonts-dejavu-core
+          if [ "${{ matrix.integration }}" = cmake ]; then
+            sudo apt-get install -y --no-install-recommends \
+              libgtk-4-dev libepoxy-dev libsoup-3.0-dev pkg-config ninja-build gcc-14 g++-14 ccache
+            echo "CC=gcc-14" >> "$GITHUB_ENV"
+            echo "CXX=g++-14" >> "$GITHUB_ENV"
+            echo "CTS_BUILD_ARGUMENTS=--cmake-compiler-launcher ccache" >> "$GITHUB_ENV"
+          fi
+
+      - name: Install macOS prerequisites
+        if: matrix.host == 'macos' && matrix.integration == 'cmake'
+        run: brew install ninja
 
       - name: Cache compiler output
+        if: matrix.integration == 'cmake' && matrix.host == 'linux'
         uses: actions/cache@v4
         with:
           path: ~/.cache/ccache
@@ -66,67 +92,8 @@ jobs:
           restore-keys: |
             conformance-ccache-${{ runner.os }}-${{ runner.arch }}-
 
-      - name: Build the conformance projects
-        env:
-          CC: gcc-14
-          CXX: g++-14
-        run: |
-          python3 buildtools/cts/cts.py build --integration cmake --target linux \
-            --cmake-compiler-launcher ccache --out "$RUNNER_TEMP/cts"
-
-      - name: "Check: default build"
-        if: ${{ !cancelled() }}
-        run: |
-          python3 buildtools/cts/cts.py check --integration cmake --target linux \
-            --check build --out "$RUNNER_TEMP/cts"
-
-      - name: "Check: framework linkage"
-        if: ${{ !cancelled() }}
-        run: |
-          python3 buildtools/cts/cts.py check --integration cmake --target linux \
-            --check linkage --out "$RUNNER_TEMP/cts"
-
-      - name: "Check: final resource package"
-        if: ${{ !cancelled() }}
-        run: |
-          python3 buildtools/cts/cts.py check --integration cmake --target linux \
-            --check resources --out "$RUNNER_TEMP/cts"
-
-      - name: "Check: library-graph record"
-        if: ${{ !cancelled() }}
-        run: |
-          python3 buildtools/cts/cts.py check --integration cmake --target linux \
-            --check libraries --out "$RUNNER_TEMP/cts"
-
-      - name: "Check: startup and resource resolution"
-        if: ${{ !cancelled() }}
-        run: |
-          xvfb-run -a python3 buildtools/cts/cts.py check --integration cmake --target linux \
-            --check launch --out "$RUNNER_TEMP/cts"
-
-      - name: Upload the results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: conformance-cmake-linux
-          path: ${{ runner.temp }}/cts/results
-          if-no-files-found: error
-
-  mcpp-linux:
-    name: mcpp (linux x86_64)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v5
-
-      # The GTK stack comes from the xlings payloads the manifest declares; only
-      # the virtual display the launch check needs is taken from the machine.
-      - name: Install a virtual display
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends xvfb xauth fonts-dejavu-core
-
       - name: Cache xlings and mcpp
+        if: matrix.integration == 'mcpp'
         uses: actions/cache@v4
         with:
           path: |
@@ -136,7 +103,8 @@ jobs:
           restore-keys: |
             conformance-mcpp-${{ runner.os }}-${{ runner.arch }}-${{ env.MCPP_VERSION }}-
 
-      - name: Install xlings and mcpp
+      - name: Install xlings
+        if: matrix.integration == 'mcpp' && matrix.host != 'windows'
         run: |
           if [ ! -x "$HOME/.xlings/bin/xlings" ]; then
             curl -fsSL https://d2learn.org/xlings-install.sh | bash
@@ -144,59 +112,70 @@ jobs:
           echo "$HOME/.xlings/bin" >> "$GITHUB_PATH"
           echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
 
+      - name: Install xlings (Windows)
+        if: matrix.integration == 'mcpp' && matrix.host == 'windows'
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "$HOME\.xlings")) {
+            irm https://d2learn.org/xlings-install.ps1.txt | iex
+          }
+          "$HOME\.xlings\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          "$HOME\.xlings\subos\current\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
       - name: Select the pinned mcpp
+        if: matrix.integration == 'mcpp'
         run: |
           xlings install "mcpp@${MCPP_VERSION}" -y
-          xlings use mcpp "${MCPP_VERSION}"
+          xlings use mcpp "${MCPP_VERSION}" || true
           mcpp --version
 
       - name: Build the conformance projects
         run: |
-          python3 buildtools/cts/cts.py build --integration mcpp --target linux \
-            --out "$RUNNER_TEMP/cts"
+          ${{ matrix.python }} buildtools/cts/cts.py build --integration ${{ matrix.integration }} \
+            --target ${{ matrix.target }} ${CTS_BUILD_ARGUMENTS:-} --out "$RUNNER_TEMP/cts"
 
       - name: "Check: default build"
         if: ${{ !cancelled() }}
         run: |
-          python3 buildtools/cts/cts.py check --integration mcpp --target linux \
-            --check build --out "$RUNNER_TEMP/cts"
+          ${{ matrix.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
+            --target ${{ matrix.target }} --check build --out "$RUNNER_TEMP/cts"
 
       - name: "Check: framework linkage"
         if: ${{ !cancelled() }}
         run: |
-          python3 buildtools/cts/cts.py check --integration mcpp --target linux \
-            --check linkage --out "$RUNNER_TEMP/cts"
+          ${{ matrix.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
+            --target ${{ matrix.target }} --check linkage --out "$RUNNER_TEMP/cts"
 
       - name: "Check: final resource package"
         if: ${{ !cancelled() }}
         run: |
-          python3 buildtools/cts/cts.py check --integration mcpp --target linux \
-            --check resources --out "$RUNNER_TEMP/cts"
+          ${{ matrix.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
+            --target ${{ matrix.target }} --check resources --out "$RUNNER_TEMP/cts"
 
       - name: "Check: library-graph record"
         if: ${{ !cancelled() }}
         run: |
-          python3 buildtools/cts/cts.py check --integration mcpp --target linux \
-            --check libraries --out "$RUNNER_TEMP/cts"
+          ${{ matrix.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
+            --target ${{ matrix.target }} --check libraries --out "$RUNNER_TEMP/cts"
 
       - name: "Check: startup and resource resolution"
         if: ${{ !cancelled() }}
         run: |
-          xvfb-run -a python3 buildtools/cts/cts.py check --integration mcpp --target linux \
-            --check launch --out "$RUNNER_TEMP/cts"
+          ${{ matrix.target == 'linux' && 'xvfb-run -a ' || '' }}${{ matrix.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
+            --target ${{ matrix.target }} --check launch --out "$RUNNER_TEMP/cts"
 
       - name: Upload the results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: conformance-mcpp-linux
+          name: conformance-${{ matrix.integration }}-${{ matrix.target }}
           path: ${{ runner.temp }}/cts/results
           if-no-files-found: error
 
   compare:
     name: Integrations agree
     runs-on: ubuntu-24.04
-    needs: [cmake-linux, mcpp-linux]
+    needs: [conformance]
     if: always()
     timeout-minutes: 10
     steps:

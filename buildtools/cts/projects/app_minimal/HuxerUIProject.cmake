@@ -9,7 +9,7 @@ if (HUXERUI_PROJECT_PLAN_OUTPUT)
   "schema": 1,
   "kind": "app",
   "name": "CTS App Minimal",
-  "id": "org.huxerui.cts.app_minimal",
+  "id": "org.huxerui.cts.appminimal",
   "target": "cts_app_minimal"
 }
 ]=])

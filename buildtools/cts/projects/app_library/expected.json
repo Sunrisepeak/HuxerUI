@@ -7,11 +7,23 @@
     "artifact.name": "cts_app_library",
     "framework.linkage": "static",
     "resources.location": "<artifact>.resources/huxerui/resources.bin",
-    "libraries": ["CtsKit::Widgets", "CtsKit::Core"]
+    "libraries": [
+      "CtsKit::Widgets",
+      "CtsKit::Core"
+    ],
+    "artifact.bundle": "<none>"
   },
   "launch": {
     "app.title": "CTS library application",
     "widgets.caption": "Caption from the widgets library",
     "core.name": "Name from the core library"
+  },
+  "targets": {
+    "macos": {
+      "facts": {
+        "artifact.bundle": "cts_app_library.app",
+        "resources.location": "<bundle>/Contents/Resources/HuxerUI/huxerui/resources.bin"
+      }
+    }
   }
 }

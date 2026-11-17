@@ -3,8 +3,42 @@
   "integration": "cmake",
   "targets": {
     "linux": {
-      "hosts": ["linux"],
-      "checks": ["build", "linkage", "resources", "libraries", "launch"],
+      "hosts": [
+        "linux"
+      ],
+      "checks": [
+        "build",
+        "linkage",
+        "resources",
+        "libraries",
+        "launch"
+      ],
+      "capabilities": []
+    },
+    "windows": {
+      "hosts": [
+        "windows"
+      ],
+      "checks": [
+        "build",
+        "linkage",
+        "resources",
+        "libraries",
+        "launch"
+      ],
+      "capabilities": []
+    },
+    "macos": {
+      "hosts": [
+        "macos"
+      ],
+      "checks": [
+        "build",
+        "linkage",
+        "resources",
+        "libraries",
+        "launch"
+      ],
       "capabilities": []
     }
   }

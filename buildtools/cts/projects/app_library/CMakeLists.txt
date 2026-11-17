@@ -41,7 +41,7 @@ huxerui_add_app(cts_app_library
         BUNDLE_NAME
             "CTS App Library"
         BUNDLE_IDENTIFIER
-            "org.huxerui.cts.app_library"
+            "org.huxerui.cts.applibrary"
 )
 
 huxerui_configure_project_app(cts_app_library)

@@ -6,9 +6,17 @@ standard = "c++20"
 [dependencies]
 huxerui = { path = "../../../.." }
 
+# The platform shell owns the process entry, so each platform names its own.
 [targets.cts_app_minimal]
 kind = "bin"
 main = "platform/linux/main.cpp"
+windows_subsystem = "windows"
+
+[target.'cfg(os = "windows")'.targets.cts_app_minimal]
+main = "platform/windows/main.cpp"
+
+[target.'cfg(os = "macos")'.targets.cts_app_minimal]
+main = "platform/macos/main.cpp"
 
 [build]
 sources = []

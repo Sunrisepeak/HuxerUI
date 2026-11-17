@@ -3,9 +3,49 @@
   "integration": "mcpp",
   "targets": {
     "linux": {
-      "hosts": ["linux"],
-      "checks": ["build", "linkage", "resources", "libraries", "launch"],
-      "capabilities": ["modules"]
+      "hosts": [
+        "linux"
+      ],
+      "checks": [
+        "build",
+        "linkage",
+        "resources",
+        "libraries",
+        "launch"
+      ],
+      "capabilities": [
+        "modules"
+      ]
+    },
+    "windows": {
+      "hosts": [
+        "windows"
+      ],
+      "checks": [
+        "build",
+        "linkage",
+        "resources",
+        "libraries",
+        "launch"
+      ],
+      "capabilities": [
+        "modules"
+      ]
+    },
+    "macos": {
+      "hosts": [
+        "macos"
+      ],
+      "checks": [
+        "build",
+        "linkage",
+        "resources",
+        "libraries",
+        "launch"
+      ],
+      "capabilities": [
+        "modules"
+      ]
     }
   }
 }

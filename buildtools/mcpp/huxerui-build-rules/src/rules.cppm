@@ -734,15 +734,68 @@ inline std::vector<edge> plan_resources(const options& opt, const project_graph&
         out.push_back(std::move(merge));
     }
 
-    // Where the Runtime looks: `<program>.resources/` beside the program, the
-    // directory every integration stages the final package into.
-    if (!final_package.empty()) {
+    if (final_package.empty()) return out;
+
+    if (std::string_view(mcpp::target_os()) == "macos") {
+        // A macOS application is a bundle, and the Runtime reads the package
+        // from the bundle's resources. The shell owns Info.plist and the icon;
+        // the rule assembles `<program>.app` beside the linked program.
+        const std::filesystem::path shell =
+            std::filesystem::path(mcpp::manifest_dir()) / "platform" / "macos";
         for (const std::string& program : graph.programs) {
-            for (const std::string& file : package_files) {
-                const std::string directory =
-                    std::filesystem::path(program + ".resources/" + file).parent_path().generic_string();
-                mcpp::deploy((final_package + "/" + file).c_str(), directory.c_str());
+            const std::string bundle = "${mcpp.bin_dir}/" + program + ".app";
+            const std::string linked = "${mcpp.target_file:" + program + "}";
+            std::string script =
+                "set -e; rm -rf \"" + bundle + "\"; mkdir -p \"" + bundle + "/Contents/MacOS\" \"" +
+                bundle + "/Contents/Resources/HuxerUI\"; cp \"" + linked + "\" \"" + bundle +
+                "/Contents/MacOS/" + program + "\"; cp -R \"" + final_package + "/.\" \"" + bundle +
+                "/Contents/Resources/HuxerUI/\"";
+            edge assemble{
+                .id          = "bundle:" + program,
+                .role        = "artifact",
+                .description = "macOS application bundle " + program + ".app",
+                .command     = {},
+                .inputs      = { linked },
+                .outputs     = { bundle + "/Contents/MacOS/" + program },
+            };
+            for (const std::string& file : package_files)
+                assemble.inputs.push_back(final_package + "/" + file);
+
+            const std::filesystem::path plist_template = shell / "Info.plist.in";
+            if (std::filesystem::exists(plist_template)) {
+                std::string plist = detail::read_text(plist_template);
+                const auto replace = [&](std::string_view token, std::string_view value) {
+                    for (std::size_t at = plist.find(token); at != std::string::npos;
+                         at = plist.find(token, at + value.size()))
+                        plist.replace(at, token.size(), value);
+                };
+                replace("${MACOSX_BUNDLE_EXECUTABLE_NAME}", program);
+                replace("${MACOSX_BUNDLE_SHORT_VERSION_STRING}", mcpp::package_version());
+                replace("${MACOSX_BUNDLE_BUNDLE_VERSION}", mcpp::package_version());
+                const std::string rendered = odir + "/bundle/" + program + "/Info.plist";
+                detail::write_if_changed(rendered, plist);
+                mcpp::rerun_if_changed(plist_template.string().c_str());
+                script += "; cp \"" + rendered + "\" \"" + bundle + "/Contents/Info.plist\"";
+                assemble.inputs.push_back(rendered);
             }
+            const std::filesystem::path icon = shell / "AppIcon.icns";
+            if (std::filesystem::exists(icon)) {
+                script += "; cp \"" + icon.string() + "\" \"" + bundle + "/Contents/Resources/AppIcon.icns\"";
+                assemble.inputs.push_back(icon.string());
+            }
+            assemble.command = { "/bin/sh", "-c", script };
+            out.push_back(std::move(assemble));
+        }
+        return out;
+    }
+
+    // Where the Runtime looks on the other desktop platforms: `<program>.resources/`
+    // beside the program, the directory every integration stages the package into.
+    for (const std::string& program : graph.programs) {
+        for (const std::string& file : package_files) {
+            const std::string directory =
+                std::filesystem::path(program + ".resources/" + file).parent_path().generic_string();
+            mcpp::deploy((final_package + "/" + file).c_str(), directory.c_str());
         }
     }
     return out;

@@ -8,9 +8,17 @@ standard = "c++23"
 huxerui        = { path = "../../../.." }
 ctskit_widgets = { path = "libraries/widgets" }
 
+# The platform shell owns the process entry, so each platform names its own.
 [targets.cts_app_modules]
 kind = "bin"
 main = "platform/linux/main.cpp"
+windows_subsystem = "windows"
+
+[target.'cfg(os = "windows")'.targets.cts_app_modules]
+main = "platform/windows/main.cpp"
+
+[target.'cfg(os = "macos")'.targets.cts_app_modules]
+main = "platform/macos/main.cpp"
 
 [build]
 sources = []

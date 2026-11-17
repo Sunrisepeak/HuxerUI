@@ -39,7 +39,7 @@ ALLOWED_DIFFERENCES = CTS_ROOT / "allowed-differences.json"
 CHECKS: dict[str, dict] = {
     "build": {
         "title": "Default build: profile and artifact name",
-        "facts": ["profile", "artifact.name"],
+        "facts": ["profile", "artifact.name", "artifact.bundle"],
         "equivalent": [],
     },
     "linkage": {
@@ -155,6 +155,7 @@ class CMakeIntegration:
         return {
             "target": plan["target"],
             "artifact": plan["artifact"],
+            "bundle": plan.get("bundle") or "",
             "profile": "debug",
             "libraries": load_json(graph)["libraries"] if graph.exists() else [],
             "launch_environment": {},
@@ -183,8 +184,22 @@ class McppIntegration:
         if not artifacts:
             raise RuntimeError(f"mcpp reported no program artifact named {name}")
         profile = envelope["data"]["configuration"]["profile"]
+        artifact = Path(artifacts[0]["path"])
+        launch = (artifacts[0].get("launch") or {}).get("env") or {}
+        bundle = artifact.parent / f"{name}.app"
+        if target == "macos" and (bundle / "Contents" / "MacOS" / name).is_file():
+            # The integration assembles the bundle beside the linked program; the program in the bundle is the artifact.
+            return {
+                "target": name,
+                "artifact": str(bundle / "Contents" / "MacOS" / name),
+                "bundle": str(bundle),
+                "profile": {"dev": "debug", "release": "release"}.get(profile, profile),
+                "libraries": load_json(graph)["libraries"] if graph.exists() else [],
+                "launch_environment": launch,
+            }
         return {
             "target": name,
+            "bundle": "",
             "artifact": artifacts[0]["path"],
             "profile": {"dev": "debug", "release": "release"}.get(profile, profile),
             "libraries": load_json(graph)["libraries"] if graph.exists() else [],
@@ -225,24 +240,43 @@ def dynamic_dependencies(target: str, artifact: Path) -> list[str]:
             raise Unavailable("readelf is not installed")
         output = subprocess.run([readelf, "-d", str(artifact)], text=True, stdout=subprocess.PIPE, check=True).stdout
         return [line.split("[", 1)[1].rstrip("]") for line in output.splitlines() if "(NEEDED)" in line and "[" in line]
+    if target == "macos":
+        output = subprocess.run(["otool", "-L", str(artifact)], text=True, stdout=subprocess.PIPE, check=True).stdout
+        return [line.split()[0] for line in output.splitlines()[1:] if line.strip()]
+    if target == "windows":
+        # A PE import table spells each imported library's file name as ASCII.
+        data = artifact.read_bytes().lower()
+        return ["huxerui.dll"] if b"huxerui.dll" in data else []
     raise Unavailable(f"dynamic dependencies cannot be read for target {target}")
 
 
 def collect_facts(target: str, project: Path, record: dict) -> dict:
-    if target != "linux":
+    if target not in ("linux", "windows", "macos"):
         raise Unavailable(f"fact collection is not implemented for target {target}")
     artifact = Path(record["artifact"])
     facts: dict = {"profile": record["profile"]}
-    facts["artifact.name"] = artifact.name if artifact.is_file() else "<missing>"
+    # The contract fixes the basename; the platform adds its own extension.
+    name = artifact.name[:-4] if target == "windows" and artifact.name.lower().endswith(".exe") else artifact.name
+    facts["artifact.name"] = name if artifact.is_file() else "<missing>"
+    bundle = Path(record["bundle"]) if record.get("bundle") else None
+    facts["artifact.bundle"] = bundle.name if bundle is not None and bundle.is_dir() else "<none>"
 
     needed = dynamic_dependencies(target, artifact)
-    facts["framework.linkage"] = "shared" if any("huxerui" in name for name in needed) else "static"
+    facts["framework.linkage"] = "shared" if any("huxerui" in Path(entry).name.lower() for entry in needed) else "static"
 
-    # The Runtime replaces the program's extension with `.resources`.
-    package = artifact.with_suffix(".resources")
+    if target == "macos":
+        # The Runtime reads `HuxerUI` in the main bundle's resources, which is the program's
+        # own directory when the program is not in a bundle.
+        package = (bundle / "Contents" / "Resources" / "HuxerUI") if bundle is not None else artifact.parent / "HuxerUI"
+        location = "<bundle>/Contents/Resources/HuxerUI/huxerui/resources.bin" if bundle is not None \
+            else "<artifact-directory>/HuxerUI/huxerui/resources.bin"
+    else:
+        # The Runtime replaces the program's extension with `.resources`.
+        package = artifact.with_suffix(".resources")
+        location = "<artifact>.resources/huxerui/resources.bin"
     index = package / "huxerui" / "resources.bin"
     if index.is_file():
-        facts["resources.location"] = "<artifact>.resources/huxerui/resources.bin"
+        facts["resources.location"] = location
         facts["resources.sha256"] = hashlib.sha256(index.read_bytes()).hexdigest()
         facts["resources.files"] = sorted(path.relative_to(package).as_posix() for path in package.rglob("*") if path.is_file())
     else:

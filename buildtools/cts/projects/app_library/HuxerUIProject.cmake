@@ -9,7 +9,7 @@ if (HUXERUI_PROJECT_PLAN_OUTPUT)
   "schema": 1,
   "kind": "app",
   "name": "CTS App Library",
-  "id": "org.huxerui.cts.app_library",
+  "id": "org.huxerui.cts.applibrary",
   "target": "cts_app_library"
 }
 ]=])

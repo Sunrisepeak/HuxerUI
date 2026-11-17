@@ -41,7 +41,7 @@ huxerui_add_app(cts_app_minimal
         BUNDLE_NAME
             "CTS App Minimal"
         BUNDLE_IDENTIFIER
-            "org.huxerui.cts.app_minimal"
+            "org.huxerui.cts.appminimal"
 )
 
 huxerui_configure_project_app(cts_app_minimal)
