@@ -16,7 +16,7 @@ src/app.cppm    application module and composables
 resources/     optional resource input
 ```
 
-Create a package application with `huxerui create app <name> --build mcpp`; library creation accepts the same build selection. `--template` selects an mcpp package template, and `--platform` is not accepted for this path. Inspect the generated manifest rather than copying a fixed dependency version into an existing project.
+Create a modules application with `huxerui create app <name> --style modules`; library creation accepts the same selection. `--template` selects the application content (`app` or `navigation`), and `--platform` selects the platform shells as for any other project; a modules library takes no `--platform` yet. `--style headers --build-system mcpp` creates a headers project with only an mcpp declaration. Inspect the generated manifest rather than copying a fixed dependency version into an existing project.
 
 The build program imports the HuxerUI rules:
 

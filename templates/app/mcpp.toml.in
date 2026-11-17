@@ -19,15 +19,37 @@ standard = "c++23"
 [dependencies]
 {{self.name}} = "{{self.version}}"
 
+# `import std;` on iOS needs a C++ standard library built for this application: the module is made from the
+# toolchain's libc++ headers, and the libc++ in the iOS SDK does not carry every symbol those headers name.
+[target.'cfg(os = "ios")'.dependencies]
+llvm.libcxx = "22.1.8.3"
+
+# `app` is a program on the desktop and the Web and the application's shared library on Android.
+# The platform shell owns the process entry, so each platform names its own; the Web and Android
+# builds use the Linux entry.
 [targets.{{project.name}}]
-kind = "bin"
-main = "src/main.cpp"
+kind = "app"
+main = "platform/linux/main.cpp"
+windows_subsystem = "windows"
+
+[target.'cfg(os = "windows")'.targets.{{project.name}}]
+main = "platform/windows/main.cpp"
+
+[target.'cfg(os = "macos")'.targets.{{project.name}}]
+main = "platform/macos/main.cpp"
+
+[target.'cfg(os = "ios")'.targets.{{project.name}}]
+main = "platform/ios/App/main.mm"
 
 [build]
 # huxerui.rules owns the source selection: a build program can ADD a source but
 # cannot replace one, so a package that also globbed src/**/*.cpp would link
 # both the original and the transformed copy of every composable.
 sources = []
+
+# The Web build's exception model; HuxerUI requires it, and only the root package can grant it.
+[target.'cfg(os = "emscripten")'.abi]
+exceptions = true
 
 # The Windows executable's icon and the version metadata its Properties dialog
 # shows. FILEVERSION, ProductName, FileDescription and CompanyName all default

@@ -1,5 +1,7 @@
 #include "support.h"
 
+#include "prompt.h"
+
 using namespace huxerui::cli::test;
 
 TEST_CASE("HuxerUICliRendersEmbeddedTemplatePathsAndContents") {
@@ -15,118 +17,260 @@ TEST_CASE("HuxerUICliRendersEmbeddedTemplatePathsAndContents") {
 
 }
 
-TEST_CASE("HuxerUICliCreatesMcppProjects") {
+TEST_CASE("HuxerUICliResolvesCreateSelections") {
+  using huxerui::cli::BuildSystem;
+  using huxerui::cli::ProjectKind;
+  using huxerui::cli::SourceStyle;
+  using Systems = std::vector<BuildSystem>;
+  const auto resolve = [](ProjectKind kind, std::optional<SourceStyle> style, Systems systems) {
+    return huxerui::cli::ResolveCreateSelection(kind, style, systems);
+  };
+
+  auto selection = resolve(ProjectKind::App, std::nullopt, {});
+  REQUIRE(selection.style == SourceStyle::Headers);
+  REQUIRE(selection.build_systems == Systems{BuildSystem::CMake});
+  selection = resolve(ProjectKind::Library, std::nullopt, {});
+  REQUIRE(selection.style == SourceStyle::Headers);
+  REQUIRE(selection.build_systems == Systems{BuildSystem::CMake, BuildSystem::Mcpp});
+  selection = resolve(ProjectKind::App, SourceStyle::Modules, {});
+  REQUIRE(selection.build_systems == Systems{BuildSystem::Mcpp});
+  selection = resolve(ProjectKind::Library, SourceStyle::Modules, {});
+  REQUIRE(selection.build_systems == Systems{BuildSystem::Mcpp});
+  selection = resolve(ProjectKind::App, SourceStyle::Headers, {BuildSystem::Mcpp});
+  REQUIRE(selection.style == SourceStyle::Headers);
+  REQUIRE(selection.build_systems == Systems{BuildSystem::Mcpp});
+  selection = resolve(ProjectKind::App, std::nullopt, {BuildSystem::Mcpp, BuildSystem::CMake, BuildSystem::Mcpp});
+  REQUIRE(selection.style == SourceStyle::Headers);
+  REQUIRE(selection.build_systems == Systems{BuildSystem::CMake, BuildSystem::Mcpp});
+  selection = resolve(ProjectKind::App, std::nullopt, {BuildSystem::Mcpp});
+  REQUIRE(selection.style == SourceStyle::Modules);
+  REQUIRE_THROWS_WITH(resolve(ProjectKind::App, SourceStyle::Modules, {BuildSystem::CMake}),
+                      Catch::Matchers::ContainsSubstring("modules capability"));
+}
+
+TEST_CASE("HuxerUICliCreatesModulesApplications") {
   TemporaryDirectory temporary;
   const Invocation invocation =
-      Invoke(temporary.Path(), {"create", "app", "Sample-App", "--build", "mcpp", "--agent", "none"});
+      Invoke(temporary.Path(), {"create", "app", "Sample-App", "--style", "modules", "--agent", "none"});
 
   REQUIRE(invocation.result == 0);
+  REQUIRE(invocation.output.find("Style: modules\nBuild systems: mcpp\n") != std::string::npos);
+  REQUIRE(invocation.output.find("Command: huxerui create app Sample-App --style modules --build-system mcpp "
+                                 "--platform ") != std::string::npos);
   const std::filesystem::path project = temporary.Path() / "Sample-App";
   REQUIRE(std::filesystem::is_regular_file(project / "mcpp.toml"));
   REQUIRE(std::filesystem::is_regular_file(project / "build.mcpp"));
-  REQUIRE(std::filesystem::is_regular_file(project / "src/main.cpp"));
-  // The composable lives outside the entry, in a MODULE interface unit:
-  // huxerui.rules never transforms the target's entry, and an mcpp project is
-  // module-style throughout.
-  REQUIRE(std::filesystem::is_regular_file(project / "src/app.cppm"));
-  REQUIRE_FALSE(std::filesystem::exists(project / "src/counter.h"));
-  // No headers anywhere. The entry instantiates nothing, and the module unit
-  // reaches std::type_info -- which UseState() needs, because GCC checks typeid
-  // per translation unit -- through `import std;` rather than a global module
-  // fragment. An mcpp project written against HuxerUI has no #include in it.
-  REQUIRE(Read(project / "src/main.cpp").find("#include") == std::string::npos);
-  REQUIRE(Read(project / "src/app.cppm").find("\n#include") == std::string::npos);
-  REQUIRE(Read(project / "src/app.cppm").find("\nimport std;") != std::string::npos);
-
-  // An mcpp project has no CMake and no platform shells.
   REQUIRE_FALSE(std::filesystem::exists(project / "CMakeLists.txt"));
-  REQUIRE_FALSE(std::filesystem::exists(project / "platform"));
-  // template.toml describes the template to `mcpp new --list-templates`; it is
-  // not part of what the template produces.
+  // The page is a module interface unit; the process entry belongs to each platform's shell.
+  REQUIRE(Read(project / "src/app.cppm").find("export module app;") != std::string::npos);
+  REQUIRE(Read(project / "src/app.cppm").find("\n#include") == std::string::npos);
+  REQUIRE_FALSE(std::filesystem::exists(project / "src/main.cpp"));
+  for (const std::string_view id : {"linux", "windows", "macos"}) {
+    const std::string entry = Read(project / "platform" / id / "main.cpp");
+    REQUIRE(entry.find("import huxerui;") != std::string::npos);
+    REQUIRE(entry.find("#include") == std::string::npos);
+  }
+  // The rest of every shell is the same as under any other build system.
+  REQUIRE(std::filesystem::is_regular_file(project / "platform/android/settings.gradle"));
+  REQUIRE(std::filesystem::is_regular_file(project / "platform/ios/App/main.mm"));
+  REQUIRE(std::filesystem::is_regular_file(project / "platform/web/index.html.in"));
+  REQUIRE(Read(project / "platform/macos/Info.plist.in").find("com.example.sampleapp") != std::string::npos);
   REQUIRE_FALSE(std::filesystem::exists(project / "template.toml"));
-  // `.in` files are rendered and lose the suffix.
   REQUIRE_FALSE(std::filesystem::exists(project / "mcpp.toml.in"));
 
   const std::string manifest = Read(project / "mcpp.toml");
   REQUIRE(manifest.find("name     = \"Sample-App\"") != std::string::npos);
+  REQUIRE(manifest.find("kind = \"app\"") != std::string::npos);
+  REQUIRE(manifest.find("main = \"platform/linux/main.cpp\"") != std::string::npos);
+  REQUIRE(manifest.find("main = \"platform/windows/main.cpp\"") != std::string::npos);
   REQUIRE(manifest.find("{{") == std::string::npos);
-
-  // Created against a source checkout, so the dependency is a path -- the
-  // version the template names is only resolvable from an index, and this tree
-  // is not published. mcpp documents `path` as the form for local development.
+  // Created against a source checkout, so the dependency is a path; the published identity stays as a comment.
   REQUIRE(manifest.find("huxerui = { path = \"") != std::string::npos);
   REQUIRE(manifest.find(HUXERUI_TEST_SOURCE_DIRECTORY) != std::string::npos);
-  // The published identity stays in the file as the line to swap in, and it is
-  // the EXACT one: a bare name reaches mcpp's deprecated bare-name search,
-  // which resolves in `mcpplibs` only.
   REQUIRE(manifest.find("#   huxerui.huxerui = ") != std::string::npos);
-  // Commented out, not active -- two [dependencies] entries would be one too many.
   REQUIRE(manifest.find("\nhuxerui.huxerui = ") == std::string::npos);
-
-  REQUIRE(Read(project / "src/main.cpp").find("import huxerui;") != std::string::npos);
-  REQUIRE(Read(project / "src/main.cpp").find("import app;") != std::string::npos);
-  REQUIRE(Read(project / "src/app.cppm").find("export module app;") != std::string::npos);
 }
 
-TEST_CASE("HuxerUICliNamesMcppWhenItCannotDriveTheProject") {
+TEST_CASE("HuxerUICliKeepsOnlySelectedPlatformEntries") {
   TemporaryDirectory temporary;
-  REQUIRE(Invoke(temporary.Path(), {"create", "app", "Sample-App", "--build", "mcpp", "--agent", "none"}).result == 0);
-
-  // This CLI drives the CMake project. An mcpp project has no CMakeLists.txt
-  // on purpose, so every command that opens one has to say which tool does
-  // drive it -- "no HuxerUI project found" sends its owner looking for a file
-  // that is supposed to be absent.
-  const Invocation invocation = Invoke(temporary.Path() / "Sample-App", {"platform", "add", "linux"});
-  REQUIRE(invocation.result != 0);
-  REQUIRE(invocation.error.find("mcpp build") != std::string::npos);
-}
-
-TEST_CASE("HuxerUICliSelectsAnMcppTemplate") {
-  TemporaryDirectory temporary;
-  REQUIRE(Invoke(temporary.Path(),
-              {"create", "app", "Nav-App", "--build", "mcpp", "--template", "navigation", "--agent", "none"})
+  REQUIRE(Invoke(temporary.Path(), {"create", "app", "Solo", "--style", "modules", "--platform", "windows",
+                                    "--agent", "none"})
               .result == 0);
+  const std::filesystem::path project = temporary.Path() / "Solo";
+  REQUIRE(std::filesystem::is_regular_file(project / "platform/windows/main.cpp"));
+  REQUIRE_FALSE(std::filesystem::exists(project / "platform/linux"));
+  REQUIRE_FALSE(std::filesystem::exists(project / "platform/macos"));
+  REQUIRE_FALSE(std::filesystem::exists(project / "platform/ios"));
+}
+
+TEST_CASE("HuxerUICliInfersModulesFromAnMcppOnlyList") {
+  TemporaryDirectory temporary;
+  const Invocation invocation =
+      Invoke(temporary.Path(), {"create", "app", "Nav-App", "--build-system", "mcpp", "--template", "navigation",
+                                "--agent", "none"});
+  REQUIRE(invocation.result == 0);
+  REQUIRE(invocation.output.find("Style: modules") != std::string::npos);
   const std::string page = Read(temporary.Path() / "Nav-App/src/app.cppm");
   REQUIRE(page.find("NavigationStack(HomePage)") != std::string::npos);
-  REQUIRE(page.find("navigation.Push(DetailPage, 1)") != std::string::npos);
   REQUIRE(page.find("{{") == std::string::npos);
 }
 
-TEST_CASE("HuxerUICliCreatesMcppLibraries") {
+TEST_CASE("HuxerUICliCreatesApplicationsWithBothDeclarations") {
   TemporaryDirectory temporary;
-  // A library is the `library` template without naming it: the CLI knows the
-  // kind, so it selects what `mcpp new --template huxerui.huxerui:library`
-  // would instantiate.
-  REQUIRE(Invoke(temporary.Path(),
-              {"create", "library", "my-widgets", "--build", "mcpp", "--agent", "none"})
+  REQUIRE(Invoke(temporary.Path(), {"create", "app", "Dual-App", "--style", "headers", "--build-system",
+                                    "cmake,mcpp", "--agent", "none"})
+              .result == 0);
+  const std::filesystem::path project = temporary.Path() / "Dual-App";
+  REQUIRE(std::filesystem::is_regular_file(project / "CMakeLists.txt"));
+  REQUIRE(std::filesystem::is_regular_file(project / "HuxerUIProject.cmake"));
+  REQUIRE(std::filesystem::is_regular_file(project / "build.mcpp"));
+  REQUIRE(Read(project / "src/app.cpp").find("#include <huxerui/huxerui.h>") != std::string::npos);
+  REQUIRE(Read(project / "platform/linux/main.cpp").find("#include <huxerui/app.h>") != std::string::npos);
+  const std::string manifest = Read(project / "mcpp.toml");
+  // Both declarations name the same application target, which is the artifact's basename.
+  REQUIRE(manifest.find("name     = \"dual_app\"") != std::string::npos);
+  REQUIRE(manifest.find("[targets.dual_app]") != std::string::npos);
+  REQUIRE(manifest.find("standard = \"c++20\"") != std::string::npos);
+  REQUIRE(manifest.find("huxerui = { path = \"") != std::string::npos);
+  REQUIRE(manifest.find("@") == std::string::npos);
+  REQUIRE(Read(project / ".gitignore").find("/target/") != std::string::npos);
+}
+
+TEST_CASE("HuxerUICliCreatesHeadersApplicationsForMcppAlone") {
+  TemporaryDirectory temporary;
+  REQUIRE(Invoke(temporary.Path(), {"create", "app", "Plain", "--style", "headers", "--build-system", "mcpp",
+                                    "--platform", "linux", "--agent", "none"})
+              .result == 0);
+  const std::filesystem::path project = temporary.Path() / "Plain";
+  REQUIRE_FALSE(std::filesystem::exists(project / "CMakeLists.txt"));
+  REQUIRE_FALSE(std::filesystem::exists(project / "HuxerUIProject.cmake"));
+  REQUIRE(std::filesystem::is_regular_file(project / "mcpp.toml"));
+  REQUIRE(std::filesystem::is_regular_file(project / "src/app.cpp"));
+}
+
+TEST_CASE("HuxerUICliCreatesLibrariesForEveryBuildSystemByDefault") {
+  TemporaryDirectory temporary;
+  const Invocation invocation = Invoke(temporary.Path(), {"create", "library", "data-grid", "--agent", "none"});
+  REQUIRE(invocation.result == 0);
+  REQUIRE(invocation.output.find("Style: headers\nBuild systems: cmake, mcpp\n") != std::string::npos);
+  const std::filesystem::path project = temporary.Path() / "data-grid";
+  REQUIRE(std::filesystem::is_regular_file(project / "CMakeLists.txt"));
+  const std::string manifest = Read(project / "mcpp.toml");
+  REQUIRE(manifest.find("name     = \"datagrid\"") != std::string::npos);
+  REQUIRE(manifest.find("library   = \"DataGrid::DataGrid\"") != std::string::npos);
+  REQUIRE(manifest.find("kind = \"lib\"") != std::string::npos);
+  REQUIRE(manifest.find("include_dirs = [\"include\"]") != std::string::npos);
+  REQUIRE(std::filesystem::is_regular_file(project / "examples/preview/CMakeLists.txt"));
+  const std::string preview = Read(project / "examples/preview/mcpp.toml");
+  REQUIRE(preview.find("datagrid = { path = \"../..\" }") != std::string::npos);
+  REQUIRE(preview.find("[targets.example_data_grid]") != std::string::npos);
+}
+
+TEST_CASE("HuxerUICliCreatesModulesLibraries") {
+  TemporaryDirectory temporary;
+  REQUIRE(Invoke(temporary.Path(), {"create", "library", "my-widgets", "--style", "modules", "--agent", "none"})
               .result == 0);
   const std::filesystem::path project = temporary.Path() / "my-widgets";
   REQUIRE(std::filesystem::is_regular_file(project / "src/component.cppm"));
   REQUIRE(std::filesystem::is_regular_file(project / "tests/component.cpp"));
-  REQUIRE_FALSE(std::filesystem::exists(project / "src/main.cpp"));
   REQUIRE_FALSE(std::filesystem::exists(project / "CMakeLists.txt"));
-
   const std::string manifest = Read(project / "mcpp.toml");
   REQUIRE(manifest.find("kind = \"lib\"") != std::string::npos);
   REQUIRE(manifest.find("path = \"src/component.cppm\"") != std::string::npos);
-  REQUIRE(Read(project / "src/component.cppm").find("export module component;") != std::string::npos);
 }
 
-TEST_CASE("HuxerUICliRejectsUnsupportedBuildSystems") {
+TEST_CASE("HuxerUICliRejectsUnsupportedCreateSelections") {
   TemporaryDirectory temporary;
-  REQUIRE(Invoke(temporary.Path(), {"create", "app", "Sample-App", "--build", "meson"}).result != 0);
-  // mcpp builds three platforms from one manifest and has no platform shells.
-  REQUIRE(Invoke(temporary.Path(),
-              {"create", "app", "Sample-App", "--build", "mcpp", "--platform", "windows"})
-              .result != 0);
-  REQUIRE(Invoke(temporary.Path(),
-              {"create", "app", "Sample-App", "--build", "mcpp", "--template", "nonesuch"})
-              .result != 0);
-  // `templates/` is the mcpp template tree; a CMake project is rendered from a
-  // different one that has no such vocabulary.
-  REQUIRE(Invoke(temporary.Path(),
-              {"create", "app", "Sample-App", "--template", "navigation"})
-              .result != 0);
+  const auto usage = [&](std::initializer_list<std::string_view> arguments) {
+    const Invocation invocation = Invoke(temporary.Path(), arguments);
+    INFO(invocation.error);
+    REQUIRE(invocation.result == 2);
+    return invocation.error;
+  };
+  REQUIRE(usage({"create", "app", "Sample-App", "--build-system", "meson"}).find("unknown build system: meson") !=
+          std::string::npos);
+  REQUIRE(usage({"create", "app", "Sample-App", "--style", "modules", "--build-system", "cmake,mcpp"})
+              .find("modules capability") != std::string::npos);
+  REQUIRE(usage({"create", "app", "Sample-App", "--style", "classes"}).find("--style") != std::string::npos);
+  // `--build` was renamed to `--build-system` without an alias.
+  usage({"create", "app", "Sample-App", "--build", "mcpp"});
+  usage({"create", "app", "Sample-App", "--style", "modules", "--template", "nonesuch"});
+  // `--template` selects C++ modules content.
+  REQUIRE(usage({"create", "app", "Sample-App", "--template", "navigation"}).find("--style modules") !=
+          std::string::npos);
+  usage({"create", "library", "my-widgets", "--style", "modules", "--platform", "windows"});
+  // Without a terminal nothing can ask for the missing name.
+  usage({"create", "app"});
+  usage({"create"});
+  REQUIRE_FALSE(std::filesystem::exists(temporary.Path() / "Sample-App"));
+}
+
+TEST_CASE("HuxerUICliPromptsForMissingCreateSelections") {
+  TemporaryDirectory temporary;
+  // Kind: app; name: Asked; style: modules; template: navigation; platforms: 1 and 2 of the list.
+  std::istringstream answers("1\nAsked\n2\n2\n1,2\n");
+  std::ostringstream prompts;
+  huxerui::cli::prompt::LinePrompter prompter(answers, prompts);
+  std::ostringstream output;
+  std::ostringstream error;
+  std::istringstream input;
+  const std::vector<std::string_view> arguments{"create", "--agent", "none"};
+  const huxerui::cli::SdkLocation sdk{HUXERUI_TEST_SOURCE_DIRECTORY, huxerui::cli::SdkLocationSource::Executable};
+  REQUIRE(huxerui::cli::Run(arguments, temporary.Path(), sdk, input, output, error, &prompter) == 0);
+  for (const std::string_view question : {"? Project kind", "? Project name", "? Source style", "? Template",
+                                          "? Platforms"}) {
+    REQUIRE(prompts.str().find(question) != std::string::npos);
+  }
+  // A modules project has one build system, so that question is not asked.
+  REQUIRE(prompts.str().find("? Build system") == std::string::npos);
+  const auto platforms = huxerui::cli::PlatformIds();
+  const std::string expected = "Command: huxerui create app Asked --style modules --build-system mcpp --template "
+                               "navigation --platform " + std::string(platforms[0]) + "," +
+                               std::string(platforms[1]) + " --agent none\n";
+  REQUIRE(output.str().find(expected) != std::string::npos);
+  REQUIRE(Read(temporary.Path() / "Asked/src/app.cppm").find("NavigationStack") != std::string::npos);
+}
+
+TEST_CASE("HuxerUICliYesAppliesCreateDefaultsWithoutPrompting") {
+  TemporaryDirectory temporary;
+  std::istringstream answers;
+  std::ostringstream prompts;
+  huxerui::cli::prompt::LinePrompter prompter(answers, prompts);
+  std::ostringstream output;
+  std::ostringstream error;
+  std::istringstream input;
+  const std::vector<std::string_view> arguments{"create", "library", "lib-a", "--agent", "none", "--yes"};
+  const huxerui::cli::SdkLocation sdk{HUXERUI_TEST_SOURCE_DIRECTORY, huxerui::cli::SdkLocationSource::Executable};
+  REQUIRE(huxerui::cli::Run(arguments, temporary.Path(), sdk, input, output, error, &prompter) == 0);
+  REQUIRE(prompts.str().empty());
+  REQUIRE(output.str().find("Build systems: cmake, mcpp") != std::string::npos);
+}
+
+TEST_CASE("HuxerUICliPackageTemplatesCarryTheShellEntries") {
+  // `mcpp new --template` renders templates/ without the CLI, so those trees carry the entries and macOS bundle
+  // metadata the mcpp build reads. They must be the CLI's shell files rendered in mcpp's vocabulary.
+  const huxerui::cli::ProjectTemplateContext context{
+      "{{project.name}}", "{{project.name}}", "com.example.{{project.name}}", huxerui::cli::SourceStyle::Modules};
+  const auto find = [](const std::vector<huxerui::cli::GeneratedFile>& files, std::string_view path) {
+    const auto file = std::ranges::find_if(files, [path](const auto& candidate) {
+      return candidate.path.generic_string() == path;
+    });
+    REQUIRE(file != files.end());
+    return file->content;
+  };
+  const std::string entry = find(huxerui::cli::RenderTemplateTree("platform/desktop/app_modules", context), "main.cpp");
+  const std::string ios = find(huxerui::cli::RenderTemplateTree("platform/ios/app", context), "App/main.mm");
+  const auto macos = huxerui::cli::RenderTemplateTree("platform/macos/app", context);
+  for (const std::string_view name : {"app", "navigation"}) {
+    const std::filesystem::path root = std::filesystem::path(HUXERUI_TEST_SOURCE_DIRECTORY) / "templates" / name;
+    INFO(root.string());
+    for (const std::string_view id : {"linux", "windows", "macos"}) {
+      REQUIRE(Read(root / "platform" / id / "main.cpp") == entry);
+    }
+    REQUIRE(Read(root / "platform/ios/App/main.mm") == ios);
+    REQUIRE(Read(root / "platform/macos/Info.plist.in.in") == find(macos, "Info.plist.in"));
+    REQUIRE(ReadBinary(root / "platform/macos/AppIcon.icns") == find(macos, "AppIcon.icns"));
+  }
 }
 
 TEST_CASE("HuxerUICliCreatesSelectedPlatformShells") {

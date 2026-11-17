@@ -37,7 +37,8 @@ An option that does not apply to the project's build system is never silent.
 An option that would change the product, such as an ABI, optimization, LTO, or package-format choice, is rejected as invalid usage with the reason.
 An option that only steers the driver, such as a native generator or a tool location, is reported with a warning and not applied, and the operation continues.
 
-`huxerui create` selects the build system by generating its native build file, from an explicit option or the CLI's default.
+`huxerui create` composes a project from one source style, headers or C++ modules, and the native declaration of each selected build system, from explicit options, interactive prompts, or the CLI's defaults.
+A build system that does not declare a capability the style needs, such as `modules`, cannot be selected with it.
 
 The common sources, the `resources/` root, and the `platform/<platform-id>` shells have the same layout and meaning under every integration, so the following work needs no build-system-specific knowledge:
 

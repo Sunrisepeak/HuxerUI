@@ -13,6 +13,20 @@ cd hello_huxer
 The command creates shared sources under `src`, resources under `resources`, the requested platform shells, and the HuxerUI application-development Skill under `.agents/skills`.
 Only build platforms supported by the current development host.
 
+Run in a terminal, `huxerui create` asks for whatever the command line leaves out: the kind and name, the source style, the build systems, the template, and the platforms.
+`--yes`, or running without a terminal, applies the defaults instead, and the command prints the options that recreate the same project.
+
+The source style is `headers`, where sources write `#include <huxerui/huxerui.h>`, or `modules`, where they are C++ module units that write `import huxerui;`.
+`--build-system` lists the native declarations the project carries: `cmake`, `mcpp`, or `cmake,mcpp`.
+An application defaults to headers with CMake, a library with headers declares both build systems, and a modules project is built with mcpp:
+
+```bash
+huxerui create app hello_modules --style modules --template navigation
+huxerui create app hello_both --build-system cmake,mcpp
+```
+
+`--template` selects the modules application's content, `app` or `navigation`.
+
 Use `--agent` to select a different Agent Skill directory:
 
 ```bash
@@ -184,8 +198,8 @@ To read a separate resource package, pass the directory produced by `hrc` to `Re
 ## Project commands
 
 ```text
-huxerui create app <name> [--id <project-id>] [-p|--platform <platform-list>] [--agent <agent-list>]
-huxerui create library <name> [--namespace <cpp-namespace>] [--target <public-cmake-target>] [--id <project-id>] [-p|--platform <platform-list>] [--agent <agent-list>]
+huxerui create [app <name>] [--style headers|modules] [--build-system <build-system-list>] [--template <name>] [--id <project-id>] [-p|--platform <platform-list>] [--agent <agent-list>] [--yes]
+huxerui create [library <name>] [--style headers|modules] [--build-system <build-system-list>] [--namespace <cpp-namespace>] [--target <public-cmake-target>] [--id <project-id>] [-p|--platform <platform-list>] [--agent <agent-list>] [--yes]
 huxerui platform add <platform-list>
 huxerui doctor [platform-list]
 huxerui setup <platform-list> [--yes]

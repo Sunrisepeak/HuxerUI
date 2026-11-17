@@ -353,6 +353,56 @@ std::vector<GeneratedFile> McppApplicationProjectFiles(const ProjectTemplateCont
   return files;
 }
 
+/// The `[dependencies]` table of an mcpp declaration the CLI writes: HuxerUI, then `extra` lines.
+std::string McppDependencies(const std::filesystem::path& huxerui_home, std::string_view extra = {}) {
+  std::string table;
+  if (IsMcppSourcePackage(huxerui_home)) {
+    table = "# HuxerUI from the checkout this project was created against. To build against a release instead,\n"
+            "# name the published package: huxerui.huxerui = \"" + std::string(McppPackageVersion()) + "\"\n"
+            "[dependencies]\nhuxerui = { path = \"" + huxerui_home.lexically_normal().generic_string() + "\" }\n";
+  } else {
+    table = "[dependencies]\nhuxerui.huxerui = \"" + std::string(McppPackageVersion()) + "\"\n";
+  }
+  table += extra;
+  if (table.ends_with('\n')) {
+    table.pop_back();
+  }
+  return table;
+}
+
+bool IsCMakeDeclaration(const GeneratedFile& file) {
+  const std::string path = file.path.generic_string();
+  return path == "CMakeLists.txt" || path == "HuxerUIProject.cmake";
+}
+
+/// Keeps the native declarations of the selected build systems: the CMake files when CMake is selected, and the
+/// mcpp declaration rendered from `mcpp_template` when mcpp is.
+void SelectDeclarations(std::vector<GeneratedFile>& files, const CreateSelection& selection,
+                        std::vector<GeneratedFile> mcpp_declaration) {
+  if (!selection.Has(BuildSystem::CMake)) {
+    std::erase_if(files, IsCMakeDeclaration);
+  }
+  if (!selection.Has(BuildSystem::Mcpp)) {
+    return;
+  }
+  files.insert(files.end(), std::make_move_iterator(mcpp_declaration.begin()),
+               std::make_move_iterator(mcpp_declaration.end()));
+  const auto ignore = std::ranges::find_if(files, [](const GeneratedFile& file) {
+    return file.path.generic_string() == ".gitignore";
+  });
+  if (ignore != files.end()) {
+    ignore->content += "\n/target/\n/.mcpp/\n";
+  }
+}
+
+std::vector<GeneratedFile> McppApplicationDeclaration(const ProjectTemplateContext& context,
+                                                      const std::filesystem::path& huxerui_home,
+                                                      std::string_view extra_dependencies = {}) {
+  const std::string dependencies = McppDependencies(huxerui_home, extra_dependencies);
+  const std::array replacements{TemplateReplacement{"@MCPP_DEPENDENCIES@", dependencies}};
+  return RenderTemplateTree("project/mcpp_app", context, replacements);
+}
+
 std::vector<GeneratedFile> ApplicationProjectFiles(const ProjectTemplateContext& context) {
   std::vector<GeneratedFile> files = RenderTemplateTree("project/app", context);
   std::vector<GeneratedFile> project_support = RenderTemplateTree("project/application", context);
@@ -394,6 +444,26 @@ std::vector<GeneratedFile> LibraryProjectFiles(const LibraryTemplateContext& lib
       TemplateReplacement{"@LIBRARY_ALIAS@", alias},
   };
   return RenderTemplateTree("project/library", library.project, replacements);
+}
+
+std::vector<GeneratedFile> McppLibraryDeclaration(const LibraryTemplateContext& library,
+                                                  const std::filesystem::path& huxerui_home) {
+  const LibraryTargetProjection target = DeriveLibraryTargetProjection(library.public_target);
+  const std::string dependencies = McppDependencies(huxerui_home);
+  const std::array replacements{
+      TemplateReplacement{"@LIBRARY_PUBLIC_TARGET@", library.public_target},
+      TemplateReplacement{"@LIBRARY_RESOURCE_NAMESPACE@", target.resource_namespace},
+      TemplateReplacement{"@MCPP_DEPENDENCIES@", dependencies},
+  };
+  return RenderTemplateTree("project/mcpp_library", library.project, replacements);
+}
+
+/// The Preview's mcpp declaration depends on the library two directories up.
+std::vector<GeneratedFile> McppPreviewDeclaration(const LibraryTemplateContext& library,
+                                                  const std::filesystem::path& huxerui_home) {
+  const LibraryTargetProjection target = DeriveLibraryTargetProjection(library.public_target);
+  return McppApplicationDeclaration(PreviewContext(library), huxerui_home,
+                                    target.resource_namespace + " = { path = \"../..\" }\n");
 }
 
 std::vector<GeneratedFile> PreviewProjectFiles(const LibraryTemplateContext& library) {
@@ -653,6 +723,60 @@ std::string MakeLibraryProductName(std::string_view library_name) {
   return product_name;
 }
 
+bool CreateSelection::Has(BuildSystem build_system) const noexcept {
+  return std::ranges::find(build_systems, build_system) != build_systems.end();
+}
+
+std::string_view BuildSystemName(BuildSystem build_system) noexcept {
+  return build_system == BuildSystem::CMake ? "cmake" : "mcpp";
+}
+
+std::optional<BuildSystem> ParseBuildSystem(std::string_view name) noexcept {
+  if (name == "cmake") {
+    return BuildSystem::CMake;
+  }
+  if (name == "mcpp") {
+    return BuildSystem::Mcpp;
+  }
+  return std::nullopt;
+}
+
+std::string_view SourceStyleName(SourceStyle style) noexcept {
+  return style == SourceStyle::Modules ? "modules" : "headers";
+}
+
+CreateSelection ResolveCreateSelection(ProjectKind kind, std::optional<SourceStyle> style,
+                                       std::span<const BuildSystem> build_systems) {
+  CreateSelection selection;
+  for (const BuildSystem build_system : {BuildSystem::CMake, BuildSystem::Mcpp}) {
+    if (std::ranges::find(build_systems, build_system) != build_systems.end()) {
+      selection.build_systems.push_back(build_system);
+    }
+  }
+  if (style) {
+    selection.style = *style;
+  } else {
+    // mcpp alone selects the source form only mcpp offers; any list naming CMake keeps headers.
+    selection.style = selection.build_systems == std::vector{BuildSystem::Mcpp} ? SourceStyle::Modules
+                                                                                 : SourceStyle::Headers;
+  }
+  if (selection.build_systems.empty()) {
+    if (selection.style == SourceStyle::Modules) {
+      selection.build_systems = {BuildSystem::Mcpp};
+    } else if (kind == ProjectKind::Library) {
+      // A library is built by its consumer's build system, so it declares every one that can build it.
+      selection.build_systems = {BuildSystem::CMake, BuildSystem::Mcpp};
+    } else {
+      selection.build_systems = {BuildSystem::CMake};
+    }
+  }
+  if (selection.style == SourceStyle::Modules && selection.Has(BuildSystem::CMake)) {
+    throw std::invalid_argument("the cmake integration does not offer the modules capability; "
+                                "a C++ modules project is built with mcpp");
+  }
+  return selection;
+}
+
 Project DiscoverProject(const std::filesystem::path& start) {
   std::error_code error;
   std::filesystem::path current = std::filesystem::absolute(start, error);
@@ -749,20 +873,22 @@ Project ResolveApplicationProject(const Project& project) {
 void CreateProject(const std::filesystem::path& destination, const ProjectTemplate& project_template,
     std::span<const PlatformDriver* const> application_platforms,
     std::span<const PlatformDriver* const> library_platforms, const std::filesystem::path& skill_source,
-    std::span<const AgentSkillDirectory> agent_skill_directories, BuildSystem build_system,
+    std::span<const AgentSkillDirectory> agent_skill_directories, const CreateSelection& selection,
     const std::filesystem::path& huxerui_home, std::string_view template_name) {
   if (std::filesystem::exists(destination)) {
     throw std::runtime_error("destination already exists: " + destination.string());
   }
+  if (selection.build_systems.empty()) {
+    throw std::logic_error("HuxerUI CLI received a project selection without a build system");
+  }
   const auto* library = std::get_if<LibraryTemplateContext>(&project_template);
-  const ProjectTemplateContext& context = ProjectContext(project_template);
-  // An mcpp project has no platform shells: mcpp builds Linux, Windows and
-  // macOS from one manifest, and the three platforms CMake owns alone --
-  // Android, iOS and Web -- are outside mcpp's target language entirely.
-  if (build_system == BuildSystem::CMake && library == nullptr && application_platforms.empty()) {
+  ProjectTemplateContext context = ProjectContext(project_template);
+  context.source_style = selection.style;
+  const bool modules_library = library != nullptr && selection.style == SourceStyle::Modules;
+  if (library == nullptr && application_platforms.empty()) {
     throw std::invalid_argument("application creation requires at least one platform");
   }
-  if (library != nullptr && application_platforms.empty()) {
+  if (library != nullptr && !modules_library && application_platforms.empty()) {
     throw std::invalid_argument("library preview creation requires at least one platform");
   }
   if (library == nullptr && !library_platforms.empty()) {
@@ -778,31 +904,47 @@ void CreateProject(const std::filesystem::path& destination, const ProjectTempla
 
   TemporaryTree cleanup(temporary);
   std::filesystem::create_directories(temporary);
-  if (build_system == BuildSystem::Mcpp) {
-    // The template a kind maps to when none was named. `mcpp new` picks the
-    // one whose template.toml says `default = true`, which is `app`; the CLI
-    // knows something mcpp does not -- whether the caller asked for a library
-    // -- so it names that one instead of falling back to the default.
+  if (selection.style == SourceStyle::Modules) {
+    // The C++ modules sources come from the mcpp package template that `mcpp new --template` also renders.
+    // The CLI knows the kind, so it names the library template for a library instead of mcpp's default.
     const std::string_view selected =
         !template_name.empty() ? template_name
                                : (library != nullptr ? std::string_view("library") : std::string_view("app"));
-    WriteFiles(temporary, McppApplicationProjectFiles(context, huxerui_home, selected));
-    CopyApplicationDevelopmentSkill(temporary, skill_source, agent_skill_directories);
-    std::filesystem::rename(temporary, destination);
-    cleanup.Commit();
-    return;
-  }
-  if (library == nullptr) {
-    WriteFiles(temporary, ApplicationProjectFiles(context));
+    std::vector<GeneratedFile> files = McppApplicationProjectFiles(context, huxerui_home, selected);
+    // The template carries every platform's entry; the project keeps the selected platforms' only.
+    std::erase_if(files, [&](const GeneratedFile& file) {
+      const auto component = file.path.begin();
+      if (component == file.path.end() || *component != "platform" || std::next(component) == file.path.end()) {
+        return false;
+      }
+      const std::string id = std::next(component)->string();
+      return std::ranges::none_of(application_platforms, [&id](const PlatformDriver* platform) {
+        return platform->Id() == id;
+      });
+    });
+    WriteFiles(temporary, files);
+    if (library == nullptr) {
+      for (const PlatformDriver* platform : application_platforms) {
+        WriteFiles(temporary / "platform" / platform->Id(), platform->CreateShell(context));
+      }
+    }
+  } else if (library == nullptr) {
+    std::vector<GeneratedFile> files = ApplicationProjectFiles(context);
+    SelectDeclarations(files, selection, McppApplicationDeclaration(context, huxerui_home));
+    WriteFiles(temporary, files);
     CreateResourceDirectories(temporary);
     for (const PlatformDriver* platform : application_platforms) {
       WriteFiles(temporary / "platform" / platform->Id(), platform->CreateShell(context));
     }
   } else {
     const ProjectTemplateContext preview = PreviewContext(*library);
-    WriteFiles(temporary, LibraryProjectFiles(*library));
+    std::vector<GeneratedFile> files = LibraryProjectFiles(*library);
+    SelectDeclarations(files, selection, McppLibraryDeclaration(*library, huxerui_home));
+    WriteFiles(temporary, files);
     CreateResourceDirectories(temporary);
-    WriteFiles(temporary / "examples/preview", PreviewProjectFiles(*library));
+    std::vector<GeneratedFile> preview_files = PreviewProjectFiles(*library);
+    SelectDeclarations(preview_files, selection, McppPreviewDeclaration(*library, huxerui_home));
+    WriteFiles(temporary / "examples/preview", preview_files);
     CreateResourceDirectories(temporary / "examples/preview");
     for (const PlatformDriver* platform : library_platforms) {
       const GeneratedTree package = platform->CreateLibraryPackage(*library, temporary);

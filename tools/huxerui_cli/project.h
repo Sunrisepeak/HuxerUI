@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -19,14 +20,46 @@ enum class ProjectKind {
   Library,
 };
 
-/// Build system a generated project is driven by.
+/// Build system whose native declaration a project carries.
 enum class BuildSystem {
-  /// CMake project with per-platform shells, the default.
+  /// `CMakeLists.txt` with the HuxerUI CMake helpers.
   CMake,
-  /// mcpp package rendered from the repository's `templates/app` tree, the same
-  /// tree `mcpp new --template` instantiates.
+  /// `mcpp.toml` and `build.mcpp` with the `huxerui.rules` build program.
   Mcpp,
 };
+
+/// What `huxerui create` composes: one source style and one native declaration per selected build system.
+struct CreateSelection {
+  /// How the sources reach HuxerUI.
+  SourceStyle style = SourceStyle::Headers;
+  /// Selected build systems, without duplicates, in `BuildSystem` order.
+  std::vector<BuildSystem> build_systems;
+
+  /// Whether the selection carries a build system's declaration.
+  [[nodiscard]] bool Has(BuildSystem build_system) const noexcept;
+};
+
+/// The command-line spelling of a build system, such as `cmake`.
+[[nodiscard]] std::string_view BuildSystemName(BuildSystem build_system) noexcept;
+
+/// Parses a build system's command-line spelling.
+/// @return The build system, or nothing for an unknown name.
+[[nodiscard]] std::optional<BuildSystem> ParseBuildSystem(std::string_view name) noexcept;
+
+/// The command-line spelling of a source style: `headers` or `modules`.
+[[nodiscard]] std::string_view SourceStyleName(SourceStyle style) noexcept;
+
+/// Applies `huxerui create`'s defaults to the explicit choices.
+///
+/// Without choices an application uses headers and CMake and a library uses headers with both CMake and mcpp
+/// declarations. C++ modules imply mcpp, and an mcpp-only list without a style selects modules.
+/// @param kind Application or library.
+/// @param style Explicit source style, if any.
+/// @param build_systems Explicit build systems; empty when none were given.
+/// @return The complete selection.
+/// @throws std::invalid_argument when a selected build system does not offer the selected style.
+[[nodiscard]] CreateSelection ResolveCreateSelection(ProjectKind kind, std::optional<SourceStyle> style,
+                                                     std::span<const BuildSystem> build_systems);
 
 /// Validated template identity for either an application or a reusable library.
 using ProjectTemplate = std::variant<ProjectTemplateContext, LibraryTemplateContext>;
@@ -114,23 +147,22 @@ MakeProjectTemplateContext(std::string_view project_name, std::string_view proje
 /// @param library_platforms Platform packages owned by a reusable library.
 /// @param skill_source Canonical application-development Skill directory.
 /// @param agent_skill_directories Agent layouts that should receive the Skill.
-/// @param build_system Build system the generated project is driven by.
-/// @param huxerui_home Resolved SDK home. An mcpp project created against a
+/// @param selection Source style and the build systems whose declarations the project carries.
+/// @param huxerui_home Resolved SDK home. An mcpp declaration created against a
 ///        source checkout depends on it by path rather than by published
 ///        version, which is what makes it buildable before HuxerUI is
 ///        published.
-/// @param template_name mcpp package template under `templates/`. Empty selects
+/// @param template_name mcpp package template under `templates/` for a C++ modules project. Empty selects
 ///        `app` for an application and `library` for a library, which is what
 ///        `mcpp new --template huxerui.huxerui:<name>` instantiates.
-/// @throws std::invalid_argument if an application or library Preview has no platform,
-///         or if an mcpp project is requested for anything but an application.
+/// @throws std::invalid_argument if an application or library Preview has no platform.
 /// @throws std::runtime_error if generation or publication fails.
 void CreateProject(const std::filesystem::path& destination, const ProjectTemplate& project_template,
     std::span<const PlatformDriver* const> application_platforms,
     std::span<const PlatformDriver* const> library_platforms, const std::filesystem::path& skill_source,
-    std::span<const AgentSkillDirectory> agent_skill_directories,
-    BuildSystem build_system = BuildSystem::CMake, const std::filesystem::path& huxerui_home = {},
-    std::string_view template_name = {});
+    std::span<const AgentSkillDirectory> agent_skill_directories, const CreateSelection& selection = {
+        SourceStyle::Headers, {BuildSystem::CMake}},
+    const std::filesystem::path& huxerui_home = {}, std::string_view template_name = {});
 
 /// Version of the HuxerUI package an mcpp project depends on.
 [[nodiscard]] std::string_view McppPackageVersion() noexcept;

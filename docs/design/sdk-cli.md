@@ -226,8 +226,8 @@ The CLI never parses `CMakeLists.txt` or `HuxerUIProject.cmake` as source text.
 The implemented command surface is:
 
 ```text
-huxerui create app <name> [--id <reverse-domain-id>] [-p|--platform <platform-list>] [--agent <agent-list>]
-huxerui create library <name> [--namespace <cpp-namespace>] [--target <public-cmake-target>] [--id <reverse-domain-id>] [-p|--platform <platform-list>] [--agent <agent-list>]
+huxerui create [app <name>] [--style headers|modules] [--build-system <build-system-list>] [--template <name>] [--id <reverse-domain-id>] [-p|--platform <platform-list>] [--agent <agent-list>] [--yes]
+huxerui create [library <name>] [--style headers|modules] [--build-system <build-system-list>] [--namespace <cpp-namespace>] [--target <public-cmake-target>] [--id <reverse-domain-id>] [-p|--platform <platform-list>] [--agent <agent-list>] [--yes]
 huxerui platform add <platform-list>
 huxerui doctor [platform-list]
 huxerui setup <platform-list> [--yes]
@@ -259,6 +259,26 @@ huxerui create app hello_huxer --id dev.example.hello --platform windows,android
 cd hello_huxer
 huxerui platform add macos
 ```
+
+`create` composes a project from one source set and one native declaration per selected build system; there is no separate template per combination.
+The source set is `headers` (`src/app.cpp` including `<huxerui/huxerui.h>`) or `modules` (module units rendered from the root `templates/` tree that `mcpp new --template` also instantiates).
+The CMake declaration is `CMakeLists.txt` with `HuxerUIProject.cmake`; the mcpp declaration is `mcpp.toml` and `build.mcpp` in the contract's standard layout: an `app` target whose process entry is each platform shell's `main.cpp`, named up front for every platform in `cfg` sections so `platform add` never edits the manifest.
+Selections resolve as follows:
+
+| Given | Result |
+| --- | --- |
+| Nothing, application | headers, cmake |
+| Nothing, library | headers, cmake and mcpp |
+| `--style modules` | modules, mcpp |
+| `--build-system mcpp` only | modules, mcpp |
+| `--style headers` with a build-system list | headers, the listed declarations |
+| `--style modules` with cmake in the list | usage error: the CMake integration does not offer the `modules` capability |
+
+A missing selection is prompted for only when standard input and output are terminals; `--yes` suppresses every prompt.
+The prompt module is a state machine fed by key events, with raw terminal input through termios on POSIX hosts and virtual-terminal console input on Windows, and numbered line input where raw mode is unavailable.
+A modules library is the `templates/library` package and has no platform packages or Preview yet, so `--platform` is a usage error for it.
+The `templates/app` and `templates/navigation` trees carry each desktop platform's entry, the iOS entry, and the macOS bundle metadata, because `mcpp new` renders them without the CLI; a CLI test checks that they equal the CLI's shell files rendered in mcpp's template vocabulary.
+`mcpp new` can substitute only the project name, so its macOS bundle identifier is `com.example.<project name>` verbatim, while the CLI normalizes the name as it does for every other platform identifier.
 
 Application creation writes the common CMake project and complete minimal shells for the selected platforms.
 Library creation writes a common CMake library and a normal application under `examples/preview` that consumes it through a local path.
@@ -745,8 +765,8 @@ CameraKit/
 Project scaffolding distinguishes the application and library shapes explicitly:
 
 ```text
-huxerui create app <name> [--id <reverse-domain-id>] [-p|--platform <platform-list>] [--agent <agent-list>]
-huxerui create library <name> [--namespace <cpp-namespace>] [--target <public-cmake-target>] [--id <reverse-domain-id>] [-p|--platform <platform-list>] [--agent <agent-list>]
+huxerui create [app <name>] [--style headers|modules] [--build-system <build-system-list>] [--template <name>] [--id <reverse-domain-id>] [-p|--platform <platform-list>] [--agent <agent-list>] [--yes]
+huxerui create [library <name>] [--style headers|modules] [--build-system <build-system-list>] [--namespace <cpp-namespace>] [--target <public-cmake-target>] [--id <reverse-domain-id>] [-p|--platform <platform-list>] [--agent <agent-list>] [--yes]
 ```
 
 Library names do not require a `huxerui-` prefix and may use uppercase ASCII letters.

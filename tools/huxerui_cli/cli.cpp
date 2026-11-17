@@ -17,6 +17,7 @@
 #include "platform.h"
 #include "process_runner.h"
 #include "project.h"
+#include "prompt.h"
 #include "mcpp/mcpp.h"
 #include "watch.h"
 
@@ -99,11 +100,11 @@ void PrintBuildHelp(std::ostream& output, std::string_view command) {
 void PrintHelp(std::ostream& output) {
   output << "HuxerUI project and platform tool\n\n"
          << "Usage:\n"
-         << "  huxerui create app <name> [--build cmake|mcpp] [--template <name>] [--id <project-id>] "
-            "[-p|--platform <platform-list>] [--agent <agent-list>]\n"
-         << "  huxerui create library <name> [--build cmake|mcpp] [--template <name>] "
+         << "  huxerui create [app <name>] [--style headers|modules] [--build-system <build-system-list>] "
+            "[--template <name>] [--id <project-id>] [-p|--platform <platform-list>] [--agent <agent-list>] [--yes]\n"
+         << "  huxerui create [library <name>] [--style headers|modules] [--build-system <build-system-list>] "
             "[--namespace <cpp-namespace>] [--target <public-cmake-target>] "
-            "[--id <project-id>] [-p|--platform <platform-list>] [--agent <agent-list>]\n"
+            "[--id <project-id>] [-p|--platform <platform-list>] [--agent <agent-list>] [--yes]\n"
          << "  huxerui platform add <platform-list>\n"
          << "  huxerui doctor [platform-list]\n"
          << "  huxerui setup <platform-list> [--yes]\n"
@@ -123,7 +124,10 @@ void PrintHelp(std::ostream& output) {
   PrintBuildOptions(output);
   output << watch_option_help;
   PrintPackageOptions(output);
-  output << "Without --platform, an app and a common library's Preview enable all platforms.\n"
+  output << "create asks for a missing kind, name, style, build system, template, or platform list when run in a\n"
+         << "terminal; --yes, or no terminal, applies the defaults instead. A build-system list is cmake, mcpp, or\n"
+         << "cmake,mcpp. Headers default to cmake for an app and to both for a library; modules use mcpp.\n"
+         << "Without --platform, an app and a common library's Preview enable all platforms.\n"
          << "An agent list is comma-separated and supports ";
   for (std::size_t index = 0; index < agent_skill_mappings.size(); ++index) {
     if (index > 0) {
@@ -413,121 +417,224 @@ int RunSetup(std::span<const std::string_view> arguments, const SdkLocation& sdk
   return 0;
 }
 
-int RunCreate(std::span<const std::string_view> arguments, const std::filesystem::path& working_directory,
-              const std::filesystem::path& huxerui_home, std::ostream& output) {
-  if (arguments.size() < 3) {
-    throw UsageError("create requires app or library and a project name");
+std::string JoinPlatformIds(std::span<const PlatformDriver* const> platforms) {
+  std::string joined;
+  for (const PlatformDriver* platform : platforms) {
+    joined += (joined.empty() ? "" : ",") + std::string(platform->Id());
   }
-  ProjectKind kind;
-  if (arguments[1] == "app") {
-    kind = ProjectKind::App;
-  } else if (arguments[1] == "library") {
-    kind = ProjectKind::Library;
-  } else {
-    throw UsageError("create kind must be app or library");
-  }
-  if (!IsValidProjectName(arguments[2])) {
-    throw UsageError("project name must start with a letter and contain only letters, digits, underscores, or hyphens");
-  }
-  if (kind == ProjectKind::Library && !IsValidLibraryProjectName(arguments[2])) {
-    throw UsageError(
-        "library name must start with a letter and contain non-empty letter or digit segments separated by '-' or '_'"
-    );
-  }
+  return joined;
+}
 
+std::string JoinBuildSystems(std::span<const BuildSystem> build_systems, std::string_view separator) {
+  std::string joined;
+  for (const BuildSystem build_system : build_systems) {
+    joined += (joined.empty() ? "" : std::string(separator)) + std::string(BuildSystemName(build_system));
+  }
+  return joined;
+}
+
+template <typename T>
+T RequireAnswer(std::optional<T> answer) {
+  if (!answer) {
+    throw std::runtime_error("project creation was cancelled");
+  }
+  return std::move(*answer);
+}
+
+int RunCreate(std::span<const std::string_view> arguments, const std::filesystem::path& working_directory,
+              const std::filesystem::path& huxerui_home, prompt::Prompter* prompter, std::ostream& output) {
+  std::optional<ProjectKind> kind;
+  std::optional<std::string> name;
   std::optional<std::string_view> project_id;
   std::optional<std::string_view> cpp_namespace;
   std::optional<std::string_view> public_target;
   std::optional<std::string_view> platform_list;
-  std::string_view agent_list = "codex";
-  std::string_view build_system_name = "cmake";
+  std::optional<std::string_view> agent_list;
+  std::optional<SourceStyle> style;
+  std::vector<BuildSystem> build_systems;
   std::optional<std::string_view> template_name;
-  bool build_specified = false;
-  bool platform_specified = false;
-  bool agent_specified = false;
-  if (kind == ProjectKind::App) {
-    platform_list = "all";
-  }
-  for (std::size_t index = 3; index < arguments.size(); ++index) {
+  std::string prompted_platforms;
+  bool assume_defaults = false;
+  for (std::size_t index = 1; index < arguments.size(); ++index) {
     const std::string_view argument = arguments[index];
+    if (argument == "--yes") {
+      if (assume_defaults) {
+        throw UsageError("--yes may be specified only once");
+      }
+      assume_defaults = true;
+      continue;
+    }
+    if (!argument.starts_with('-')) {
+      if (!kind) {
+        if (argument == "app") {
+          kind = ProjectKind::App;
+        } else if (argument == "library") {
+          kind = ProjectKind::Library;
+        } else {
+          throw UsageError("create kind must be app or library");
+        }
+      } else if (!name) {
+        name = std::string(argument);
+      } else {
+        throw UsageError("unexpected create argument: " + std::string(argument));
+      }
+      continue;
+    }
     if (argument != "-p" && argument != "--platform" && argument != "--id" && argument != "--agent" &&
-        argument != "--namespace" && argument != "--target" && argument != "--build" &&
-        argument != "--template") {
-      throw UsageError("unexpected create argument: " + std::string(arguments[index]));
+        argument != "--namespace" && argument != "--target" && argument != "--style" &&
+        argument != "--build-system" && argument != "--template") {
+      throw UsageError("unexpected create argument: " + std::string(argument));
     }
     if (++index >= arguments.size()) {
       throw UsageError(std::string(argument) + " requires a value");
     }
+    const std::string_view value = arguments[index];
+    const auto once = [&](auto& destination, std::string_view option) {
+      if (destination) {
+        throw UsageError(std::string(option) + " may be specified only once");
+      }
+    };
     if (argument == "--id") {
-      if (project_id) {
-        throw UsageError("--id may be specified only once");
-      }
-      project_id = arguments[index];
+      once(project_id, argument);
+      project_id = value;
     } else if (argument == "--namespace") {
-      if (kind != ProjectKind::Library) {
-        throw UsageError("--namespace is supported only for library creation");
-      }
-      if (cpp_namespace) {
-        throw UsageError("--namespace may be specified only once");
-      }
-      cpp_namespace = arguments[index];
+      once(cpp_namespace, argument);
+      cpp_namespace = value;
     } else if (argument == "--target") {
-      if (kind != ProjectKind::Library) {
-        throw UsageError("--target is supported only for library creation");
-      }
-      if (public_target) {
-        throw UsageError("--target may be specified only once");
-      }
-      public_target = arguments[index];
+      once(public_target, argument);
+      public_target = value;
     } else if (argument == "-p" || argument == "--platform") {
-      if (platform_specified) {
-        throw UsageError("--platform may be specified only once");
-      }
-      platform_list = arguments[index];
-      platform_specified = true;
-    } else if (argument == "--build") {
-      if (build_specified) {
-        throw UsageError("--build may be specified only once");
-      }
-      build_system_name = arguments[index];
-      build_specified = true;
+      once(platform_list, "--platform");
+      platform_list = value;
+    } else if (argument == "--agent") {
+      once(agent_list, argument);
+      agent_list = value;
     } else if (argument == "--template") {
-      if (template_name) {
-        throw UsageError("--template may be specified only once");
+      once(template_name, argument);
+      template_name = value;
+    } else if (argument == "--style") {
+      once(style, argument);
+      if (value == "headers") {
+        style = SourceStyle::Headers;
+      } else if (value == "modules") {
+        style = SourceStyle::Modules;
+      } else {
+        throw UsageError("--style must be headers or modules");
       }
-      template_name = arguments[index];
     } else {
-      if (agent_specified) {
-        throw UsageError("--agent may be specified only once");
+      if (!build_systems.empty()) {
+        throw UsageError("--build-system may be specified only once");
       }
-      agent_list = arguments[index];
-      agent_specified = true;
+      for (const std::string_view id : SplitList(value, "build system")) {
+        const std::optional<BuildSystem> build_system = ParseBuildSystem(id);
+        if (!build_system) {
+          throw UsageError("unknown build system: " + std::string(id) + "; expected cmake or mcpp");
+        }
+        build_systems.push_back(*build_system);
+      }
     }
+  }
+  if (assume_defaults) {
+    prompter = nullptr;
   }
 
-  BuildSystem build_system;
-  if (build_system_name == "cmake") {
-    build_system = BuildSystem::CMake;
-  } else if (build_system_name == "mcpp") {
-    build_system = BuildSystem::Mcpp;
-  } else {
-    throw UsageError("--build must be cmake or mcpp");
-  }
-  if (build_system == BuildSystem::Mcpp) {
-    // mcpp builds Linux, Windows and macOS from one manifest and has no
-    // platform shells; the three platforms CMake owns alone -- Android, iOS and
-    // Web -- are outside mcpp's target language, so a platform list here would
-    // promise something the build cannot keep.
-    if (platform_specified) {
-      throw UsageError("--build mcpp projects have no platform shells; omit --platform");
+  if (!kind) {
+    if (prompter == nullptr) {
+      throw UsageError("create requires app or library and a project name");
     }
-    platform_list.reset();
-  } else if (template_name) {
-    // `templates/` is the mcpp package-template tree. A CMake project is
-    // rendered from tools/huxerui_cli/templates, which has no such vocabulary,
-    // and silently ignoring the option would be worse than refusing it.
-    throw UsageError("--template selects an mcpp package template; it needs --build mcpp");
+    const std::array<prompt::Choice, 2> kinds{{
+        {"app", "an application"},
+        {"library", "a reusable library with a Preview application"},
+    }};
+    kind = RequireAnswer(prompter->Select("Project kind", kinds, 0)) == 0 ? ProjectKind::App : ProjectKind::Library;
   }
+  const auto name_problem = [&kind](std::string_view candidate) -> std::string {
+    if (!IsValidProjectName(candidate)) {
+      return "project name must start with a letter and contain only letters, digits, underscores, or hyphens";
+    }
+    if (kind == ProjectKind::Library && !IsValidLibraryProjectName(candidate)) {
+      return "library name must start with a letter and contain non-empty letter or digit segments separated by '-' "
+             "or '_'";
+    }
+    return {};
+  };
+  if (!name) {
+    if (prompter == nullptr) {
+      throw UsageError("create requires app or library and a project name");
+    }
+    name = RequireAnswer(prompter->Text("Project name", kind == ProjectKind::App ? "my-app" : "my-library",
+                                        name_problem));
+  }
+  if (const std::string problem = name_problem(*name); !problem.empty()) {
+    throw UsageError(problem);
+  }
+  if (kind != ProjectKind::Library && (cpp_namespace || public_target)) {
+    throw UsageError(std::string(cpp_namespace ? "--namespace" : "--target") +
+                     " is supported only for library creation");
+  }
+
+  if (prompter != nullptr && !style && build_systems.empty()) {
+    const std::array<prompt::Choice, 2> styles{{
+        {"headers", "#include <huxerui/huxerui.h>"},
+        {"modules", "import huxerui; built with mcpp"},
+    }};
+    style = RequireAnswer(prompter->Select("Source style", styles, 0)) == 0 ? SourceStyle::Headers
+                                                                            : SourceStyle::Modules;
+  }
+  if (prompter != nullptr && build_systems.empty() && style == SourceStyle::Headers) {
+    const std::array<prompt::Choice, 2> choices{{{"cmake", ""}, {"mcpp", ""}}};
+    if (kind == ProjectKind::App) {
+      build_systems.push_back(RequireAnswer(prompter->Select("Build system", choices, 0)) == 0 ? BuildSystem::CMake
+                                                                                               : BuildSystem::Mcpp);
+    } else {
+      const std::array<std::size_t, 2> both{0, 1};
+      for (const std::size_t index : RequireAnswer(prompter->MultiSelect("Build systems", choices, both))) {
+        build_systems.push_back(index == 0 ? BuildSystem::CMake : BuildSystem::Mcpp);
+      }
+    }
+  }
+  CreateSelection selection;
+  try {
+    selection = ResolveCreateSelection(*kind, style, build_systems);
+  } catch (const std::invalid_argument& error) {
+    throw UsageError(error.what());
+  }
+
+  const bool modules_library = kind == ProjectKind::Library && selection.style == SourceStyle::Modules;
+  if (template_name && selection.style != SourceStyle::Modules) {
+    throw UsageError("--template selects C++ modules content from templates/; it needs --style modules");
+  }
+  if (template_name) {
+    const bool known = kind == ProjectKind::App ? *template_name == "app" || *template_name == "navigation"
+                                                : *template_name == "library";
+    if (!known) {
+      throw UsageError("unknown template: " + std::string(*template_name) + "; expected " +
+                       (kind == ProjectKind::App ? "app or navigation" : "library"));
+    }
+  }
+  if (prompter != nullptr && !template_name && kind == ProjectKind::App && selection.style == SourceStyle::Modules) {
+    const std::array<prompt::Choice, 2> templates{{
+        {"app", "a page with a counter"},
+        {"navigation", "pages on a NavigationStack"},
+    }};
+    template_name = RequireAnswer(prompter->Select("Template", templates, 0)) == 0 ? "app" : "navigation";
+  }
+  if (modules_library && platform_list) {
+    throw UsageError("a C++ modules library has no platform packages or Preview yet; omit --platform");
+  }
+  if (prompter != nullptr && !platform_list && kind == ProjectKind::App) {
+    std::vector<prompt::Choice> choices;
+    std::vector<std::size_t> all;
+    for (const std::string_view id : PlatformIds()) {
+      all.push_back(choices.size());
+      choices.push_back({std::string(id), ""});
+    }
+    for (const std::size_t index : RequireAnswer(prompter->MultiSelect("Platforms", choices, all))) {
+      prompted_platforms += (prompted_platforms.empty() ? "" : ",") + choices[index].label;
+    }
+    platform_list = prompted_platforms;
+  }
+  const bool platform_specified = platform_list.has_value();
 
   if (project_id && !IsValidProjectId(*project_id)) {
     throw UsageError("project ID must be a lowercase reverse-domain identifier with letter-prefixed segments");
@@ -541,43 +648,41 @@ int RunCreate(std::span<const std::string_view> arguments, const std::filesystem
   ProjectTemplate project_template;
   try {
     project_template = kind == ProjectKind::Library
-                           ? ProjectTemplate{MakeLibraryTemplateContext(arguments[2], cpp_namespace.value_or(""),
+                           ? ProjectTemplate{MakeLibraryTemplateContext(*name, cpp_namespace.value_or(""),
                                  public_target.value_or(""), project_id.value_or(""))}
-                           : ProjectTemplate{MakeProjectTemplateContext(arguments[2], project_id.value_or(""))};
+                           : ProjectTemplate{MakeProjectTemplateContext(*name, project_id.value_or(""))};
   } catch (const std::invalid_argument& error) {
     throw UsageError(error.what());
   }
-  const std::vector<const PlatformDriver*> selected_platforms =
-      platform_list ? ResolvePlatforms(*platform_list) : std::vector<const PlatformDriver*>{};
-  std::vector<const PlatformDriver*> application_platforms = selected_platforms;
+  std::vector<const PlatformDriver*> application_platforms;
   std::vector<const PlatformDriver*> library_platforms;
-  if (kind == ProjectKind::Library) {
-    library_platforms = selected_platforms;
-    if (!platform_specified) {
-      application_platforms = ResolvePlatforms("all");
+  if (kind == ProjectKind::App) {
+    application_platforms = ResolvePlatforms(platform_list.value_or("all"));
+  } else if (!modules_library) {
+    application_platforms = ResolvePlatforms(platform_list.value_or("all"));
+    if (platform_specified) {
+      library_platforms = application_platforms;
     }
   }
-  const std::vector<AgentSkillDirectory> agent_skill_directories = ResolveAgentSkillDirectories(agent_list);
+  const std::vector<AgentSkillDirectory> agent_skill_directories =
+      ResolveAgentSkillDirectories(agent_list.value_or("codex"));
   const std::filesystem::path skill_source = agent_skill_directories.empty()
                                                  ? std::filesystem::path{}
                                                  : ResolveApplicationDevelopmentSkill(huxerui_home);
-  const std::filesystem::path destination = working_directory / arguments[2];
+  const std::filesystem::path destination = working_directory / *name;
   CreateProject(destination, project_template, application_platforms, library_platforms, skill_source,
-                agent_skill_directories, build_system, huxerui_home,
-                template_name.value_or(std::string_view{}));
+                agent_skill_directories, selection, huxerui_home, template_name.value_or(std::string_view{}));
 
   output << "Created " << (kind == ProjectKind::App ? "app " : "library ") << destination.string() << '\n';
-  if (build_system == BuildSystem::Mcpp) {
-    output << "Build system: mcpp\n";
-    output << "Build with:   cd " << destination.filename().string() << " && mcpp build\n";
-    return 0;
-  }
+  output << "Style: " << SourceStyleName(selection.style) << '\n';
+  output << "Build systems: " << JoinBuildSystems(selection.build_systems, ", ") << '\n';
   if (kind == ProjectKind::App) {
     output << "Platforms:";
     for (const PlatformDriver* platform : application_platforms) {
       output << ' ' << platform->Id();
     }
-  } else {
+    output << '\n';
+  } else if (!modules_library) {
     output << "Library platforms:";
     for (const PlatformDriver* platform : library_platforms) {
       output << ' ' << platform->Id();
@@ -589,8 +694,32 @@ int RunCreate(std::span<const std::string_view> arguments, const std::filesystem
     for (const PlatformDriver* platform : application_platforms) {
       output << ' ' << platform->Id();
     }
+    output << '\n';
   }
-  output << '\n';
+
+  // The selections as options, so the same project can be created again without prompts.
+  std::string command = "huxerui create " + std::string(kind == ProjectKind::App ? "app " : "library ") + *name +
+                        " --style " + std::string(SourceStyleName(selection.style)) + " --build-system " +
+                        JoinBuildSystems(selection.build_systems, ",");
+  if (template_name) {
+    command += " --template " + std::string(*template_name);
+  }
+  if (platform_specified || kind == ProjectKind::App) {
+    command += " --platform " + JoinPlatformIds(application_platforms);
+  }
+  if (project_id) {
+    command += " --id " + std::string(*project_id);
+  }
+  if (cpp_namespace) {
+    command += " --namespace " + std::string(*cpp_namespace);
+  }
+  if (public_target) {
+    command += " --target " + std::string(*public_target);
+  }
+  if (agent_list) {
+    command += " --agent " + std::string(*agent_list);
+  }
+  output << "Command: " << command << '\n';
   return 0;
 }
 
@@ -1346,7 +1475,8 @@ int RunSdk(std::span<const std::string_view> arguments, const SdkLocation& sdk, 
 } // namespace
 
 int Run(std::span<const std::string_view> arguments, const std::filesystem::path& working_directory,
-        const SdkLocation& sdk, std::istream& input, std::ostream& output, std::ostream& error) {
+        const SdkLocation& sdk, std::istream& input, std::ostream& output, std::ostream& error,
+        prompt::Prompter* prompter) {
   try {
     if (arguments.empty() || arguments[0] == "--help" || arguments[0] == "-h") {
       PrintHelp(output);
@@ -1369,7 +1499,7 @@ int Run(std::span<const std::string_view> arguments, const std::filesystem::path
       return 0;
     }
     if (command == "create") {
-      return RunCreate(arguments, working_directory, sdk.home, output);
+      return RunCreate(arguments, working_directory, sdk.home, prompter, output);
     }
     if (command == "platform") {
       return RunPlatform(arguments, working_directory, output);

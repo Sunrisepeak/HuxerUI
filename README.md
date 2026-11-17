@@ -39,7 +39,7 @@ huxerui doctor
 huxerui run windows
 ```
 
-For a C++ modules project on Windows, macOS, or Linux, pass `--build mcpp` to `huxerui create app`. Generated modules use `import huxerui;` and run with `mcpp run`. [C++ Modules and mcpp](skills/huxerui-app-development/references/cpp-modules-and-mcpp.md)
+For a C++ modules project, pass `--style modules` to `huxerui create app`; it is built with mcpp and its sources use `import huxerui;`. `--build-system cmake,mcpp` gives a headers project both declarations. [C++ Modules and mcpp](skills/huxerui-app-development/references/cpp-modules-and-mcpp.md)
 
 ## Example
 

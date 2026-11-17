@@ -1,0 +1,20 @@
+[package]
+name     = "@LIBRARY_RESOURCE_NAMESPACE@"
+version  = "0.1.0"
+standard = "c++20"
+
+# The library's public identity. huxerui.rules derives the resource namespace from it the way the CMake
+# declaration does, so both declarations project the same library.
+[package.metadata.huxerui]
+library   = "@LIBRARY_PUBLIC_TARGET@"
+resources = "resources"
+
+@MCPP_DEPENDENCIES@
+
+[targets.@LIBRARY_RESOURCE_NAMESPACE@]
+kind = "lib"
+
+[build]
+# huxerui.rules selects the sources and transforms composables.
+sources      = []
+include_dirs = ["include"]
