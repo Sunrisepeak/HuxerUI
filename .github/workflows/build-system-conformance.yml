@@ -199,6 +199,7 @@ jobs:
           path: ${{ runner.temp }}/cts/results
           if-no-files-found: error
 
+  # Intel runners: GitHub's macOS arm64 runners are capacity constrained and leave jobs unassigned.
   conformance-macos:
     name: ${{ matrix.integration }} (${{ matrix.target }} on ${{ matrix.host }})
     runs-on: ${{ matrix.os }}
@@ -207,13 +208,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { integration: cmake, target: macos,   host: macos,   os: macos-15,     python: python3 }
-          - { integration: mcpp,  target: macos,   host: macos,   os: macos-15,     python: python3 }
-          - { integration: cmake, target: ios,     host: macos,   os: macos-15,     python: python3 }
-          - { integration: cmake, target: web,     host: macos,   os: macos-15,     python: python3 }
-          - { integration: mcpp,  target: web,     host: macos,   os: macos-15,     python: python3 }
-          - { integration: cmake, target: android, host: macos,   os: macos-15,     python: python3 }
-          - { integration: mcpp,  target: android, host: macos,   os: macos-15,     python: python3 }
+          - { integration: cmake, target: macos,   host: macos,   os: macos-15-intel, python: python3 }
+          - { integration: mcpp,  target: macos,   host: macos,   os: macos-15-intel, python: python3 }
+          - { integration: cmake, target: ios,     host: macos,   os: macos-15-intel, python: python3 }
+          - { integration: cmake, target: web,     host: macos,   os: macos-15-intel, python: python3 }
+          - { integration: mcpp,  target: web,     host: macos,   os: macos-15-intel, python: python3 }
+          - { integration: cmake, target: android, host: macos,   os: macos-15-intel, python: python3 }
+          - { integration: mcpp,  target: android, host: macos,   os: macos-15-intel, python: python3 }
     steps:
       - uses: actions/checkout@v5
 
