@@ -64,6 +64,18 @@
         "libraries"
       ],
       "capabilities": []
+    },
+    "ios": {
+      "hosts": [
+        "macos"
+      ],
+      "checks": [
+        "build",
+        "linkage",
+        "resources",
+        "libraries"
+      ],
+      "capabilities": []
     }
   }
 }

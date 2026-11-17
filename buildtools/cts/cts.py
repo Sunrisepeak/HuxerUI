@@ -44,7 +44,7 @@ CHECKS: dict[str, dict] = {
     },
     "linkage": {
         "title": "Framework linkage",
-        "facts": ["framework.linkage", "android.exports"],
+        "facts": ["framework.linkage", "android.exports", "ios.link_inputs"],
         "equivalent": [],
     },
     "resources": {
@@ -151,10 +151,32 @@ class CMakeIntegration:
                           "-DANDROID_ABI=arm64-v8a", "-DANDROID_PLATFORM=android-23"]
         if self.launcher:
             configure += [f"-DCMAKE_C_COMPILER_LAUNCHER={self.launcher}", f"-DCMAKE_CXX_COMPILER_LAUNCHER={self.launcher}"]
+        if target == "ios":
+            # What the Xcode shell's build phase passes for a Simulator destination.
+            configure += ["-DCMAKE_SYSTEM_NAME=iOS", "-DCMAKE_OSX_SYSROOT=iphonesimulator", "-DCMAKE_OSX_ARCHITECTURES=arm64",
+                          "-DCMAKE_OSX_DEPLOYMENT_TARGET=15.0", "-DHUXERUI_BUILD_SHARED=OFF", "-DHUXERUI_BUILD_TESTS=OFF",
+                          "-DHUXERUI_BUILD_EXAMPLES=OFF", "-DHUXERUI_BUILD_CLI=OFF"]
         run_command(configure, project)
-        run_command(["cmake", "--build", str(work / "build")], project)
+        build = ["cmake", "--build", str(work / "build")]
+        if target == "ios":
+            name = load_json(project / "expected.json")["target"]
+            build += ["--target", f"{name}_huxerui_ios_core"]
+        run_command(build, project)
         # A second build of unchanged inputs must also succeed.
-        run_command(["cmake", "--build", str(work / "build")], project)
+        run_command(build, project)
+        if target == "ios":
+            # The application core the Xcode shell links: one archive, its link inputs, and the resource package.
+            core = work / "build" / "huxerui-ios" / name
+            return {
+                "target": name,
+                "artifact": str(core / f"lib{name}_huxerui.a"),
+                "bundle": "",
+                "link_inputs": str(core / "link.rsp"),
+                "resources": str(work / "build" / "huxerui-resources" / name / "package"),
+                "profile": "debug",
+                "libraries": load_json(graph)["libraries"] if graph.exists() else [],
+                "launch_environment": {},
+            }
 
         plans = sorted((work / "build" / "huxerui-integration").rglob("app.json"))
         if not plans:
@@ -265,7 +287,7 @@ def dynamic_dependencies(target: str, artifact: Path) -> list[str]:
 
 
 def collect_facts(target: str, project: Path, record: dict) -> dict:
-    if target not in ("linux", "windows", "macos", "web", "android"):
+    if target not in ("linux", "windows", "macos", "web", "android", "ios"):
         raise Unavailable(f"fact collection is not implemented for target {target}")
     artifact = Path(record["artifact"])
     facts: dict = {"profile": record["profile"]}
@@ -273,6 +295,8 @@ def collect_facts(target: str, project: Path, record: dict) -> dict:
         return {**facts, **web_facts(artifact), **library_facts(project, record)}
     if target == "android":
         return {**facts, **android_facts(artifact, Path(record["resources"])), **library_facts(project, record)}
+    if target == "ios":
+        return {**facts, **ios_facts(artifact, record), **library_facts(project, record)}
     # The contract fixes the basename; the platform adds its own extension.
     name = artifact.name[:-4] if target == "windows" and artifact.name.lower().endswith(".exe") else artifact.name
     facts["artifact.name"] = name if artifact.is_file() else "<missing>"
@@ -338,6 +362,29 @@ def android_facts(artifact: Path, package: Path) -> dict:
     else:
         facts["android.exports"] = "JNI entries only"
 
+    index = package / "huxerui" / "resources.bin"
+    facts["resources.location"] = "<missing>"
+    if index.is_file():
+        facts["resources.location"] = "application core"
+        facts["resources.sha256"] = hashlib.sha256(index.read_bytes()).hexdigest()
+        facts["resources.files"] = sorted(path.relative_to(package).as_posix() for path in package.rglob("*") if path.is_file())
+    return facts
+
+
+def ios_facts(artifact: Path, record: dict) -> dict:
+    """Facts of an iOS application core: the static archive the Xcode shell links, its link inputs,
+    and the final resource package the shell stages into the bundle."""
+    facts: dict = {"artifact.bundle": "<none>"}
+    facts["artifact.name"] = artifact.name if artifact.is_file() else "<missing>"
+    facts["framework.linkage"] = "<missing>"
+    if artifact.is_file():
+        members = subprocess.run(["ar", "-t", str(artifact)], text=True, stdout=subprocess.PIPE, check=True).stdout
+        # The framework is inside the core when the archive carries its UIKit platform objects.
+        facts["framework.linkage"] = "static" if "uikit" in members.lower() else "not in the application core"
+    link_inputs = Path(record.get("link_inputs") or "")
+    facts["ios.link_inputs"] = "present" if link_inputs.is_file() and link_inputs.stat().st_size > 0 else "<missing>"
+
+    package = Path(record.get("resources") or "")
     index = package / "huxerui" / "resources.bin"
     facts["resources.location"] = "<missing>"
     if index.is_file():

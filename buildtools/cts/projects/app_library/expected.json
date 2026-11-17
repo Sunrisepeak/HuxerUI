@@ -36,6 +36,13 @@
         "resources.location": "application core",
         "android.exports": "JNI entries only"
       }
+    },
+    "ios": {
+      "facts": {
+        "artifact.name": "libcts_app_library_huxerui.a",
+        "resources.location": "application core",
+        "ios.link_inputs": "present"
+      }
     }
   }
 }

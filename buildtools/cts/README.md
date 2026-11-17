@@ -25,7 +25,7 @@ The suite is divided into checkpoints so a run shows which part of the contract 
 | Checkpoint | Checked against `expected.json` | Compared between integrations |
 | --- | --- | --- |
 | `build` | `profile`, `artifact.name`, `artifact.bundle` | |
-| `linkage` | `framework.linkage`, read from the artifact's dynamic dependencies; on Android also `android.exports` | |
+| `linkage` | `framework.linkage`, read from the artifact's dynamic dependencies; on Android also `android.exports`, on iOS `ios.link_inputs` | |
 | `resources` | `resources.location`: the final package where the Runtime looks for it | `resources.sha256`, `resources.files` |
 | `libraries` | `libraries`: the ordered library-graph record | `libraries.roots` |
 | `launch` | `launch.*`: what the started application resolved | |
@@ -66,8 +66,8 @@ The `launch` checkpoint starts each application with `HUXERUI_CTS_PROBE` set and
 | `macos` | The application bundle, the program inside it, and the package in the bundle's resources; the application is started. |
 | `web` | The ES module and WebAssembly module, and the package preloaded into the module's data file. |
 | `android` | The application core the platform shell consumes: `lib<target>.so` for `arm64-v8a`, its exported JNI entries, and the final resource package. |
+| `ios` | The application core the Xcode shell links: `lib<target>_huxerui.a` for the Simulator with the framework inside it, its link inputs, and the final resource package. |
 
-The Android checks stop at the application core; building the APK through the Gradle shell is not yet a checkpoint.
-iOS is not covered yet.
+The Android and iOS checks stop at the application core; building the APK or the application bundle through the platform shell is not yet a checkpoint.
 
 `.github/workflows/build-system-conformance.yml` runs every checkpoint as its own step for each integration, then compares the integrations, on pull requests that touch a build system, the framework sources, or the suite.
