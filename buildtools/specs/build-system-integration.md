@@ -51,7 +51,7 @@ Declaring a library dependency is one statement in the native build file.
 The CLI may delegate that edit to a build system's own dependency command where one exists; it never rewrites a native build script as text.
 A capability that only one build system offers is used through that build system's native configuration or commands and is not wrapped by the CLI.
 
-The CLI currently dispatches `build`, `run`, and `package` for CMake projects and offers `huxerui mcpp build` as a separate frontend; this draft replaces that frontend with dispatch.
+The CLI dispatches `build` and `run` to the CMake and mcpp integrations and `package` to CMake; packaging an mcpp project, and running one on a platform other than the host's desktop, are refused until they are mapped.
 
 The shared request carries the following information where applicable:
 

@@ -232,14 +232,13 @@ huxerui platform add <platform-list>
 huxerui doctor [platform-list]
 huxerui setup <platform-list> [--yes]
 huxerui devices [platform]
-huxerui build [platform-list] [-d|--device <id>] [--config debug|release] [--generator <name>] [--sdk <path>] [--java-home <path>]
-huxerui mcpp build [--project <dir>] [--release] [--locked] [--offline] [--verbose]
-huxerui run <platform> [-d|--device <id>] [--config debug|release] [--generator <name>] [--sdk <path>] [--java-home <path>] [--watch]
-huxerui package <platform-list> [-d|--device <id>] [--config debug|release] [--generator <name>] [--sdk <path>] [--java-home <path>]
+huxerui build [platform-list] [--build-system cmake|mcpp] [-d|--device <id>] [--config debug|release] [--generator <name>] [--sdk <path>] [--java-home <path>]
+huxerui run <platform> [--build-system cmake|mcpp] [-d|--device <id>] [--config debug|release] [--generator <name>] [--sdk <path>] [--java-home <path>] [--watch]
+huxerui package <platform-list> [--build-system cmake|mcpp] [-d|--device <id>] [--config debug|release] [--generator <name>] [--sdk <path>] [--java-home <path>]
 huxerui open ios [--sdk <path>]
 ```
 
-The aliases `b`, `r`, and `pkg` share command dispatch and help with `build`, `run`, and `package`. `mcpp build --project` selects the directory containing `mcpp.toml` and defaults to the current directory.
+The aliases `b`, `r`, and `pkg` share command dispatch and help with `build`, `run`, and `package`.
 
 A platform list is comma-separated or `all`.
 `all` means every platform driver known to the current CLI for `create` and every enabled application platform for project commands.
@@ -249,7 +248,13 @@ The accepted identifiers are `codex`, `claude`, `antigravity`, `opencode`, `comm
 The default is `codex`; `all` selects the three distinct directories, and `none` disables Skill creation.
 An explicit list replaces the default, and aliases that share a directory are deduplicated.
 
-`huxerui mcpp build` is an independent generic mcpp frontend. It requires `mcpp.toml` in the selected source directory and invokes the `mcpp` executable directly. It does not participate in HuxerUI project discovery, alter the existing CMake and platform-driver paths, or provide HuxerUI package integration; the mcpp project owns those details.
+Project discovery walks up from the working directory and stops at the nearest directory carrying a native declaration: `CMakeLists.txt` beside `platform/` or `include/`, or `mcpp.toml` beside `build.mcpp`.
+`build`, `run`, and `package` dispatch to the integration that declaration names; a root carrying both requires `--build-system`, and the CLI exits with code 2 naming the ambiguity instead of choosing.
+The mcpp dispatch runs `mcpp build`, with `--target` naming the platform's triple (`wasm32-emscripten`, `aarch64-linux-android`, or `aarch64-ios-sim`) and `--release` for the release profile, and `mcpp run` for the host's desktop platform.
+Running on Web, Android, and iOS and packaging are not yet mapped to the mcpp integration and are refused with that reason.
+For an mcpp project, options that change the product (`--sdk`, `--abi`, `--optimization`, `--lto`, `--profile`) and destinations the dispatch does not handle yet (`--device`, `--watch`) are usage errors; `--generator` and `--java-home` only steer the CMake driver and are reported with a warning and not applied.
+`platform add` writes the shell only, taking the identity from the CMake project plan or, for a project that declares only mcpp, from the `[package.metadata.huxerui]` table the CLI writes into `mcpp.toml`. `open ios` needs the CMake declaration because the Xcode shell builds the application core through CMake.
+There is no command named after a build system; a capability only mcpp offers is used through `mcpp` directly.
 Desktop CMake build commands leave concurrency to CMake and its selected build tool, preserving `CMAKE_BUILD_PARALLEL_LEVEL` for callers and CI. They do not force an unnumbered `--parallel`, which becomes unlimited parallelism with Unix Makefiles.
 
 ### Create and platform add

@@ -453,6 +453,7 @@ std::vector<GeneratedFile> McppLibraryDeclaration(const LibraryTemplateContext& 
   const std::array replacements{
       TemplateReplacement{"@LIBRARY_PUBLIC_TARGET@", library.public_target},
       TemplateReplacement{"@LIBRARY_RESOURCE_NAMESPACE@", target.resource_namespace},
+      TemplateReplacement{"@LIBRARY_NAMESPACE@", library.cpp_namespace},
       TemplateReplacement{"@MCPP_DEPENDENCIES@", dependencies},
   };
   return RenderTemplateTree("project/mcpp_library", library.project, replacements);
@@ -525,26 +526,24 @@ std::string ReadFile(const std::filesystem::path& path) {
   return {std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
 }
 
-/// True for a directory `huxerui create --build mcpp` produced.
+/// True for a directory carrying an mcpp declaration.
 bool IsMcppProjectRoot(const std::filesystem::path& root) {
   return std::filesystem::is_regular_file(root / "mcpp.toml") &&
          std::filesystem::is_regular_file(root / "build.mcpp");
 }
 
 Project InspectProjectRoot(const std::filesystem::path& root) {
-  if (!std::filesystem::is_regular_file(root / "CMakeLists.txt")) {
-    // This CLI drives the CMake project: build, run, package and platform add
-    // all read it. An mcpp project has no CMakeLists.txt on purpose, and
-    // "missing CMakeLists.txt" sends its owner looking for the wrong thing.
-    if (IsMcppProjectRoot(root)) {
-      throw std::runtime_error("this is an mcpp project, which mcpp drives rather than the huxerui CLI"
-                               " -- build it with `mcpp build` and run it with `mcpp run`: " +
-                               root.string());
-    }
-    throw std::runtime_error("HuxerUI project is missing CMakeLists.txt: " + root.string());
+  Project project{root, {}, {}, {}};
+  if (std::filesystem::is_regular_file(root / "CMakeLists.txt")) {
+    project.build_systems.push_back(BuildSystem::CMake);
   }
-
-  Project project{root, {}, {}};
+  if (IsMcppProjectRoot(root)) {
+    project.build_systems.push_back(BuildSystem::Mcpp);
+  }
+  if (project.build_systems.empty()) {
+    throw std::runtime_error("HuxerUI project has no native build declaration (CMakeLists.txt, or mcpp.toml with "
+                             "build.mcpp): " + root.string());
+  }
   const std::filesystem::path platform_root = root / "platform";
   if (std::filesystem::is_directory(platform_root)) {
     for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(platform_root)) {
@@ -580,6 +579,72 @@ std::string JsonString(std::string_view json, std::string_view key) {
     throw std::runtime_error("project plan has an unterminated " + std::string(key));
   }
   return std::string(json.substr(quote + 1, end - quote - 1));
+}
+
+/// One string value of a TOML table in a manifest the CLI or `mcpp new` wrote: `key = "value"` on one line.
+std::string ManifestValue(std::string_view manifest, std::string_view table, std::string_view key) {
+  bool inside = false;
+  for (std::size_t start = 0; start < manifest.size();) {
+    const std::size_t end = std::min(manifest.find('\n', start), manifest.size());
+    std::string_view line = manifest.substr(start, end - start);
+    start = end + 1;
+    while (!line.empty() && (line.front() == ' ' || line.front() == '\t')) {
+      line.remove_prefix(1);
+    }
+    if (line.starts_with('[')) {
+      inside = line.starts_with("[" + std::string(table) + "]");
+      continue;
+    }
+    if (!inside || !line.starts_with(key)) {
+      continue;
+    }
+    std::string_view rest = line.substr(key.size());
+    while (!rest.empty() && (rest.front() == ' ' || rest.front() == '\t')) {
+      rest.remove_prefix(1);
+    }
+    if (!rest.starts_with('=')) {
+      continue;
+    }
+    const std::size_t open = rest.find('"');
+    const std::size_t close = open == std::string_view::npos ? open : rest.find('"', open + 1);
+    if (close != std::string_view::npos) {
+      return std::string(rest.substr(open + 1, close - open - 1));
+    }
+  }
+  return {};
+}
+
+bool HasModuleSources(const std::filesystem::path& root) {
+  std::error_code error;
+  for (std::filesystem::recursive_directory_iterator entry(root / "src", error), end; !error && entry != end;
+       entry.increment(error)) {
+    if (entry->path().extension() == ".cppm") {
+      return true;
+    }
+  }
+  return false;
+}
+
+/// The identity of a project that declares only mcpp, from the manifest's `[package.metadata.huxerui]` table the
+/// CLI writes; a manifest without it, such as one `mcpp new` rendered, derives the identity from the package name.
+ProjectTemplate LoadMcppProjectTemplate(const Project& project) {
+  const std::string manifest = ReadFile(project.root / "mcpp.toml");
+  const std::string package = ManifestValue(manifest, "package", "name");
+  const std::string name = ManifestValue(manifest, "package.metadata.huxerui", "name");
+  const std::string id = ManifestValue(manifest, "package.metadata.huxerui", "id");
+  const std::string library = ManifestValue(manifest, "package.metadata.huxerui", "library");
+  const std::string_view display = name.empty() ? std::string_view(package) : std::string_view(name);
+  try {
+    if (!library.empty()) {
+      return MakeLibraryTemplateContext(display, ManifestValue(manifest, "package.metadata.huxerui", "namespace"),
+                                        library, id);
+    }
+    ProjectTemplateContext context = MakeProjectTemplateContext(display, id);
+    context.source_style = HasModuleSources(project.root) ? SourceStyle::Modules : SourceStyle::Headers;
+    return context;
+  } catch (const std::invalid_argument& error) {
+    throw std::runtime_error("mcpp.toml does not name a valid HuxerUI project identity: " + std::string(error.what()));
+  }
 }
 
 ProjectKind ParseProjectKind(std::string_view value) {
@@ -787,18 +852,12 @@ Project DiscoverProject(const std::filesystem::path& start) {
     current = current.parent_path();
   }
 
-  std::filesystem::path mcpp_root;
   while (!current.empty()) {
     const bool has_cmake = std::filesystem::is_regular_file(current / "CMakeLists.txt");
     const bool has_platforms = std::filesystem::is_directory(current / "platform");
     const bool has_library_headers = std::filesystem::is_directory(current / "include");
-    if (has_cmake && (has_platforms || has_library_headers)) {
+    if ((has_cmake && (has_platforms || has_library_headers)) || IsMcppProjectRoot(current)) {
       return InspectProjectRoot(current);
-    }
-    // Recorded rather than returned: the walk still prefers a CMake project
-    // further up, which is what a CMake project holding an mcpp example needs.
-    if (mcpp_root.empty() && IsMcppProjectRoot(current)) {
-      mcpp_root = current;
     }
 
     const std::filesystem::path parent = current.parent_path();
@@ -807,15 +866,13 @@ Project DiscoverProject(const std::filesystem::path& start) {
     }
     current = parent;
   }
-  if (!mcpp_root.empty()) {
-    throw std::runtime_error("this is an mcpp project, which mcpp drives rather than the huxerui CLI"
-                             " -- build it with `mcpp build` and run it with `mcpp run`: " +
-                             mcpp_root.string());
-  }
   throw std::runtime_error("no HuxerUI project found from " + start.string());
 }
 
 ProjectTemplate LoadProjectTemplate(const Project& project) {
+  if (!project.Declares(BuildSystem::CMake)) {
+    return LoadMcppProjectTemplate(project);
+  }
   const std::filesystem::path temporary = TemporaryPath(std::filesystem::temp_directory_path(), "project-plan");
   TemporaryTree cleanup(temporary);
   std::filesystem::create_directories(temporary);
@@ -862,8 +919,13 @@ ProjectTemplate LoadProjectTemplate(const Project& project) {
   return LibraryTemplateContext{std::move(context), std::move(cpp_namespace), std::move(public_target)};
 }
 
+bool Project::Declares(BuildSystem build_system) const noexcept {
+  return std::ranges::find(build_systems, build_system) != build_systems.end();
+}
+
 Project ResolveApplicationProject(const Project& project) {
-  if (std::filesystem::is_regular_file(project.root / "examples/preview/CMakeLists.txt") &&
+  const std::filesystem::path preview = project.root / "examples/preview";
+  if ((std::filesystem::is_regular_file(preview / "CMakeLists.txt") || IsMcppProjectRoot(preview)) &&
       std::filesystem::is_directory(project.root / "include")) {
     return InspectProjectRoot(project.root / "examples/preview");
   }
@@ -922,6 +984,18 @@ void CreateProject(const std::filesystem::path& destination, const ProjectTempla
         return platform->Id() == id;
       });
     });
+    if (library == nullptr) {
+      // `mcpp new` cannot know the identity, so the CLI records it where `platform add` reads it.
+      const auto manifest = std::ranges::find_if(files, [](const GeneratedFile& file) {
+        return file.path.generic_string() == "mcpp.toml";
+      });
+      if (manifest == files.end()) {
+        throw std::logic_error("templates/" + std::string(selected) + " renders no mcpp.toml");
+      }
+      manifest->content += "\n# The project's identity, which `huxerui platform add` gives to the platform shells it "
+                           "writes.\n[package.metadata.huxerui]\nname = \"" + context.project_name + "\"\nid   = \"" +
+                           context.project_id + "\"\n";
+    }
     WriteFiles(temporary, files);
     if (library == nullptr) {
       for (const PlatformDriver* platform : application_platforms) {

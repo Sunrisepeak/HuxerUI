@@ -1,36 +1,31 @@
 #pragma once
 
 #include <filesystem>
-#include <iosfwd>
-#include <span>
+#include <string>
 #include <string_view>
-#include <vector>
 
 #include "process_runner.h"
 
 namespace huxerui::cli::mcpp {
 
-/// Options for the standalone mcpp build frontend.
-struct BuildOptions {
+/// What the CLI asks the mcpp integration to build or run.
+struct CommandOptions {
   /// Root directory containing `mcpp.toml`.
   std::filesystem::path project_root;
-  /// Selects mcpp's release profile instead of its development profile.
-  bool release = false;
-  /// Requires the mcpp lock file to be up to date.
-  bool locked = false;
-  /// Prevents mcpp from accessing the network.
-  bool offline = false;
-  /// Enables verbose mcpp output.
-  bool verbose = false;
+  /// HuxerUI platform identifier, such as `linux` or `web`.
+  std::string platform;
+  /// Logical profile, `debug` or `release`.
+  std::string profile = "debug";
 };
 
-/// Creates the direct child process command for an mcpp project.
-[[nodiscard]] std::vector<ProcessCommand> BuildCommands(const BuildOptions& options);
+/// The mcpp target triple a platform is built for, or an empty string for the host's own desktop platform.
+/// @throws std::invalid_argument for a platform the mcpp integration does not build.
+[[nodiscard]] std::string_view TargetTriple(std::string_view platform);
 
-/// Runs the standalone `huxerui mcpp` command.
-///
-/// The argument span starts with `build`, and the command does not use the HuxerUI SDK or project discovery.
-[[nodiscard]] int Run(std::span<const std::string_view> arguments, const std::filesystem::path& working_directory,
-                      std::ostream& output, std::ostream& error);
+/// The `mcpp build` command for a platform and profile.
+[[nodiscard]] ProcessCommand BuildCommand(const CommandOptions& options);
+
+/// The `mcpp run` command, which builds and starts the application on the host.
+[[nodiscard]] ProcessCommand RunCommand(const CommandOptions& options);
 
 } // namespace huxerui::cli::mcpp

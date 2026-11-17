@@ -53,7 +53,8 @@ constexpr std::array agent_skill_mappings{
 };
 
 constexpr std::string_view build_options =
-    "[-d|--device <id>] [--config debug|release] [--generator <name>] [--sdk <path>] [--java-home <path>]";
+    "[--build-system cmake|mcpp] [-d|--device <id>] [--config debug|release] [--generator <name>] [--sdk <path>] "
+    "[--java-home <path>]";
 constexpr std::string_view package_format_option = " [-f|--format appimage|deb|rpm]";
 constexpr std::string_view watch_option_help = "--watch rebuilds and relaunches the selected application after edits.\n";
 constexpr std::string_view sdk_option_help =
@@ -64,7 +65,8 @@ constexpr std::string_view sdk_commands =
     "  huxerui sdk update [--check] [--yes]\n";
 
 void PrintBuildOptions(std::ostream& output) {
-  output << sdk_option_help
+  output << "--build-system selects the integration when the project declares more than one.\n"
+         << sdk_option_help
          << "--config defaults to debug for build and run, and release for package.\n"
          << "--profile enables profiling in a source build selected with --sdk <path>.\n"
          << "Build, run, and package accept --abi <abi-list> for a single platform.\n"
@@ -111,7 +113,6 @@ void PrintHelp(std::ostream& output) {
          << sdk_commands
          << "  huxerui devices [platform]\n"
          << "  huxerui build [platform-list] " << build_options << '\n'
-         << "  huxerui mcpp build [--project <dir>] [--release] [--locked] [--offline] [--verbose]\n"
          << "  huxerui run <platform> " << build_options << " [--watch]\n"
          << "  huxerui package <platform-list> " << build_options << package_format_option << '\n'
          << "  huxerui open ios [--sdk <path>]\n"
@@ -770,9 +771,15 @@ int RunDoctor(std::span<const std::string_view> arguments, const std::filesystem
     }
   } else {
     output << "Project: " << project->root.string() << '\n';
-    if (!std::filesystem::is_regular_file(project->root / "CMakeLists.txt")) {
-      output << "[error] missing CMakeLists.txt\n";
-      failed = true;
+    output << "Build systems: " << JoinBuildSystems(project->build_systems, ", ") << '\n';
+    if (project->Declares(BuildSystem::Mcpp)) {
+      const std::optional<std::filesystem::path> mcpp = FindExecutable("mcpp");
+      output << '[' << (mcpp ? "ok" : "missing") << "] mcpp";
+      if (mcpp) {
+        output << ": " << mcpp->string();
+      }
+      output << '\n';
+      failed = failed || !mcpp;
     }
     if (!std::filesystem::is_directory(project->root / "src")) {
       output << "[error] missing src directory\n";
@@ -882,6 +889,7 @@ struct BuildOptions {
   bool watch = false;
   std::vector<std::string> abis;
   std::optional<std::string> package_format;
+  std::optional<BuildSystem> build_system;
 };
 
 BuildOptions ParseBuildOptions(std::span<const std::string_view> arguments, std::string_view command) {
@@ -946,6 +954,15 @@ BuildOptions ParseBuildOptions(std::span<const std::string_view> arguments, std:
         throw UsageError("--device may be specified only once");
       }
       options.device = read_value();
+    } else if (option == "--build-system") {
+      if (options.build_system) {
+        throw UsageError("--build-system may be specified only once");
+      }
+      const auto name = read_value();
+      options.build_system = ParseBuildSystem(name);
+      if (!options.build_system) {
+        throw UsageError("unknown build system: " + std::string(name) + "; expected cmake or mcpp");
+      }
     } else if (option == "--generator") {
       options.cmake_generator = read_value();
     } else if (option == "--sdk") {
@@ -1227,9 +1244,109 @@ std::optional<PlatformDevice> SelectDevice(const PlatformDriver& platform, std::
   return ready.front();
 }
 
+/// The integration a command dispatches to: the project's only one, or the one `--build-system` selects.
+BuildSystem SelectBuildSystem(const Project& project, const BuildOptions& options) {
+  if (options.build_system) {
+    if (!project.Declares(*options.build_system)) {
+      throw UsageError("this project has no " + std::string(BuildSystemName(*options.build_system)) +
+                       " declaration: " + project.root.string());
+    }
+    return *options.build_system;
+  }
+  if (project.build_systems.size() > 1) {
+    throw UsageError("this project declares more than one build system (" +
+                     JoinBuildSystems(project.build_systems, ", ") + "); select one with --build-system");
+  }
+  return project.build_systems.front();
+}
+
+/// The project a build command dispatches to mcpp, or nothing when CMake builds it or no project is found;
+/// the CMake path then reports a missing project after resolving the SDK, as it always has.
+std::optional<Project> FindMcppProject(const std::filesystem::path& working_directory, const BuildOptions& options) {
+  std::optional<Project> project = TryDiscoverProject(working_directory);
+  if (!project) {
+    return std::nullopt;
+  }
+  project = ResolveApplicationProject(*project);
+  if (SelectBuildSystem(*project, options) != BuildSystem::Mcpp) {
+    return std::nullopt;
+  }
+  return project;
+}
+
+/// Applies the contract's rule for options the mcpp integration cannot honor: an option that would change the
+/// product is invalid usage, and an option that only steers the CMake driver is reported and not applied.
+void ApplyMcppOptionRules(BuildOptions& options, std::ostream& error) {
+  const auto refuse = [](std::string_view option, std::string_view reason) {
+    throw UsageError(std::string(option) + " " + std::string(reason) + " for an mcpp project");
+  };
+  if (options.sdk_override) {
+    throw UsageError("--sdk does not apply to an mcpp project: it takes HuxerUI from the huxerui dependency in "
+                     "mcpp.toml, so change that entry instead");
+  }
+  if (!options.abis.empty()) {
+    refuse("--abi", "is not available");
+  }
+  if (options.optimization) {
+    refuse("--optimization", "is not available");
+  }
+  if (options.lto) {
+    refuse("--lto", "is not available");
+  }
+  if (options.profiling) {
+    refuse("--profile", "is not available");
+  }
+  if (!options.device.empty()) {
+    refuse("--device", "is not available yet");
+  }
+  if (options.watch) {
+    refuse("--watch", "is not available yet");
+  }
+  if (!options.cmake_generator.empty()) {
+    error << "huxerui: warning: --generator selects a CMake generator and does not apply to an mcpp project; "
+             "it is not applied\n";
+    options.cmake_generator.clear();
+  }
+  if (options.java_home) {
+    error << "huxerui: warning: --java-home steers the CMake Android build and does not apply to an mcpp project; "
+             "it is not applied\n";
+    options.java_home.reset();
+  }
+}
+
+int RunMcppCommand(const Project& project, BuildOptions& options, std::string_view command, std::ostream& output,
+                   std::ostream& error) {
+  ApplyMcppOptionRules(options, error);
+  if (!project.unknown_platforms.empty()) {
+    throw std::runtime_error("unknown platform directory: " + project.unknown_platforms.front());
+  }
+  const std::vector<const PlatformDriver*> platforms =
+      ResolveBuildPlatforms(project, options, command == "build" ? std::string_view{} : command);
+  for (const PlatformDriver* platform : platforms) {
+    const mcpp::CommandOptions mcpp_options{project.root, std::string(platform->Id()), options.profile};
+    if (command == "run") {
+      if (!mcpp::TargetTriple(platform->Id()).empty()) {
+        throw std::runtime_error("run " + std::string(platform->Id()) + " is not available for an mcpp project yet; "
+                                 "build it with huxerui build " + std::string(platform->Id()));
+      }
+      output << "Running " << platform->Id() << " (" << options.profile << ") with mcpp\n";
+      const ProcessCommand run = mcpp::RunCommand(mcpp_options);
+      ExecuteCommands(std::span(&run, 1), output);
+      continue;
+    }
+    output << "Building " << platform->Id() << " (" << options.profile << ") with mcpp\n";
+    const ProcessCommand build = mcpp::BuildCommand(mcpp_options);
+    ExecuteCommands(std::span(&build, 1), output);
+  }
+  return 0;
+}
+
 int RunBuild(std::span<const std::string_view> arguments, const std::filesystem::path& working_directory,
-             const std::filesystem::path& sdk_home, std::ostream& output) {
+             const std::filesystem::path& sdk_home, std::ostream& output, std::ostream& error) {
   BuildOptions options = ParseBuildOptions(arguments, {});
+  if (const std::optional<Project> project = FindMcppProject(working_directory, options)) {
+    return RunMcppCommand(*project, options, "build", output, error);
+  }
   const auto huxerui_home = ResolveAndExportBuildHome(sdk_home, options, working_directory);
   const Project project = ResolveApplicationProject(DiscoverProject(working_directory));
   if (!project.unknown_platforms.empty()) {
@@ -1251,6 +1368,9 @@ int RunBuild(std::span<const std::string_view> arguments, const std::filesystem:
 int RunApplication(std::span<const std::string_view> arguments, const std::filesystem::path& working_directory,
                    const std::filesystem::path& sdk_home, std::ostream& output, std::ostream& error) {
   BuildOptions options = ParseBuildOptions(arguments, "run");
+  if (const std::optional<Project> project = FindMcppProject(working_directory, options)) {
+    return RunMcppCommand(*project, options, "run", output, error);
+  }
   const auto huxerui_home = ResolveAndExportBuildHome(sdk_home, options, working_directory);
   const Project project = ResolveApplicationProject(DiscoverProject(working_directory));
   if (!project.unknown_platforms.empty()) {
@@ -1366,6 +1486,10 @@ void PublishPackageArtifacts(std::span<const PackageArtifact> artifacts, const s
 int RunPackage(std::span<const std::string_view> arguments, const std::filesystem::path& working_directory,
                const std::filesystem::path& sdk_home, std::ostream& output) {
   BuildOptions options = ParseBuildOptions(arguments, "package");
+  if (FindMcppProject(working_directory, options)) {
+    throw std::runtime_error("packaging an mcpp project is not available yet; no package format is mapped to the "
+                             "mcpp integration, so none is produced in place of the requested one");
+  }
   const auto huxerui_home = ResolveAndExportBuildHome(sdk_home, options, working_directory);
   if (!options.profile_explicit) {
     options.profile = "release";
@@ -1410,6 +1534,11 @@ int RunOpen(std::span<const std::string_view> arguments, const std::filesystem::
   if (options.profile_explicit || !options.device.empty() || !options.cmake_generator.empty() || options.java_home ||
       options.optimization || options.lto || !options.abis.empty()) {
     throw UsageError("open accepts only --sdk <path>");
+  }
+  if (const std::optional<Project> found = TryDiscoverProject(working_directory);
+      found && !ResolveApplicationProject(*found).Declares(BuildSystem::CMake)) {
+    throw std::runtime_error("open ios needs the project's CMake declaration: the Xcode shell builds the application "
+                             "core through CMake");
   }
   const auto huxerui_home = ResolveAndExportBuildHome(sdk_home, options, working_directory);
   const Project project = ResolveApplicationProject(DiscoverProject(working_directory));
@@ -1516,11 +1645,8 @@ int Run(std::span<const std::string_view> arguments, const std::filesystem::path
     if (command == "devices") {
       return RunDevices(arguments, output);
     }
-    if (command == "mcpp") {
-      return mcpp::Run(arguments.subspan(1), working_directory, output, error);
-    }
     if (command == "build") {
-      return RunBuild(arguments, working_directory, sdk.home, output);
+      return RunBuild(arguments, working_directory, sdk.home, output, error);
     }
     if (command == "run") {
       return RunApplication(arguments, working_directory, sdk.home, output, error);

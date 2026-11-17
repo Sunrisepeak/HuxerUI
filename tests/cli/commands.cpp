@@ -26,47 +26,116 @@ TEST_CASE("HuxerUICliHelpListsSupportedAgents") {
   REQUIRE(invocation.output.find("--namespace <cpp-namespace>") != std::string::npos);
   REQUIRE(invocation.output.find("--target <public-cmake-target>") != std::string::npos);
   REQUIRE(invocation.output.find("--sdk <path>") != std::string::npos);
-  REQUIRE(invocation.output.find("--project <dir>") != std::string::npos);
   REQUIRE(invocation.output.find("-d|--device <id>") != std::string::npos);
   REQUIRE(invocation.output.find("--java-home <path>") != std::string::npos);
   REQUIRE(invocation.output.find("--abi <abi-list>") != std::string::npos);
   REQUIRE(invocation.output.find("a common library's Preview enable all platforms") != std::string::npos);
-  REQUIRE(invocation.output.find("huxerui mcpp build") != std::string::npos);
+  REQUIRE(invocation.output.find("[--build-system cmake|mcpp]") != std::string::npos);
+  REQUIRE(invocation.output.find("huxerui mcpp") == std::string::npos);
 }
 
-TEST_CASE("HuxerUICliCreatesMcppBuildCommands") {
-  TemporaryDirectory temporary;
-  const huxerui::cli::mcpp::BuildOptions options{
-      temporary.Path() / "mcpp-project",
-      true,
-      true,
-      true,
-      true,
-  };
-  const std::vector<huxerui::cli::ProcessCommand> commands = huxerui::cli::mcpp::BuildCommands(options);
+TEST_CASE("HuxerUICliCreatesMcppDispatchCommands") {
+  using huxerui::cli::mcpp::TargetTriple;
+  REQUIRE(TargetTriple("linux").empty());
+  REQUIRE(TargetTriple("windows").empty());
+  REQUIRE(TargetTriple("web") == "wasm32-emscripten");
+  REQUIRE(TargetTriple("android") == "aarch64-linux-android");
+  REQUIRE(TargetTriple("ios") == "aarch64-ios-sim");
+  REQUIRE_THROWS_AS(TargetTriple("plan9"), std::invalid_argument);
 
-  REQUIRE(commands.size() == 1);
-  REQUIRE(commands[0].executable == "mcpp");
-  REQUIRE(
-      commands[0].arguments == std::vector<std::string>{"build", "--release", "--locked", "--offline", "--verbose"}
-  );
-  REQUIRE(commands[0].working_directory == options.project_root);
+  const huxerui::cli::mcpp::CommandOptions web{"/project", "web", "release"};
+  const huxerui::cli::ProcessCommand build = huxerui::cli::mcpp::BuildCommand(web);
+  REQUIRE(build.executable == "mcpp");
+  REQUIRE(build.arguments == std::vector<std::string>{"build", "--target", "wasm32-emscripten", "--release"});
+  REQUIRE(build.working_directory == "/project");
+  const huxerui::cli::ProcessCommand run = huxerui::cli::mcpp::RunCommand({"/project", "linux", "debug"});
+  REQUIRE(run.arguments == std::vector<std::string>{"run"});
 }
 
-TEST_CASE("HuxerUICliMcppRequiresAManifest") {
+TEST_CASE("HuxerUICliHasNoCommandNamedAfterABuildSystem") {
   TemporaryDirectory temporary;
   const Invocation invocation = Invoke(temporary.Path(), {"mcpp", "build"});
+  REQUIRE(invocation.result == 2);
+  REQUIRE(invocation.error.find("unknown command: mcpp") != std::string::npos);
+}
 
-  REQUIRE(invocation.result == 1);
-  REQUIRE(invocation.error.find("mcpp.toml") != std::string::npos);
+TEST_CASE("HuxerUICliDispatchesToTheProjectsBuildSystem") {
+  TemporaryDirectory temporary;
+  REQUIRE(Invoke(temporary.Path(), {"create", "app", "mods", "--style", "modules", "--agent", "none"}).result == 0);
+  REQUIRE(Invoke(temporary.Path(), {"create", "app", "both", "--build-system", "cmake,mcpp", "--agent", "none"})
+              .result == 0);
+  const std::filesystem::path modules = temporary.Path() / "mods";
+  const std::filesystem::path both = temporary.Path() / "both";
 
-  std::filesystem::create_directory(temporary.Path() / "other project");
-  const auto selected = Invoke(temporary.Path(), {"mcpp", "build", "--project", "other project"});
-  REQUIRE(selected.result == 1);
-  REQUIRE(selected.error.find((temporary.Path() / "other project").string()) != std::string::npos);
-  const auto missing = Invoke(temporary.Path(), {"mcpp", "build", "--project", "--release"});
-  REQUIRE(missing.result == 2);
-  REQUIRE(missing.error.find("--project requires a directory") != std::string::npos);
+  // An option that would change the product is invalid usage for an integration that cannot honor it.
+  for (const std::initializer_list<std::string_view> arguments : {
+           std::initializer_list<std::string_view>{"build", "linux", "--abi", "x86_64"},
+           std::initializer_list<std::string_view>{"build", "linux", "--lto", "on"},
+           std::initializer_list<std::string_view>{"build", "linux", "--optimization", "size"},
+           std::initializer_list<std::string_view>{"build", "linux", "--sdk", "."},
+           std::initializer_list<std::string_view>{"run", "linux", "--watch"},
+       }) {
+    const Invocation invocation = Invoke(modules / "src", arguments);
+    INFO(invocation.error);
+    REQUIRE(invocation.result == 2);
+    REQUIRE(invocation.error.find("mcpp project") != std::string::npos);
+  }
+
+  // A root declaring both build systems needs a selection, and the selection must name a declared one.
+  const Invocation ambiguous = Invoke(both, {"build", "linux"});
+  REQUIRE(ambiguous.result == 2);
+  REQUIRE(ambiguous.error.find("select one with --build-system") != std::string::npos);
+  REQUIRE(Invoke(both, {"build", "linux", "--build-system", "meson"}).result == 2);
+  const Invocation undeclared = Invoke(modules, {"build", "linux", "--build-system", "cmake"});
+  REQUIRE(undeclared.result == 2);
+  REQUIRE(undeclared.error.find("no cmake declaration") != std::string::npos);
+
+  // An option that only steers the CMake driver is reported and not applied; the command continues, here to
+  // the platform check that stops it.
+  const Invocation steered = Invoke(both, {"build", "plan9", "--build-system", "mcpp", "--generator", "Ninja"});
+  REQUIRE(steered.result == 2);
+  REQUIRE(steered.error.find("warning: --generator") != std::string::npos);
+  REQUIRE(steered.error.find("unknown platform: plan9") != std::string::npos);
+
+  const Invocation package = Invoke(modules, {"package", "linux"});
+  REQUIRE(package.result == 1);
+  REQUIRE(package.error.find("packaging an mcpp project is not available yet") != std::string::npos);
+  const Invocation open = Invoke(modules, {"open", "ios"});
+  REQUIRE(open.result == 1);
+  REQUIRE(open.error.find("CMake declaration") != std::string::npos);
+}
+
+TEST_CASE("HuxerUICliDiscoversTheNearestDeclaringRoot") {
+  TemporaryDirectory temporary;
+  REQUIRE(Invoke(temporary.Path(), {"create", "app", "outer", "--platform", "linux", "--agent", "none"}).result == 0);
+  const std::filesystem::path outer = temporary.Path() / "outer";
+  REQUIRE(Invoke(outer, {"create", "app", "inner", "--style", "modules", "--platform", "linux", "--agent", "none"})
+              .result == 0);
+  const huxerui::cli::Project project = huxerui::cli::DiscoverProject(outer / "inner/src");
+  REQUIRE(project.root == outer / "inner");
+  REQUIRE(project.build_systems == std::vector{huxerui::cli::BuildSystem::Mcpp});
+  REQUIRE(huxerui::cli::DiscoverProject(outer / "src").root == outer);
+}
+
+TEST_CASE("HuxerUICliAddsPlatformsToMcppProjects") {
+  TemporaryDirectory temporary;
+  REQUIRE(Invoke(temporary.Path(), {"create", "app", "Mods", "--style", "modules", "--id", "dev.example.mods",
+                                    "--platform", "linux", "--agent", "none"})
+              .result == 0);
+  const std::filesystem::path project = temporary.Path() / "Mods";
+  const Invocation added = Invoke(project, {"platform", "add", "macos"});
+  INFO(added.error);
+  REQUIRE(added.result == 0);
+  // The shell carries the identity recorded at creation and the modules form of the entry.
+  REQUIRE(Read(project / "platform/macos/Info.plist.in").find("dev.example.mods") != std::string::npos);
+  REQUIRE(Read(project / "platform/macos/main.cpp").find("import huxerui;") != std::string::npos);
+
+  REQUIRE(Invoke(temporary.Path(), {"create", "app", "Plain", "--style", "headers", "--build-system", "mcpp",
+                                    "--platform", "linux", "--agent", "none"})
+              .result == 0);
+  REQUIRE(Invoke(temporary.Path() / "Plain", {"platform", "add", "windows"}).result == 0);
+  REQUIRE(Read(temporary.Path() / "Plain/platform/windows/main.cpp").find("#include <huxerui/app.h>") !=
+          std::string::npos);
 }
 
 TEST_CASE("HuxerUICliRejectsInvalidSdkAndDeviceOptions") {
@@ -90,7 +159,6 @@ TEST_CASE("HuxerUICliRejectsInvalidSdkAndDeviceOptions") {
   REQUIRE(invalid.error.find("HuxerUI SDK or source checkout is invalid:") != std::string::npos);
 
   REQUIRE(Invoke(temporary.Path(), {"build", "--source", "."}).result == 2);
-  REQUIRE(Invoke(temporary.Path(), {"mcpp", "build", "--source", "."}).result == 2);
 }
 
 TEST_CASE("HuxerUICliAcceptsBuildConfigurations") {

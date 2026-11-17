@@ -82,13 +82,13 @@ The selection applies only to that invocation and its build children. Without `-
 
 Direct CMake builds of generated projects use `-DHUXERUI_HOME=<path>`. CMake loads the source checkout or installed package at that location. Use a separate build directory for each framework location; the CLI does this automatically.
 
-The SDK CLI also provides an independent mcpp frontend for projects that own an `mcpp.toml` manifest:
-
-```bash
-huxerui mcpp build --project ../my-mcpp-project
-```
-
-`--project` defaults to the current directory. The CLI invokes mcpp directly, and the mcpp project owns its sources, dependencies, and framework integration.
+A project's build system is identified by its native declaration: `CMakeLists.txt`, or `mcpp.toml` with `build.mcpp`.
+`build`, `run`, and `package` dispatch to that integration, so the same commands drive a CMake project and an mcpp project.
+A project that declares both needs `--build-system cmake` or `--build-system mcpp`.
+For an mcpp project, `build` runs `mcpp build` for the platform's target and `run` runs `mcpp run` on the host's own desktop platform; running on Web, Android, and iOS and packaging an mcpp project are not available yet.
+An mcpp project takes HuxerUI from the `huxerui` dependency in `mcpp.toml`, so `--sdk` is a usage error there, as are `--abi`, `--optimization`, `--lto`, and `--profile`, which the mcpp integration cannot honor through the CLI.
+`--generator` and `--java-home` steer only the CMake driver; for an mcpp project the CLI reports them with a warning and does not apply them.
+Capabilities that only mcpp offers are used through `mcpp` directly.
 
 The CLI passes the selected framework home through its process environment and build arguments without writing it into platform configuration files. Direct Android Studio builds require `HUXERUI_HOME` in the IDE's environment; direct Xcode builds require it in the IDE's environment or explicit build settings, such as `Config/Local.xcconfig`. An already running IDE does not inherit the CLI's temporary environment or remember its last `--sdk` selection.
 
@@ -204,10 +204,9 @@ huxerui platform add <platform-list>
 huxerui doctor [platform-list]
 huxerui setup <platform-list> [--yes]
 huxerui devices [platform]
-huxerui build [platform-list] [-d|--device <id>] [--config debug|release] [--generator <name>] [--sdk <path>] [--java-home <path>]
-huxerui mcpp build [--project <dir>] [--release] [--locked] [--offline] [--verbose]
-huxerui run <platform> [-d|--device <id>] [--config debug|release] [--generator <name>] [--sdk <path>] [--java-home <path>] [--watch]
-huxerui package <platform-list> [-d|--device <id>] [--config debug|release] [--generator <name>] [--sdk <path>] [--java-home <path>]
+huxerui build [platform-list] [--build-system cmake|mcpp] [-d|--device <id>] [--config debug|release] [--generator <name>] [--sdk <path>] [--java-home <path>]
+huxerui run <platform> [--build-system cmake|mcpp] [-d|--device <id>] [--config debug|release] [--generator <name>] [--sdk <path>] [--java-home <path>] [--watch]
+huxerui package <platform-list> [--build-system cmake|mcpp] [-d|--device <id>] [--config debug|release] [--generator <name>] [--sdk <path>] [--java-home <path>]
 huxerui open ios [--sdk <path>]
 ```
 

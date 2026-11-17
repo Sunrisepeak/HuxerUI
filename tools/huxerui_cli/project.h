@@ -76,12 +76,17 @@ enum class AgentSkillDirectory {
 
 /// Discovered HuxerUI project and its platform directories.
 struct Project {
-  /// Project root containing `CMakeLists.txt`.
+  /// Project root carrying at least one native build declaration.
   std::filesystem::path root;
   /// Recognized platform directory names.
   std::vector<std::string> platforms;
   /// Unrecognized entries found in the platform directory.
   std::vector<std::string> unknown_platforms;
+  /// Build systems whose native declaration the root carries, in `BuildSystem` order.
+  std::vector<BuildSystem> build_systems;
+
+  /// Whether the root carries a build system's declaration.
+  [[nodiscard]] bool Declares(BuildSystem build_system) const noexcept;
 };
 
 /// Checks whether a name is valid for a generated application project.
@@ -124,13 +129,17 @@ MakeProjectTemplateContext(std::string_view project_name, std::string_view proje
 [[nodiscard]] std::string MakeLibraryProductName(std::string_view library_name);
 
 /// Searches a path and its ancestors for a HuxerUI project.
+///
+/// The nearest directory carrying a native declaration is the project: `CMakeLists.txt` beside `platform/` or
+/// `include/`, or `mcpp.toml` beside `build.mcpp`.
 /// @param start File or directory from which discovery starts.
 /// @return Discovered project and platform names.
 /// @throws std::runtime_error if no project is found or the start path cannot be resolved.
 [[nodiscard]] Project DiscoverProject(const std::filesystem::path& start);
 
-/// Loads project identity through the project's CMake planning contract.
-/// @param project Project whose root CMake file should be queried.
+/// Loads project identity through the project's CMake planning contract, or from the
+/// `[package.metadata.huxerui]` table of a project that only declares mcpp.
+/// @param project Project whose identity should be read.
 /// @return Validated application or library template values.
 /// @throws std::runtime_error if planning fails or emits invalid metadata.
 [[nodiscard]] ProjectTemplate LoadProjectTemplate(const Project& project);

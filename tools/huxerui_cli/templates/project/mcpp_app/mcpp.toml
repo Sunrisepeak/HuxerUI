@@ -3,6 +3,11 @@ name     = "@TARGET_NAME@"
 version  = "0.1.0"
 standard = "c++20"
 
+# The project's identity, which `huxerui platform add` gives to the platform shells it writes.
+[package.metadata.huxerui]
+name = "@PROJECT_NAME@"
+id   = "@PROJECT_ID@"
+
 @MCPP_DEPENDENCIES@
 
 # `app` is a program on the desktop and the Web and the application's shared library on Android.
