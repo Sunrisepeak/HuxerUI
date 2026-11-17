@@ -21,7 +21,7 @@ description = "The HuxerUI test suite, compiled against the mcpp-built framework
 license     = "Apache-2.0"
 
 [dependencies]
-huxerui = { path = "../.." }
+huxerui = { path = "../../.." }
 
 [build]
 # Catch2 is the amalgamated copy this repository vendors, not the index's:
@@ -36,21 +36,21 @@ huxerui = { path = "../.." }
 # needs none of that: it is the framework's own behaviour, compiled against the
 # framework mcpp built.
 sources = [
-    "../../3dparty/catch2/src/catch_amalgamated.cpp",
-    "../../tests/unit/*.cpp",
+    "../../../3dparty/catch2/src/catch_amalgamated.cpp",
+    "../../../tests/unit/*.cpp",
     # Exactly what tests/unit/CMakeLists.txt adds beside the suite's own files.
-    "../../examples/buffer_reference/frame_source.cpp",
-    "../../tests/support/builtin_resources.cpp",
+    "../../../examples/buffer_reference/frame_source.cpp",
+    "../../../tests/support/builtin_resources.cpp",
 ]
 # catch_amalgamated.cpp includes its own header unqualified
 # (`#include "catch_amalgamated.hpp"`), so its own directory is on the path as
 # well as the one the tests spell `<catch2/...>` through. The CMake target adds
 # the same pair, the second one PRIVATE.
 include_dirs = [
-    "../../3dparty/catch2/include",
-    "../../3dparty/catch2/include/catch2",
-    "../../tests/support",
-    "../../src",
+    "../../../3dparty/catch2/include",
+    "../../../3dparty/catch2/include/catch2",
+    "../../../tests/support",
+    "../../../src",
 ]
-private_include_dirs = ["../../3dparty/catch2/include/catch2", "../../src"]
+private_include_dirs = ["../../../3dparty/catch2/include/catch2", "../../../src"]
 defines      = ["CATCH_AMALGAMATED_CUSTOM_MAIN=ON"]

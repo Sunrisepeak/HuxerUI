@@ -396,7 +396,7 @@ inline bool plan_installer(const options& opt, std::vector<edge>& out) {
     // Read the definition the rule package ships, render it, and write it where
     // the action will read it. build.mcpp runs before ninja, so this is a plain
     // file write rather than another edge.
-    const std::string tmpl_path = sdk_root() + "/mcpp/huxerui-build-rules/wix/Package.wxs.in";
+    const std::string tmpl_path = sdk_root() + "/buildtools/mcpp/huxerui-build-rules/wix/Package.wxs.in";
     std::ifstream tmpl(tmpl_path, std::ios::binary);
     if (!tmpl) {
         std::cerr << "huxerui.rules: cannot read " << tmpl_path << "\n";
@@ -516,7 +516,7 @@ inline bool configure(options opt = {}) {
     // by that same program's --check mode, so the two definitions cannot
     // drift into an illegal redefinition for a unit that does both.
     const std::string prelude =
-        root + "/mcpp/huxerui-build-rules/include/huxerui_scope_prelude.h";
+        root + "/buildtools/mcpp/huxerui-build-rules/include/huxerui_scope_prelude.h";
     const bool msvc =
         std::string_view(mcpp::compiler()).find("msvc") != std::string_view::npos;
     // The prelude's DIRECTORY is on the include path either way, so a module
@@ -524,7 +524,7 @@ inline bool configure(options opt = {}) {
     // fragment and hand-written HUXERUI_SCOPE works there too. Only the
     // FORCING is conditional.
     mcpp::include_dir(
-        (root + "/mcpp/huxerui-build-rules/include").c_str());
+        (root + "/buildtools/mcpp/huxerui-build-rules/include").c_str());
 
     if (has_module_interface) {
         // Nothing forced; the module units carry it themselves.

@@ -15,7 +15,7 @@ standard    = "c++23"
 description = "One application across several module units, and what a macro costs"
 
 [dependencies]
-huxerui = { path = "../../.." }
+huxerui = { path = "../../../.." }
 
 [targets.huxerui_example_module_units]
 kind = "bin"

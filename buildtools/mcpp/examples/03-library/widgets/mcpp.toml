@@ -9,21 +9,21 @@
 # A module graph has exactly one standard, so this compiles huxerui at c++23
 # too. Change this line back to c++20 once #603 is fixed.
 [package]
-name        = "huxerui-example-library"
+name        = "example-widgets"
 version     = "0.1.0"
 standard    = "c++23"
-description = "An application importing a HuxerUI component library"
+description = "A HuxerUI component library, consumed as a module"
 
-# Two edges, and only one of them is named by this application's own code.
-# `widgets` is what it imports; `huxerui` is here because the application uses
-# HuxerUI directly too -- a dependency's dependency is not importable.
 [dependencies]
-huxerui        = { path = "../../.." }
-example-widgets = { path = "widgets" }
+huxerui = { path = "../../../../.." }
 
-[targets.huxerui_example_library]
-kind = "bin"
-main = "src/main.cpp"
+[targets.example-widgets]
+kind = "lib"
+
+# The module a consumer imports. A package name may contain characters a module
+# name may not, so the file is named for the module it declares.
+[lib]
+path = "src/widgets.cppm"
 
 [build]
 sources = []

@@ -7,7 +7,7 @@
 // framework resources and defines the macro to what it wrote.
 //
 // It is not a copy of huxerui.rules::builtin_resources(): that one is rooted at
-// the CALLING package's manifest directory, which here is mcpp/huxerui-tests
+// the CALLING package's manifest directory, which here is buildtools/mcpp/huxerui-tests
 // and holds no resources. The framework's root is what this needs, and
 // sdk_root() is how the rules hand it over.
 

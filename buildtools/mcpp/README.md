@@ -7,7 +7,7 @@ directory plus `mcpp.toml` and `build.mcpp` returns the repository to a
 CMake-only project.
 
 The design and the open gaps are in
-[`docs/design/mcpp-build-system.md`](../docs/design/mcpp-build-system.md);
+[`docs/design/mcpp-build-system.md`](../../docs/design/mcpp-build-system.md);
 three worked applications are in [`examples/`](examples/).
 
 ## Building
@@ -28,8 +28,8 @@ payloads declared in `../mcpp.toml`, which mcpp provisions on the first build.
 | `huxerui-source-select/` | the pure half of the rules -- globbing, the composable pre-filter, header scanning -- split out so `mcpp test` can reach it |
 | `huxerui-tools/` | `huxerui-build-check` (parity) and `huxerui-module-gen` (the module shell and scope prelude) |
 
-Elsewhere: `../modules/huxerui.cppm` is the C++20 module front door (generated
-by `huxerui-module-gen`), and `../tools/{codegen,resource_compiler}/mcpp.toml`
+Elsewhere: `../../modules/huxerui.cppm` is the C++20 module front door (generated
+by `huxerui-module-gen`), and `../../tools/{codegen,resource_compiler}/mcpp.toml`
 make `hcg` and `hrc` buildable packages.
 
 Both tools were Python once. They are C++ now for the reason this directory
@@ -49,7 +49,7 @@ The manifest names one dependency and the build program makes one call:
 
 ```toml
 [dependencies]
-huxerui = { path = "../.." }        # or a version, once published
+huxerui = { path = "../../.." }     # or a version, once published
 ```
 
 ```cpp
@@ -62,7 +62,7 @@ int main() { return huxerui::rules::configure({ .resources = "resources" }) ? 0 
 compiler (`hrc`) as build-graph edges. GTK, the HuxerUI library and the include
 path arrive through the dependency edge: a dependency's `build.mcpp` emits
 `link-lib` / `link-search` that reach the **final** link, so an application
-never restates them. `mcpp/examples/` holds three worked examples.
+never restates them. `examples/` holds three worked examples.
 
 On Windows with the MSVC ABI, the application templates and examples keep `main()` and place GUI subsystem and CRT entry linker directives in that entry source. Double-clicking the resulting executable does not create a console; standard output and standard error have no automatically created console. Keep these directives in the application entry rather than package-wide link flags, which also affect tests and consumers. See [Platform interfaces](../docs/design/mcpp-build-system.md#6-platform-interfaces) for the build-system boundary.
 
@@ -117,7 +117,7 @@ add `platform/windows/win32_foo.cpp`, forget `mcpp.toml`, and the Windows mcpp
 build fails at link with `undefined reference`, far from the cause.
 
 ```bash
-cd mcpp/huxerui-tools && mcpp run huxerui-build-check
+cd buildtools/mcpp/huxerui-tools && mcpp run huxerui-build-check
 ```
 
 is the first job in `.github/workflows/mcpp-build.yml`. It already caught one

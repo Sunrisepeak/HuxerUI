@@ -4,7 +4,7 @@
 
 CMake is the first integration to implement this contract; mcpp, xmake, and other build systems may implement the same observable contract through their own project formats, dependency resolution, and target APIs.
 Conformance applies to each integration's declared host/target combinations and capabilities, and is judged against this contract rather than against another integration.
-The current implementations remain documented in [SDK, CLI, Platform Shell, and Library](sdk-cli.md) and [mcpp Build System](mcpp-build-system.md).
+The current implementations remain documented in [SDK, CLI, Platform Shell, and Library](../../docs/design/sdk-cli.md) and [mcpp Build System](../../docs/design/mcpp-build-system.md).
 
 ## Responsibilities
 
@@ -161,7 +161,7 @@ Libraries retain ownership of their initialization; linking archives does not co
 A HuxerUI library has one standard form, so one library source tree serves every integration it declares:
 
 - Public interface and implementation sources under `include/` and `src/`, optional resources under `resources/`, and optional platform packages under `platform/<platform-id>`.
-- One public identity. The implementation name, resource namespace, and primary header derive from it through the deterministic projection in [SDK, CLI, Platform Shell, and Library](sdk-cli.md#libraries-and-platform-integration), and each integration maps its native package identity to that same public identity.
+- One public identity. The implementation name, resource namespace, and primary header derive from it through the deterministic projection in [SDK, CLI, Platform Shell, and Library](../../docs/design/sdk-cli.md#libraries-and-platform-integration), and each integration maps its native package identity to that same public identity.
 - One native declaration per supported build system. It states the public identity, sources, public interface, resource root, dependencies on other libraries, and external link requirements; it does not restate platform configuration.
 - Platform packages shared by all integrations. A library's Android, iOS, or other platform code is attached by the application's platform shell from the library graph, independently of the integration that compiled its C++ sources.
 
@@ -181,7 +181,7 @@ Each source requiring composable transformation is compiled through its transfor
 Generated files stay in build-owned output locations.
 Changes to source files, resource inputs, tools, or relevant options must invalidate their generated outputs and dependent build steps.
 
-Built-in, library, and application resources follow the existing [resource ordering, namespace, and package contract](resources.md).
+Built-in, library, and application resources follow the existing [resource ordering, namespace, and package contract](../../docs/design/resources.md).
 The integration produces one final application resource package using the current `hrc` format; the platform integration owns embedding or staging it and its runtime discovery.
 Framework libraries, resources, headers, and host tools must resolve consistently in both supported SDK and source-checkout workflows.
 

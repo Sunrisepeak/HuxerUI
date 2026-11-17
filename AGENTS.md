@@ -277,7 +277,7 @@ Finish with `git diff --check` and `git status --short`. Report important files,
 
 ## C++20/23 modules and the mcpp build
 
-CMake builds all supported platforms. mcpp builds the framework and applications on Linux, Windows, and macOS. The mcpp files `mcpp.toml`, `build.mcpp`, `mcpp/`, `modules/`, and `templates/` are independent of CMake's build configuration.
+CMake builds all supported platforms. mcpp builds the framework and applications on Linux, Windows, and macOS. The mcpp files `mcpp.toml`, `build.mcpp`, `buildtools/mcpp/`, `modules/`, and `templates/` are independent of CMake's build configuration.
 
 - Keep the public API available through both `import huxerui;` and `#include <huxerui/huxerui.h>`. Use `huxerui-module-gen` to update `modules/huxerui.cppm` when public exports change.
 - `hcg` expands `HUXERUI_SCOPE` so generated scope code works in module units. In handwritten module code, spell explicit scopes with the exported `Scope` and `View` APIs.
@@ -295,7 +295,7 @@ Documentation has distinct ownership:
 - `docs/guide/` documents current public SDK behavior for application developers.
 - `docs/development/` documents repository builds, validation, and SDK packaging.
 - `docs/design/` records internal architecture, ownership, invariants, and unsupported boundaries.
-- `mcpp/README.md`, `mcpp/examples/` and `modules/README.md` document the mcpp build for someone driving it; the design behind it is `docs/design/mcpp-build-system.md`.
+- `buildtools/mcpp/README.md`, `buildtools/mcpp/examples/` and `modules/README.md` document the mcpp build for someone driving it; the design behind it is `docs/design/mcpp-build-system.md`.
 - `docs/roadmap.md` summarizes future capability areas without promising release dates.
 
 Public API or behavior changes update the owning user and design documents. Update README only when its project overview, installation, first-use flow, supported platforms, or top-level documentation links change; keep details in the owning document.

@@ -6,7 +6,7 @@ application consumes it, and what the C++20 module surface guarantees.
 
 CMake remains the full-platform path and the only path for Android, iOS and
 Web. Nothing in the CMake build reads any file described here, and deleting
-`mcpp.toml`, `build.mcpp` and `mcpp/` returns the repository to a CMake-only
+`mcpp.toml`, `build.mcpp` and `buildtools/mcpp/` returns the repository to a CMake-only
 project.
 
 ## 1. Division of ownership
@@ -69,7 +69,7 @@ its rule module as **build**-dependencies with `reexport = true`:
 [build-dependencies]
 huxerui-codegen           = { path = "tools/codegen",            tools = ["hcg"], reexport = true }
 huxerui-resource-compiler = { path = "tools/resource_compiler",  tools = ["hrc"], reexport = true }
-huxerui-build-rules       = { path = "mcpp/huxerui-build-rules", host-module = true, reexport = true }
+huxerui-build-rules       = { path = "buildtools/mcpp/huxerui-build-rules", host-module = true, reexport = true }
 ```
 
 `reexport` is what carries them one dependency edge further, so the application
@@ -148,7 +148,7 @@ boundary. Two different holes, two different fixes:
 - **Hand-written code.** A scope written by hand is spelled the way the macro
   expands — `return Scope([=]() -> View { … });` — and `Scope` and `View` are
   exported, so a module unit needs neither the macro nor a header.
-  `mcpp/examples/02-module-units/src/banner.cppm` is the worked case.
+  `buildtools/mcpp/examples/02-module-units/src/banner.cppm` is the worked case.
   `<huxerui_scope_prelude.h>` remains for a **non-module** translation unit in
   an mcpp project, which the rule force-includes; that is the only case left
   where the macro is reachable and needed.
@@ -247,7 +247,7 @@ is mcpp's own rule for which table a tool belongs in; the GTK payloads in §5
 are the other case.
 
 The rule renders the MSI definition it ships
-(`mcpp/huxerui-build-rules/wix/Package.wxs.in`) into the build directory and
+(`buildtools/mcpp/huxerui-build-rules/wix/Package.wxs.in`) into the build directory and
 submits **one** action, `role = "artifact"` — whose inputs are link outputs, so
 ninja sequences it after the link with no phase machinery.
 
@@ -321,7 +321,7 @@ the build machine, and stops being right the first time the package is
 cross-compiled. Until mcpp derives consumer dependencies from the target axis,
 a published `huxerui.huxerui` would resolve and then fail to link on a machine
 without the payloads. Path and git dependencies are unaffected — they provision the target
-axis, which is what `mcpp/examples/` relies on.
+axis, which is what `buildtools/mcpp/examples/` relies on.
 
 **`tests/runtime` and `tests/platform` are not in the mcpp suite.** They reach
 fixtures a CMake step generates, and each needs an mcpp equivalent before it
@@ -329,5 +329,5 @@ compiles there. `tests/cli` links the CLI, a CMake target.
 
 **`mcpp test` cannot run from the repository root.** mcpp defines a test as
 every `tests/**/*.cpp` with no manifest key to point that elsewhere, and this
-repository's `tests/` is CMake's. `mcpp/huxerui-tests` selects instead of
+repository's `tests/` is CMake's. `buildtools/mcpp/huxerui-tests` selects instead of
 discovering.

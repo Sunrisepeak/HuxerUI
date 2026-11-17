@@ -15,7 +15,7 @@ standard    = "c++23"
 description = "The smallest HuxerUI application mcpp can build"
 
 [dependencies]
-huxerui = { path = "../../.." }
+huxerui = { path = "../../../.." }
 
 [targets.huxerui_example_import]
 kind = "bin"

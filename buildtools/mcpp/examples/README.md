@@ -2,7 +2,7 @@
 
 Three applications, built by `mcpp build` in their own directory. Each one is
 about `import` and module units rather than about HuxerUI's widgets — the
-framework's feature examples live in [`../../examples`](../../examples) and are
+framework's feature examples live in [`../../../examples`](../../../examples) and are
 built by CMake.
 
 | | What it shows |
@@ -15,7 +15,7 @@ built by CMake.
 cd 01-import && mcpp build && mcpp run
 ```
 
-Each depends on the framework by path (`huxerui = { path = "../../.." }`), so
+Each depends on the framework by path (`huxerui = { path = "../../../.." }`), so
 they build against the checkout they live in rather than a release.
 
 ## What they have in common

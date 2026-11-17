@@ -283,9 +283,9 @@ void check_one_template(const std::filesystem::path& root,
 // Windows only, after a full framework build.
 void check_wix_template(const std::filesystem::path& root) {
     const std::filesystem::path wxs =
-        root / "mcpp" / "huxerui-build-rules" / "wix" / "Package.wxs.in";
+        root / "buildtools" / "mcpp" / "huxerui-build-rules" / "wix" / "Package.wxs.in";
     if (!std::filesystem::is_regular_file(wxs)) {
-        fail("mcpp/huxerui-build-rules/wix/Package.wxs.in is missing");
+        fail("buildtools/mcpp/huxerui-build-rules/wix/Package.wxs.in is missing");
         return;
     }
     const std::string text = read(wxs);

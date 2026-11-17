@@ -42,7 +42,7 @@ std::string render_module(const std::vector<std::string>& names) {
 "//\n"
 "// Regenerate with:\n"
 "//\n"
-"//     cd mcpp/huxerui-tools && mcpp run --bin huxerui-module-gen\n"
+"//     cd buildtools/mcpp/huxerui-tools && mcpp run --bin huxerui-module-gen\n"
 "//\n"
 "// huxerui-build-check fails when this file is out of date.\n"
 "\n"
@@ -150,7 +150,7 @@ int main(int argc, char** argv) {
 
     const bool ok =
         write_if_changed(root / "modules" / "huxerui.cppm", render_module(names), check) &
-        write_if_changed(root / "mcpp" / "huxerui-build-rules" / "include" / "huxerui_scope_prelude.h",
+        write_if_changed(root / "buildtools" / "mcpp" / "huxerui-build-rules" / "include" / "huxerui_scope_prelude.h",
                          render_prelude(macro_text), check);
     if (!ok) return 1;
     if (check) std::cout << "module shell is up to date (" << names.size() << " exported names)\n";
