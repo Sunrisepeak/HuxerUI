@@ -34,8 +34,7 @@ The CLI offers one set of verbs and dispatches each to the project's integration
 A root that declares more than one build system requires an explicit selection, and the CLI diagnoses the ambiguity instead of choosing.
 An option that does not apply to the project's build system is rejected with the reason and never ignored.
 
-`huxerui create` selects the build system from the requested project style unless one is named: a header-based project defaults to CMake and a C++ modules project defaults to mcpp.
-This is a creation default; it does not bind a language style to a build system.
+`huxerui create` selects the build system by generating its native build file, from an explicit option or the CLI's default.
 
 The common sources, the `resources/` root, and the `platform/<platform-id>` shells have the same layout and meaning under every integration, so the following work needs no build-system-specific knowledge:
 
@@ -161,14 +160,10 @@ Libraries retain ownership of their initialization; linking archives does not co
 
 A HuxerUI library has one standard form, so one library source tree serves every integration it declares:
 
-- Public headers under `include/`, implementation under `src/`, optional resources under `resources/`, and optional platform packages under `platform/<platform-id>`.
+- Public interface and implementation sources under `include/` and `src/`, optional resources under `resources/`, and optional platform packages under `platform/<platform-id>`.
 - One public identity. The implementation name, resource namespace, and primary header derive from it through the deterministic projection in [SDK, CLI, Platform Shell, and Library](sdk-cli.md#libraries-and-platform-integration), and each integration maps its native package identity to that same public identity.
-- One native declaration per supported build system. It states the public identity, sources, public includes, resource root, dependencies on other libraries, and external link requirements; it does not restate platform configuration.
+- One native declaration per supported build system. It states the public identity, sources, public interface, resource root, dependencies on other libraries, and external link requirements; it does not restate platform configuration.
 - Platform packages shared by all integrations. A library's Android, iOS, or other platform code is attached by the application's platform shell from the library graph, independently of the integration that compiled its C++ sources.
-
-Public headers are the authoritative library interface.
-A module interface that a library offers names the same entities as its headers.
-A library that offers only a module interface is usable only by integrations that declare C++ module support and is outside the standard form.
 
 An application declares a library dependency with one native statement naming the public identity and its local path or pinned source revision.
 Every integration then generates the same ordered library-graph record for the same declarations: the public identity and resolved source root of each source-backed library, following dependencies depth-first in declaration order, each library once.
