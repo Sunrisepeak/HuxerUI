@@ -90,6 +90,13 @@ jobs:
         if: matrix.target == 'web' && matrix.integration == 'cmake'
         uses: mymindstorm/setup-emsdk@v14
 
+      # The NDK the HuxerUI CLI and its Android shell pin; an older one lacks parts of the C++20 library.
+      - name: Install the Android NDK
+        if: matrix.target == 'android' && matrix.integration == 'cmake'
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;29.0.14206865" > /dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/29.0.14206865" >> "$GITHUB_ENV"
+
       - name: Install macOS prerequisites
         if: matrix.host == 'macos' && matrix.integration == 'cmake'
         run: brew install ninja
