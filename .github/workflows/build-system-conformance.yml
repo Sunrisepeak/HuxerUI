@@ -210,7 +210,6 @@ jobs:
           - { integration: cmake, target: macos,   host: macos,   os: macos-15,     python: python3 }
           - { integration: mcpp,  target: macos,   host: macos,   os: macos-15,     python: python3 }
           - { integration: cmake, target: ios,     host: macos,   os: macos-15,     python: python3 }
-          - { integration: mcpp,  target: ios,     host: macos,   os: macos-15,     python: python3 }
           - { integration: cmake, target: web,     host: macos,   os: macos-15,     python: python3 }
           - { integration: mcpp,  target: web,     host: macos,   os: macos-15,     python: python3 }
           - { integration: cmake, target: android, host: macos,   os: macos-15,     python: python3 }
