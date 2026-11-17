@@ -37,7 +37,6 @@ permissions:
 
 env:
   MCPP_VERSION: '2026.11.17.1'
-  MCPP_LLVM: 'llvm@22.1.8'
   XLINGS_NON_INTERACTIVE: '1'
 
 defaults:
@@ -133,9 +132,9 @@ jobs:
           path: |
             ~/.xlings
             ~/.mcpp
-          key: conformance-mcpp-${{ runner.os }}-${{ runner.arch }}-${{ env.MCPP_VERSION }}-${{ env.MCPP_LLVM }}-${{ hashFiles('mcpp.toml') }}
+          key: conformance-mcpp-${{ runner.os }}-${{ runner.arch }}-${{ env.MCPP_VERSION }}-${{ hashFiles('mcpp.toml') }}
           restore-keys: |
-            conformance-mcpp-${{ runner.os }}-${{ runner.arch }}-${{ env.MCPP_VERSION }}-${{ env.MCPP_LLVM }}-
+            conformance-mcpp-${{ runner.os }}-${{ runner.arch }}-${{ env.MCPP_VERSION }}-
 
       - name: Install xlings and mcpp
         run: |
@@ -145,17 +144,16 @@ jobs:
           echo "$HOME/.xlings/bin" >> "$GITHUB_PATH"
           echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
 
-      - name: Select the pinned mcpp and toolchain
+      - name: Select the pinned mcpp
         run: |
           xlings install "mcpp@${MCPP_VERSION}" -y
           xlings use mcpp "${MCPP_VERSION}"
           mcpp --version
-          mcpp toolchain install "${MCPP_LLVM}"
 
       - name: Build the conformance projects
         run: |
           python3 buildtools/cts/cts.py build --integration mcpp --target linux \
-            --mcpp-toolchain "${MCPP_LLVM}" --out "$RUNNER_TEMP/cts"
+            --out "$RUNNER_TEMP/cts"
 
       - name: "Check: default build"
         if: ${{ !cancelled() }}
