@@ -51,7 +51,7 @@ Proposals remain explicitly marked as drafts until accepted.
 ## SDK and platforms
 
 - [SDK, CLI, Platform Shell, and Library](sdk-cli.md): installed SDK structure, project tooling, libraries, and platform integration.
-- [Build System Integration (Draft)](build-system-integration.md): proposed backend-neutral standard build model, CLI intent, capabilities, platform-shell and library boundaries, generated records, and conformance for build backends.
+- [Build System Integration (Draft)](build-system-integration.md): proposed common CLI intent, build options, generated results, and acceptance requirements for build-system integrations.
 - [Web Platform](web.md): browser lifecycle, rendering, input, resources, services, and integration limits.
 
 Deferred behavior remains in the owning design document only when its boundary affects current architecture.
