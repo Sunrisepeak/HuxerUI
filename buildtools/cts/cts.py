@@ -562,7 +562,7 @@ def command_compare(arguments) -> int:
         log("no conformance results were found")
         return 1
 
-    checks = [name for name in CHECKS if CHECKS[name]["equivalent"]] if arguments.check == ["all"] else arguments.check
+    checks = [name for name in CHECKS if CHECKS[name]["equivalent"]] if arguments.check in (None, ["all"]) else arguments.check
     failed = False
     for check in checks:
         facts = CHECKS[check]["equivalent"]
@@ -664,7 +664,8 @@ def main() -> int:
     run.set_defaults(handler=command_run)
 
     compare = commands.add_parser("compare", help="check that integrations agree on a checkpoint's facts")
-    compare.add_argument("--check", nargs="+", default=["all"], choices=[*CHECKS, "all"])
+    compare.add_argument("--check", action="append", choices=[*CHECKS, "all"],
+                         help="checkpoint to compare; repeatable; all comparable checkpoints by default")
     compare.add_argument("results", nargs="+", help="result directories written by build")
     compare.set_defaults(handler=command_compare)
 
