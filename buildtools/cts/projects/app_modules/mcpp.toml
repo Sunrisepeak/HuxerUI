@@ -8,6 +8,11 @@ standard = "c++23"
 huxerui        = { path = "../../../.." }
 ctskit_widgets = { path = "libraries/widgets" }
 
+# `import std;` on iOS needs a C++ standard library built for this application: the module is made from the
+# toolchain's libc++ headers, and the libc++ in the iOS SDK does not carry every symbol those headers name.
+[target.'cfg(os = "ios")'.dependencies]
+llvm.libcxx = "22.1.8.3"
+
 # `app` is a program on the desktop and the Web and the application's shared library on Android.
 # The platform shell owns the process entry, so each platform names its own.
 [targets.cts_app_modules]
