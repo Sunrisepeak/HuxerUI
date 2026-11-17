@@ -1,11 +1,8 @@
-module;
-
-#include <ctskit_widgets_resources.h>
-
 export module ctskit.widgets;
 
 import std;
 import huxerui;
+import ctskit_widgets.resources;
 import ctskit.core;
 
 using namespace huxerui;

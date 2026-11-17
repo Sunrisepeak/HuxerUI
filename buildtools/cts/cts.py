@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """HuxerUI build-system conformance test suite.
 
-`run` builds every conformance project with one build-system integration, reads the
-facts the build-system contract defines from the generated records and the produced
-artifact, and checks them against the project's expected facts.
+The suite is organized as checkpoints. `build` builds every conformance project with one
+build-system integration and records the facts the build-system contract defines.
+`check` evaluates one or more checkpoints against each project's expected facts.
 `compare` checks that the integrations which ran agree on the facts that have no fixed
 expected value, such as the content of the final resource package.
+
+An integration is checked for what it declares in `buildtools/<integration>/support.json`:
+a target, host, checkpoint, or capability it does not declare is reported as undeclared
+and skipped, never failed.
 
 The expected facts belong to the project, never to an integration: no integration's
 output is the reference.
@@ -18,6 +22,7 @@ import fnmatch
 import hashlib
 import json
 import os
+import platform as host_platform
 import shutil
 import subprocess
 import sys
@@ -29,16 +34,47 @@ REPOSITORY = CTS_ROOT.parent.parent
 PROJECTS = CTS_ROOT / "projects"
 ALLOWED_DIFFERENCES = CTS_ROOT / "allowed-differences.json"
 
-# Facts compared between integrations instead of against a fixed expected value.
-EQUIVALENCE_FACTS = ("resources.sha256", "resources.files", "libraries.roots")
+# Each checkpoint names the facts checked against a project's expected.json and the facts
+# that integrations, and projects related by `sameModelAs`, must agree on.
+CHECKS: dict[str, dict] = {
+    "build": {
+        "title": "Default build: profile and artifact name",
+        "facts": ["profile", "artifact.name"],
+        "equivalent": [],
+    },
+    "linkage": {
+        "title": "Framework linkage",
+        "facts": ["framework.linkage"],
+        "equivalent": [],
+    },
+    "resources": {
+        "title": "Final resource package and its runtime location",
+        "facts": ["resources.location"],
+        "equivalent": ["resources.sha256", "resources.files"],
+    },
+    "libraries": {
+        "title": "Ordered library-graph record",
+        "facts": ["libraries"],
+        "equivalent": ["libraries.roots"],
+    },
+    "launch": {
+        "title": "Startup and resource resolution",
+        "facts": [],
+        "equivalent": [],
+    },
+}
 
 
 class Unavailable(Exception):
     """The environment cannot run a check; reported separately from a failure."""
 
 
-def log(message: str) -> None:
+def log(message: str = "") -> None:
     print(message, flush=True)
+
+
+def current_host() -> str:
+    return {"Linux": "linux", "Darwin": "macos", "Windows": "windows"}.get(host_platform.system(), host_platform.system().lower())
 
 
 def run_command(command: list[str], cwd: Path, env: dict[str, str] | None = None) -> str:
@@ -55,8 +91,35 @@ def load_json(path: Path):
         return json.load(stream)
 
 
-def declaration(integration: str) -> dict:
-    return load_json(REPOSITORY / "buildtools" / integration / "support.json")
+def write_json(path: Path, value) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def target_support(integration: str, target: str, host: str) -> tuple[dict | None, str]:
+    declaration = load_json(REPOSITORY / "buildtools" / integration / "support.json")
+    support = declaration["targets"].get(target)
+    if support is None:
+        return None, f"target {target} is not declared"
+    if host not in support["hosts"]:
+        return None, f"host {host} is not declared for target {target}"
+    return support, ""
+
+
+def expected_for(project: Path, target: str) -> dict:
+    expected = load_json(project / "expected.json")
+    override = expected.get("targets", {}).get(target, {})
+    expected["facts"] = {**expected["facts"], **override.get("facts", {})}
+    return expected
+
+
+def selected_projects(names: list[str] | None) -> list[Path]:
+    projects = sorted(path for path in PROJECTS.iterdir() if (path / "expected.json").is_file())
+    return [path for path in projects if path.name in names] if names else projects
+
+
+def result_path(out: Path, integration: str, target: str, project: str) -> Path:
+    return out / "results" / f"{integration}-{target}" / f"{project}.json"
 
 
 # ---------------------------------------------------------------- integrations
@@ -69,7 +132,7 @@ class CMakeIntegration:
         self.home = Path(arguments.cmake_home).resolve() if arguments.cmake_home else REPOSITORY
         self.launcher = arguments.cmake_compiler_launcher
 
-    def build(self, project: Path, work: Path) -> dict:
+    def build(self, project: Path, work: Path, target: str) -> dict:
         graph = work / "libraries.json"
         run_command(
             ["cmake", "-S", str(project), "-B", str(work / "graph"), f"-DHUXERUI_HOME={self.home}",
@@ -82,7 +145,7 @@ class CMakeIntegration:
             configure += [f"-DCMAKE_C_COMPILER_LAUNCHER={self.launcher}", f"-DCMAKE_CXX_COMPILER_LAUNCHER={self.launcher}"]
         run_command(configure, project)
         run_command(["cmake", "--build", str(work / "build")], project)
-        # A second build of unchanged inputs must succeed without reconfiguring into a failure.
+        # A second build of unchanged inputs must also succeed.
         run_command(["cmake", "--build", str(work / "build")], project)
 
         plans = sorted((work / "build" / "huxerui-integration").rglob("app.json"))
@@ -104,7 +167,7 @@ class McppIntegration:
     def __init__(self, arguments: argparse.Namespace) -> None:
         self.toolchain = arguments.mcpp_toolchain
 
-    def build(self, project: Path, work: Path) -> dict:
+    def build(self, project: Path, work: Path, target: str) -> dict:
         command = ["mcpp", "build", "--message-format", "json"]
         if self.toolchain:
             command += ["--toolchain", self.toolchain]
@@ -112,15 +175,16 @@ class McppIntegration:
         if graph.exists():
             graph.unlink()
         self._build(command, project)
+        # A second build of unchanged inputs must also succeed.
         envelope = self._build(command, project)
 
-        target = load_json(project / "expected.json")["target"]
-        artifacts = [a for a in envelope["data"]["artifacts"] if a["name"] == target and a["kind"] in ("bin", "app")]
+        name = load_json(project / "expected.json")["target"]
+        artifacts = [a for a in envelope["data"]["artifacts"] if a["name"] == name and a["kind"] in ("bin", "app")]
         if not artifacts:
-            raise RuntimeError(f"mcpp reported no program artifact named {target}")
+            raise RuntimeError(f"mcpp reported no program artifact named {name}")
         profile = envelope["data"]["configuration"]["profile"]
         return {
-            "target": target,
+            "target": name,
             "artifact": artifacts[0]["path"],
             "profile": {"dev": "debug", "release": "release"}.get(profile, profile),
             "libraries": load_json(graph)["libraries"] if graph.exists() else [],
@@ -154,28 +218,31 @@ INTEGRATIONS = {"cmake": CMakeIntegration, "mcpp": McppIntegration}
 # ----------------------------------------------------------------------- facts
 
 
-def needed_libraries(artifact: Path) -> list[str]:
-    readelf = shutil.which("readelf") or shutil.which("llvm-readelf")
-    if readelf is None:
-        raise Unavailable("readelf is not installed")
-    output = subprocess.run([readelf, "-d", str(artifact)], text=True, stdout=subprocess.PIPE, check=True).stdout
-    return [line.split("[", 1)[1].rstrip("]") for line in output.splitlines() if "(NEEDED)" in line and "[" in line]
+def dynamic_dependencies(target: str, artifact: Path) -> list[str]:
+    if target == "linux":
+        readelf = shutil.which("readelf") or shutil.which("llvm-readelf")
+        if readelf is None:
+            raise Unavailable("readelf is not installed")
+        output = subprocess.run([readelf, "-d", str(artifact)], text=True, stdout=subprocess.PIPE, check=True).stdout
+        return [line.split("[", 1)[1].rstrip("]") for line in output.splitlines() if "(NEEDED)" in line and "[" in line]
+    raise Unavailable(f"dynamic dependencies cannot be read for target {target}")
 
 
-def collect_facts(platform: str, project: Path, record: dict) -> dict:
-    if platform != "linux":
-        raise Unavailable(f"fact collection is not implemented for platform {platform}")
+def collect_facts(target: str, project: Path, record: dict) -> dict:
+    if target != "linux":
+        raise Unavailable(f"fact collection is not implemented for target {target}")
     artifact = Path(record["artifact"])
     facts: dict = {"profile": record["profile"]}
     facts["artifact.name"] = artifact.name if artifact.is_file() else "<missing>"
 
-    needed = needed_libraries(artifact)
+    needed = dynamic_dependencies(target, artifact)
     facts["framework.linkage"] = "shared" if any("huxerui" in name for name in needed) else "static"
 
-    package = artifact.with_name(artifact.name + ".resources")
+    # The Runtime replaces the program's extension with `.resources`.
+    package = artifact.with_suffix(".resources")
     index = package / "huxerui" / "resources.bin"
     if index.is_file():
-        facts["resources.location"] = index.relative_to(artifact.parent).as_posix().replace(artifact.name, "<artifact>")
+        facts["resources.location"] = "<artifact>.resources/huxerui/resources.bin"
         facts["resources.sha256"] = hashlib.sha256(index.read_bytes()).hexdigest()
         facts["resources.files"] = sorted(path.relative_to(package).as_posix() for path in package.rglob("*") if path.is_file())
     else:
@@ -190,48 +257,85 @@ def collect_facts(platform: str, project: Path, record: dict) -> dict:
 
 
 def launch_facts(record: dict, expected: dict, work: Path, timeout: float) -> dict:
-    if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+    if current_host() == "linux" and not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
         raise Unavailable("no display is available to start the application")
     probe = work / "probe.txt"
     if probe.exists():
         probe.unlink()
     environment = dict(os.environ)
-    for key, value in record["launch_environment"].items():
-        environment[key] = value
+    environment.update(record["launch_environment"])
     environment["HUXERUI_CTS_PROBE"] = str(probe)
     log(f"  $ {record['artifact']}  (HUXERUI_CTS_PROBE={probe})")
-    output = (work / "launch.log").open("w", encoding="utf-8")
-    process = subprocess.Popen([record["artifact"]], cwd=Path(record["artifact"]).parent, env=environment,
-                               stdout=output, stderr=subprocess.STDOUT)
-    observed: dict[str, str] = {}
-    deadline = time.monotonic() + timeout
-    try:
-        while time.monotonic() < deadline:
-            if probe.exists():
-                for line in probe.read_text(encoding="utf-8").splitlines():
-                    key, separator, value = line.partition("=")
-                    if separator:
-                        observed[key] = value
-            if all(key in observed for key in expected):
-                break
-            if process.poll() is not None:
-                break
-            time.sleep(0.2)
-    finally:
-        if process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                process.kill()
-        output.close()
+    with (work / "launch.log").open("w", encoding="utf-8") as output:
+        process = subprocess.Popen([record["artifact"]], cwd=Path(record["artifact"]).parent, env=environment,
+                                   stdout=output, stderr=subprocess.STDOUT)
+        observed: dict[str, str] = {}
+        deadline = time.monotonic() + timeout
+        try:
+            while time.monotonic() < deadline:
+                if probe.exists():
+                    for line in probe.read_text(encoding="utf-8").splitlines():
+                        key, separator, value = line.partition("=")
+                        if separator:
+                            observed[key] = value
+                if all(key in observed for key in expected) or process.poll() is not None:
+                    break
+                time.sleep(0.2)
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
     if not observed:
         tail = "\n".join((work / "launch.log").read_text(encoding="utf-8", errors="replace").splitlines()[-20:])
         raise RuntimeError(f"the application recorded no probe facts before the timeout\n{tail}")
     return {f"launch.{key}": observed.get(key, "<missing>") for key in expected}
 
 
-# ------------------------------------------------------------------------- run
+# ----------------------------------------------------------------------- build
+
+
+def build_project(integration, target: str, host: str, project: Path, out: Path) -> dict:
+    expected = expected_for(project, target)
+    result: dict = {"project": project.name, "integration": integration.name, "target": target, "host": host,
+                    "status": "built", "reason": "", "record": {}, "facts": {}}
+    support, reason = target_support(integration.name, target, host)
+    if support is None:
+        result.update(status="undeclared", reason=reason)
+        return result
+    missing = [capability for capability in expected.get("requires", []) if capability not in support["capabilities"]]
+    if missing:
+        result.update(status="undeclared", reason="capabilities not declared: " + ", ".join(missing))
+        return result
+
+    work = out / "work" / f"{integration.name}-{target}" / project.name
+    work.mkdir(parents=True, exist_ok=True)
+    try:
+        result["record"] = integration.build(project, work, target)
+        result["facts"] = collect_facts(target, project, result["record"])
+    except Unavailable as unavailable:
+        result.update(status="unavailable", reason=str(unavailable))
+    except RuntimeError as failure:
+        result.update(status="failed", reason=str(failure))
+    return result
+
+
+def command_build(arguments) -> int:
+    integration = INTEGRATIONS[arguments.integration](arguments)
+    out = Path(arguments.out).resolve()
+    failed = False
+    for project in selected_projects(arguments.project):
+        log(f"== build  {arguments.integration} / {arguments.target} / {project.name}")
+        result = build_project(integration, arguments.target, arguments.host, project, out)
+        write_json(result_path(out, arguments.integration, arguments.target, project.name), result)
+        log(f"   {result['status'].upper()}" + (f": {result['reason']}" if result["reason"] else ""))
+        failed = failed or result["status"] == "failed"
+    return 1 if failed else 0
+
+
+# ----------------------------------------------------------------------- check
 
 
 def allowed_reason(integration: str, project: str, fact: str) -> str | None:
@@ -242,166 +346,221 @@ def allowed_reason(integration: str, project: str, fact: str) -> str | None:
     return None
 
 
-def run_project(integration, support: dict, platform: str, project: Path, out: Path, arguments) -> dict:
-    expected = load_json(project / "expected.json")
-    result: dict = {"project": project.name, "integration": integration.name, "platform": platform,
-                    "status": "pass", "facts": {}, "mismatches": [], "allowed": [], "unavailable": []}
-    platform_support = support["platforms"].get(platform)
-    missing = [capability for capability in expected.get("requires", [])
-               if platform_support is None or capability not in platform_support.get("capabilities", [])]
-    if platform_support is None or missing:
-        result["status"] = "undeclared"
-        result["reason"] = (f"platform {platform} is not declared" if platform_support is None
-                            else "capabilities not declared: " + ", ".join(missing))
-        return result
+def summarize(title: str, rows: list[tuple[str, str, str]]) -> None:
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not summary:
+        return
+    with open(summary, "a", encoding="utf-8") as stream:
+        stream.write(f"### {title}\n\n| Project | Result | Detail |\n| --- | --- | --- |\n")
+        for project, status, detail in rows:
+            stream.write(f"| `{project}` | {status} | {detail.splitlines()[0] if detail else ''} |\n")
+        stream.write("\n")
 
-    work = out / "work" / integration.name / project.name
-    work.mkdir(parents=True, exist_ok=True)
-    try:
-        record = integration.build(project, work)
-        facts = collect_facts(platform, project, record)
-        if arguments.launch and expected.get("launch"):
-            try:
-                facts.update(launch_facts(record, expected["launch"], work, arguments.launch_timeout))
-            except Unavailable as unavailable:
-                result["unavailable"].append(f"launch: {unavailable}")
-        result["facts"] = facts
-    except Unavailable as unavailable:
-        result["status"] = "unavailable"
-        result["reason"] = str(unavailable)
-        return result
-    except RuntimeError as failure:
-        result["status"] = "fail"
-        result["reason"] = str(failure)
-        return result
 
-    wanted = dict(expected["facts"])
-    if arguments.launch and not result["unavailable"]:
-        wanted.update({f"launch.{key}": value for key, value in expected.get("launch", {}).items()})
+def check_project(check: str, integration: str, target: str, host: str, project: Path, out: Path, arguments) -> tuple[str, str]:
+    path = result_path(out, integration, target, project.name)
+    if not path.is_file():
+        return "fail", "the project was not built; run `build` first"
+    result = load_json(path)
+    if result["status"] == "undeclared":
+        return "undeclared", result["reason"]
+    support, reason = target_support(integration, target, host)
+    if support is None:
+        return "undeclared", reason
+    if check not in support["checks"]:
+        return "undeclared", f"checkpoint {check} is not declared"
+    if result["status"] == "unavailable":
+        return "unavailable", result["reason"]
+    if result["status"] != "built":
+        return "fail", "the build failed: " + result["reason"]
+
+    expected = expected_for(project, target)
+    wanted = {fact: expected["facts"][fact] for fact in CHECKS[check]["facts"] if fact in expected["facts"]}
+    if check == "launch":
+        launch = expected.get("launch", {})
+        if not launch:
+            return "pass", "the project defines no launch facts"
+        work = out / "work" / f"{integration}-{target}" / project.name
+        try:
+            result["facts"].update(launch_facts(result["record"], launch, work, arguments.launch_timeout))
+        except Unavailable as unavailable:
+            return "unavailable", str(unavailable)
+        except RuntimeError as failure:
+            return "fail", str(failure)
+        write_json(path, result)
+        wanted = {f"launch.{key}": value for key, value in launch.items()}
+
+    problems, notes = [], []
     for fact, value in wanted.items():
         actual = result["facts"].get(fact, "<absent>")
         if actual == value:
             continue
-        reason = allowed_reason(integration.name, project.name, fact)
-        entry = {"fact": fact, "expected": value, "actual": actual}
+        reason = allowed_reason(integration, project.name, fact)
         if reason:
-            result["allowed"].append({**entry, "reason": reason})
+            notes.append(f"allowed {fact}: {reason}")
         else:
-            result["mismatches"].append(entry)
-    if result["mismatches"]:
-        result["status"] = "fail"
-    return result
+            problems.append(f"{fact}: expected {json.dumps(value)}, actual {json.dumps(actual)}")
+    if problems:
+        return "fail", "; ".join(problems)
+    return "pass", "; ".join(notes)
+
+
+def command_check(arguments) -> int:
+    out = Path(arguments.out).resolve()
+    checks = list(CHECKS) if arguments.check == ["all"] else arguments.check
+    failed = False
+    for check in checks:
+        log(f"== check  {check}: {CHECKS[check]['title']}  ({arguments.integration} / {arguments.target})")
+        rows = []
+        for project in selected_projects(arguments.project):
+            status, detail = check_project(check, arguments.integration, arguments.target, arguments.host, project, out, arguments)
+            rows.append((project.name, status, detail))
+            log(f"   {status.upper():<12}{project.name}" + (f"\n                {detail}" if detail else ""))
+            failed = failed or status == "fail"
+        summarize(f"{check}: {CHECKS[check]['title']} ({arguments.integration}, {arguments.target})", rows)
+    return 1 if failed else 0
 
 
 def command_run(arguments) -> int:
-    integration = INTEGRATIONS[arguments.integration](arguments)
-    support = declaration(arguments.integration)
-    out = Path(arguments.out).resolve()
-    results_directory = out / "results" / arguments.integration
-    results_directory.mkdir(parents=True, exist_ok=True)
-    projects = sorted(path for path in PROJECTS.iterdir() if (path / "expected.json").is_file())
-    if arguments.project:
-        projects = [path for path in projects if path.name in arguments.project]
-    failed = False
-    for project in projects:
-        log(f"== {arguments.integration} / {arguments.platform} / {project.name}")
-        result = run_project(integration, support, arguments.platform, project, out, arguments)
-        (results_directory / f"{project.name}.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        log(f"   {result['status'].upper()}" + (f": {result['reason']}" if result.get("reason") else ""))
-        for mismatch in result["mismatches"]:
-            log(f"   DIFFERS  {mismatch['fact']}\n            expected: {mismatch['expected']}\n            actual:   {mismatch['actual']}")
-        for allowed in result["allowed"]:
-            log(f"   allowed  {allowed['fact']}: {allowed['reason']}")
-        for unavailable in result["unavailable"]:
-            log(f"   unavailable  {unavailable}")
-        failed = failed or result["status"] == "fail"
-    return 1 if failed else 0
+    built = command_build(arguments)
+    arguments.check = ["all"] if arguments.check is None else arguments.check
+    checked = command_check(arguments)
+    return 1 if built or checked else 0
 
 
 # --------------------------------------------------------------------- compare
 
 
 def command_compare(arguments) -> int:
-    results: dict[str, dict[str, dict]] = {}
+    # results[target][project][integration]
+    results: dict[str, dict[str, dict[str, dict]]] = {}
     for directory in arguments.results:
         for path in sorted(Path(directory).rglob("*.json")):
             result = load_json(path)
-            results.setdefault(result["project"], {})[result["integration"]] = result
+            if "integration" not in result:
+                continue
+            results.setdefault(result["target"], {}).setdefault(result["project"], {})[result["integration"]] = result
     if not results:
         log("no conformance results were found")
         return 1
 
-    integrations = sorted({name for by_integration in results.values() for name in by_integration})
+    checks = [name for name in CHECKS if CHECKS[name]["equivalent"]] if arguments.check == ["all"] else arguments.check
     failed = False
-    log("project".ljust(20) + "".join(name.ljust(14) for name in integrations))
-    for project in sorted(results):
-        row = project.ljust(20)
-        for name in integrations:
-            result = results[project].get(name)
-            row += (result["status"] if result else "not run").ljust(14)
-            failed = failed or (result is not None and result["status"] == "fail")
-        log(row)
-
-    for project in sorted(results):
-        ran = {name: result for name, result in results[project].items() if result["status"] == "pass"}
-        if len(ran) < 2:
+    for check in checks:
+        facts = CHECKS[check]["equivalent"]
+        if not facts:
+            log(f"== compare  {check}: nothing to compare between integrations")
             continue
-        for fact in EQUIVALENCE_FACTS:
-            values = {name: result["facts"].get(fact, "<absent>") for name, result in ran.items()}
-            if len({json.dumps(value, sort_keys=True) for value in values.values()}) == 1:
-                log(f"equal    {project}  {fact}")
-                continue
-            reason = allowed_reason("*", project, fact)
-            if reason:
-                log(f"allowed  {project}  {fact}: {reason}")
-                continue
-            failed = True
-            log(f"DIFFERS  {project}  {fact}")
-            for name, value in values.items():
-                log(f"           {name}: {value}")
-    # A project may state that another project is the same program in a different source form,
-    # such as C++ modules instead of headers; the form must not change the program model.
-    for project in sorted(results):
-        twin = load_json(PROJECTS / project / "expected.json").get("sameModelAs")
-        if not twin:
-            continue
-        for name, result in results[project].items():
-            other = results.get(twin, {}).get(name)
-            if result["status"] != "pass" or other is None or other["status"] != "pass":
-                continue
-            for fact in EQUIVALENCE_FACTS:
-                if result["facts"].get(fact) == other["facts"].get(fact):
-                    log(f"equal    {project} = {twin}  {fact}  ({name})")
-                else:
-                    failed = True
-                    log(f"DIFFERS  {project} vs {twin}  {fact}  ({name})\n"
-                        f"           {project}: {result['facts'].get(fact)}\n           {twin}: {other['facts'].get(fact)}")
-    log("conformance FAILED" if failed else "conformance passed")
+        rows = []
+        for target in sorted(results):
+            log(f"== compare  {check}: {CHECKS[check]['title']}  (target {target})")
+            for project in sorted(results[target]):
+                built = {name: result for name, result in results[target][project].items() if result["status"] == "built"}
+                groups = []
+                if len(built) >= 2:
+                    groups.append((project, "between " + ", ".join(sorted(built)),
+                                   {name: result["facts"] for name, result in built.items()}))
+                # A project may state that another project is the same program in a different
+                # source form, such as C++ modules; the form must not change the program model.
+                twin = load_json(PROJECTS / project / "expected.json").get("sameModelAs")
+                for name, result in built.items():
+                    other = results[target].get(twin, {}).get(name) if twin else None
+                    if other is not None and other["status"] == "built":
+                        groups.append((project, f"same model as {twin} ({name})",
+                                       {project: result["facts"], twin: other["facts"]}))
+                if not groups:
+                    rows.append((project, "skipped", "fewer than two integrations built it"))
+                    log(f"   SKIPPED     {project}: fewer than two integrations built it")
+                for name, label, by_source in groups:
+                    differing = []
+                    for fact in facts:
+                        values = {source: found.get(fact, "<absent>") for source, found in by_source.items()}
+                        if len({json.dumps(value, sort_keys=True) for value in values.values()}) > 1 \
+                                and not allowed_reason("*", project, fact):
+                            differing.append(f"{fact}: " + ", ".join(f"{source}={json.dumps(value)}" for source, value in values.items()))
+                    status = "fail" if differing else "pass"
+                    rows.append((name, status, label + ("; " + "; ".join(differing) if differing else "")))
+                    log(f"   {status.upper():<12}{name}: {label}" + ("\n                " + "\n                ".join(differing) if differing else ""))
+                    failed = failed or bool(differing)
+        summarize(f"compare {check}: {CHECKS[check]['title']}", rows)
     return 1 if failed else 0
+
+
+def command_matrix(arguments) -> int:
+    """Prints the status of every built project as one table."""
+    rows: dict[str, dict[str, str]] = {}
+    for directory in arguments.results:
+        for path in sorted(Path(directory).rglob("*.json")):
+            result = load_json(path)
+            if "integration" in result:
+                rows.setdefault(result["project"], {})[f"{result['integration']}/{result['target']}"] = result["status"]
+    columns = sorted({column for row in rows.values() for column in row})
+    log("project".ljust(18) + "".join(column.ljust(18) for column in columns))
+    for project in sorted(rows):
+        log(project.ljust(18) + "".join(rows[project].get(column, "not run").ljust(18) for column in columns))
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with open(summary, "a", encoding="utf-8") as stream:
+            stream.write("### Build matrix\n\n| Project | " + " | ".join(columns) + " |\n| --- |" + " --- |" * len(columns) + "\n")
+            for project in sorted(rows):
+                stream.write(f"| `{project}` | " + " | ".join(rows[project].get(column, "not run") for column in columns) + " |\n")
+    return 0
+
+
+def command_list(arguments) -> int:
+    for name, check in CHECKS.items():
+        log(f"check    {name}: {check['title']}")
+    for project in selected_projects(None):
+        requires = load_json(project / "expected.json").get("requires", [])
+        log(f"project  {project.name}" + (f"  (requires {', '.join(requires)})" if requires else ""))
+    return 0
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
 
-    run = commands.add_parser("run", help="build the conformance projects with one integration and check their facts")
-    run.add_argument("--integration", required=True, choices=sorted(INTEGRATIONS))
-    run.add_argument("--platform", required=True)
-    run.add_argument("--out", required=True, help="directory for build output and result files")
-    run.add_argument("--project", action="append", help="limit the run to the named project; repeatable")
-    run.add_argument("--launch", action="store_true", help="start each application and check what it resolved")
-    run.add_argument("--launch-timeout", type=float, default=30.0)
-    run.add_argument("--cmake-home", help="HuxerUI SDK or source checkout for CMake projects; defaults to this checkout")
-    run.add_argument("--cmake-compiler-launcher", help="compiler launcher such as ccache for CMake builds")
-    run.add_argument("--mcpp-toolchain", help="toolchain passed to mcpp, for example llvm@22.1.8")
+    def add_selection(command, with_checks: bool) -> None:
+        command.add_argument("--integration", required=True, choices=sorted(INTEGRATIONS))
+        command.add_argument("--target", required=True, help="target platform, for example linux")
+        command.add_argument("--host", default=current_host(), help="host platform; defaults to this machine")
+        command.add_argument("--out", required=True, help="directory for build output and result files")
+        command.add_argument("--project", action="append", help="limit to the named project; repeatable")
+        command.add_argument("--cmake-home", help="HuxerUI SDK or source checkout for CMake projects; defaults to this checkout")
+        command.add_argument("--cmake-compiler-launcher", help="compiler launcher such as ccache for CMake builds")
+        command.add_argument("--mcpp-toolchain", help="toolchain passed to mcpp, for example llvm@22.1.8")
+        if with_checks:
+            command.add_argument("--check", nargs="+", choices=[*CHECKS, "all"], help="checkpoints to evaluate")
+            command.add_argument("--launch-timeout", type=float, default=30.0)
+
+    build = commands.add_parser("build", help="build the conformance projects and record their facts")
+    add_selection(build, with_checks=False)
+    build.set_defaults(handler=command_build)
+
+    check = commands.add_parser("check", help="evaluate checkpoints for projects that were built")
+    add_selection(check, with_checks=True)
+    check.set_defaults(handler=command_check)
+
+    run = commands.add_parser("run", help="build, then evaluate the selected checkpoints (all by default)")
+    add_selection(run, with_checks=True)
     run.set_defaults(handler=command_run)
 
-    compare = commands.add_parser("compare", help="check that the integrations which ran agree with each other")
-    compare.add_argument("results", nargs="+", help="result directories written by run")
+    compare = commands.add_parser("compare", help="check that integrations agree on a checkpoint's facts")
+    compare.add_argument("--check", nargs="+", default=["all"], choices=[*CHECKS, "all"])
+    compare.add_argument("results", nargs="+", help="result directories written by build")
     compare.set_defaults(handler=command_compare)
 
+    matrix = commands.add_parser("matrix", help="print the build status of every project and integration")
+    matrix.add_argument("results", nargs="+")
+    matrix.set_defaults(handler=command_matrix)
+
+    listing = commands.add_parser("list", help="list the checkpoints and projects")
+    listing.set_defaults(handler=command_list)
+
     arguments = parser.parse_args()
-    return arguments.handler(arguments)
+    if getattr(arguments, "check", None) is None and arguments.command == "check":
+        arguments.check = ["all"]
+    return arguments.handler(arguments) or 0
 
 
 if __name__ == "__main__":

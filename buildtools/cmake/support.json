@@ -1,7 +1,11 @@
 {
   "schema": 1,
   "integration": "cmake",
-  "platforms": {
-    "linux": {"hosts": ["linux"], "capabilities": []}
+  "targets": {
+    "linux": {
+      "hosts": ["linux"],
+      "checks": ["build", "linkage", "resources", "libraries", "launch"],
+      "capabilities": []
+    }
   }
 }

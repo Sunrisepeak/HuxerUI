@@ -1,11 +1,8 @@
-#pragma once
+export module cts.probe;
 
-#include <cstdlib>
-#include <fstream>
-#include <string>
-#include <string_view>
+import std;
 
-namespace cts {
+export namespace cts {
 
 /// Appends observed runtime facts to the file named by HUXERUI_CTS_PROBE so the conformance runner can read what a
 /// started application resolved. Recording is inert when the variable is absent.

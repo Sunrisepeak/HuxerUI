@@ -104,6 +104,7 @@ resources = "resources"
 The application's build program reads the resolved graph through `mcpp::graph_file()`, which carries that table for every package in the closure, including libraries the application does not name.
 It compiles each library's root under the namespace its identity projects to, merges builtin, library, and application packages in contract order, and writes the ordered library-graph record to `.huxerui/generated/libraries.json` with the schema the CMake integration uses.
 A library's own build program reads the same table from its own manifest to generate its resource header.
+A package that has module interface units also gets a generated `<namespace>.resources` module, so module code writes `import app.resources;` instead of including the header.
 
 ## 4. The module surface
 

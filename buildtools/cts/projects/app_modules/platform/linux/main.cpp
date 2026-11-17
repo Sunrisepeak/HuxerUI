@@ -1,4 +1,4 @@
-#include <huxerui/app.h>
+import huxerui;
 
 int main() {
   return huxerui::RunApplication();

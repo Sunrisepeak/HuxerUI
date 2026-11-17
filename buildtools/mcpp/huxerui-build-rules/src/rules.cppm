@@ -572,9 +572,12 @@ inline void write_library_graph(const project_graph& graph) {
         content += index + 1 < graph.libraries.size() ? ",\n" : "\n";
     }
     content += "  ]\n}\n";
-    detail::write_if_changed(
-        std::filesystem::path(mcpp::manifest_dir()) / ".huxerui" / "generated" / "libraries.json",
-        content);
+    const std::filesystem::path record =
+        std::filesystem::path(mcpp::manifest_dir()) / ".huxerui" / "generated" / "libraries.json";
+    detail::write_if_changed(record, content);
+    // The record is generated metadata a developer may delete with `.huxerui/`;
+    // naming it as an input makes the next build run this program and restore it.
+    mcpp::rerun_if_changed(record.string().c_str());
 }
 
 // --------------------------------------------------------------- resources --
@@ -626,7 +629,8 @@ inline std::vector<std::string> payloads(const std::string& root, const std::str
 
 } // namespace detail
 
-inline std::vector<edge> plan_resources(const options& opt, const project_graph& graph) {
+inline std::vector<edge> plan_resources(const options& opt, const project_graph& graph,
+                                        bool resource_module) {
     std::vector<edge> out;
     const std::string hrc = host_tool("hrc");
     if (hrc.empty()) return out;
@@ -691,6 +695,18 @@ inline std::vector<edge> plan_resources(const options& opt, const project_graph&
             (std::filesystem::path(mcpp::manifest_dir()) / own_root).string();
         add_root("hrc:own", "resources " + own_root, source, ns, odir + "/own", {});
         mcpp::include_dir((odir + "/own/include").c_str());
+        if (resource_module) {
+            // A package written as module units reaches its resources with
+            // `import <namespace>.resources;` and needs no header. The unit
+            // re-exports the generated accessors: the framework header is
+            // included in the global module fragment, so the second inclusion
+            // inside `export { }` declares only the package's own names.
+            const std::string unit = odir + "/own/module/" + ns + "_resources.cppm";
+            detail::write_if_changed(unit,
+                "module;\n\n#include <huxerui/resource.h>\n\nexport module " + ns +
+                ".resources;\n\nexport {\n#include <" + ns + "_resources.h>\n}\n");
+            mcpp::source(unit.c_str());
+        }
     }
 
     if (!graph.is_root || graph.programs.empty()) return out;
@@ -1011,7 +1027,7 @@ inline bool configure(options opt = {}) {
     const project_graph graph = load_graph();
     if (graph.is_root && !graph.programs.empty()) write_library_graph(graph);
 
-    auto rs = plan_resources(opt, graph);
+    auto rs = plan_resources(opt, graph, has_module_interface);
     if (!rs.empty()) {
         mcpp::include_dir(
             (std::string(mcpp::out_dir()) + "/hrc/builtin/include").c_str());

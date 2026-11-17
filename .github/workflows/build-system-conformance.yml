@@ -2,10 +2,12 @@ name: Build System Conformance
 
 # Builds the conformance projects in buildtools/cts with every build-system
 # integration and checks the facts the build-system contract defines
-# (buildtools/specs/build-system-integration.md). The expected facts belong to
-# each project, so no integration is the reference; `compare` then checks that
-# the integrations agree on what has no fixed value, such as the content of the
-# final resource package.
+# (buildtools/specs/build-system-integration.md). Each checkpoint is its own
+# step, so a run shows which checkpoint passed and where one failed, and an
+# integration is checked only for what its support declaration states. The
+# expected facts belong to each project, so no integration is the reference;
+# the last job checks that the integrations agree on what has no fixed value,
+# such as the content of the final resource package.
 
 on:
   pull_request:
@@ -65,14 +67,43 @@ jobs:
           restore-keys: |
             conformance-ccache-${{ runner.os }}-${{ runner.arch }}-
 
-      - name: Run the conformance projects
+      - name: Build the conformance projects
         env:
           CC: gcc-14
           CXX: g++-14
         run: |
-          xvfb-run -a python3 buildtools/cts/cts.py run \
-            --integration cmake --platform linux --launch \
+          python3 buildtools/cts/cts.py build --integration cmake --target linux \
             --cmake-compiler-launcher ccache --out "$RUNNER_TEMP/cts"
+
+      - name: "Check: default build"
+        if: ${{ !cancelled() }}
+        run: |
+          python3 buildtools/cts/cts.py check --integration cmake --target linux \
+            --check build --out "$RUNNER_TEMP/cts"
+
+      - name: "Check: framework linkage"
+        if: ${{ !cancelled() }}
+        run: |
+          python3 buildtools/cts/cts.py check --integration cmake --target linux \
+            --check linkage --out "$RUNNER_TEMP/cts"
+
+      - name: "Check: final resource package"
+        if: ${{ !cancelled() }}
+        run: |
+          python3 buildtools/cts/cts.py check --integration cmake --target linux \
+            --check resources --out "$RUNNER_TEMP/cts"
+
+      - name: "Check: library-graph record"
+        if: ${{ !cancelled() }}
+        run: |
+          python3 buildtools/cts/cts.py check --integration cmake --target linux \
+            --check libraries --out "$RUNNER_TEMP/cts"
+
+      - name: "Check: startup and resource resolution"
+        if: ${{ !cancelled() }}
+        run: |
+          xvfb-run -a python3 buildtools/cts/cts.py check --integration cmake --target linux \
+            --check launch --out "$RUNNER_TEMP/cts"
 
       - name: Upload the results
         if: always()
@@ -121,11 +152,40 @@ jobs:
           mcpp --version
           mcpp toolchain install "${MCPP_LLVM}"
 
-      - name: Run the conformance projects
+      - name: Build the conformance projects
         run: |
-          xvfb-run -a python3 buildtools/cts/cts.py run \
-            --integration mcpp --platform linux --launch \
+          python3 buildtools/cts/cts.py build --integration mcpp --target linux \
             --mcpp-toolchain "${MCPP_LLVM}" --out "$RUNNER_TEMP/cts"
+
+      - name: "Check: default build"
+        if: ${{ !cancelled() }}
+        run: |
+          python3 buildtools/cts/cts.py check --integration mcpp --target linux \
+            --check build --out "$RUNNER_TEMP/cts"
+
+      - name: "Check: framework linkage"
+        if: ${{ !cancelled() }}
+        run: |
+          python3 buildtools/cts/cts.py check --integration mcpp --target linux \
+            --check linkage --out "$RUNNER_TEMP/cts"
+
+      - name: "Check: final resource package"
+        if: ${{ !cancelled() }}
+        run: |
+          python3 buildtools/cts/cts.py check --integration mcpp --target linux \
+            --check resources --out "$RUNNER_TEMP/cts"
+
+      - name: "Check: library-graph record"
+        if: ${{ !cancelled() }}
+        run: |
+          python3 buildtools/cts/cts.py check --integration mcpp --target linux \
+            --check libraries --out "$RUNNER_TEMP/cts"
+
+      - name: "Check: startup and resource resolution"
+        if: ${{ !cancelled() }}
+        run: |
+          xvfb-run -a python3 buildtools/cts/cts.py check --integration mcpp --target linux \
+            --check launch --out "$RUNNER_TEMP/cts"
 
       - name: Upload the results
         if: always()
@@ -149,5 +209,13 @@ jobs:
           pattern: conformance-*
           path: results
 
-      - name: Compare the integrations
-        run: python3 buildtools/cts/cts.py compare results
+      - name: Build matrix
+        run: python3 buildtools/cts/cts.py matrix results
+
+      - name: "Compare: final resource package"
+        if: ${{ !cancelled() }}
+        run: python3 buildtools/cts/cts.py compare --check resources results
+
+      - name: "Compare: library-graph record"
+        if: ${{ !cancelled() }}
+        run: python3 buildtools/cts/cts.py compare --check libraries results

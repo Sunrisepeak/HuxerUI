@@ -14,39 +14,51 @@ Each project has one set of sources, resources, and platform shells, plus one na
 | --- | --- |
 | `app_minimal` | Default profile, default artifact name, static framework linkage, the final resource package and its runtime location, composable code generation, and resource resolution in a started application. |
 | `app_library` | A library that depends on another library: the ordered library-graph record, public identities and derived resource namespaces, library and transitive resources in the final package, and their resolution at run time. |
-| `app_modules` | The same program as `app_library` written with C++ modules. It requires the `modules` capability and must produce the same library graph and resource package as `app_library`. |
+| `app_modules` | The same program as `app_library` written only with C++ modules and no `#include`. It requires the `modules` capability and must produce the same library graph and resource package as `app_library`. |
 
 A project lists the capabilities it needs in `requires`.
-An integration that does not declare them, or does not declare the platform, is reported as `undeclared` rather than failed.
 
-## Facts
+## Checkpoints
 
-| Fact | Source | Checked against |
+The suite is divided into checkpoints so a run shows which part of the contract an integration meets.
+
+| Checkpoint | Checked against `expected.json` | Compared between integrations |
 | --- | --- | --- |
-| `profile` | Generated record | `expected.json` |
-| `artifact.name` | Produced artifact | `expected.json` |
-| `framework.linkage` | The artifact's dynamic dependencies | `expected.json` |
-| `resources.location` | The final package beside the artifact | `expected.json` |
-| `libraries` | The library-graph record | `expected.json` |
-| `launch.*` | What the started application resolved | `expected.json` |
-| `resources.sha256`, `resources.files`, `libraries.roots` | Final package and library-graph record | The other integrations, and the project named by `sameModelAs` |
+| `build` | `profile`, `artifact.name` | |
+| `linkage` | `framework.linkage`, read from the artifact's dynamic dependencies | |
+| `resources` | `resources.location`: the final package where the Runtime looks for it | `resources.sha256`, `resources.files` |
+| `libraries` | `libraries`: the ordered library-graph record | `libraries.roots` |
+| `launch` | `launch.*`: what the started application resolved | |
 
+The compared facts are also checked between a project and the project it names in `sameModelAs`.
 A difference is accepted only when [`allowed-differences.json`](allowed-differences.json) lists it with its reason.
 The list is empty.
+
+## Declared support
+
+Each integration states what it supports in `buildtools/<integration>/support.json`: for every target platform, the hosts that can build it, the checkpoints it implements, and its capabilities.
+The suite checks an integration for exactly that.
+An undeclared target, host, checkpoint, or capability is reported as `undeclared` and skipped; an environment that cannot run a check, such as a machine without a display, is reported as `unavailable`.
+Neither is a pass or a failure.
 
 ## Running
 
 ```bash
-python3 buildtools/cts/cts.py run --integration cmake --platform linux --launch --out /tmp/cts
-python3 buildtools/cts/cts.py run --integration mcpp --platform linux --launch --mcpp-toolchain llvm@22.1.8 --out /tmp/cts
-python3 buildtools/cts/cts.py compare /tmp/cts/results
+python3 buildtools/cts/cts.py list
+python3 buildtools/cts/cts.py build --integration cmake --target linux --out /tmp/cts
+python3 buildtools/cts/cts.py build --integration mcpp --target linux --mcpp-toolchain llvm@22.1.8 --out /tmp/cts
+python3 buildtools/cts/cts.py check --integration mcpp --target linux --check resources libraries --out /tmp/cts
+python3 buildtools/cts/cts.py compare --check resources /tmp/cts/results
+python3 buildtools/cts/cts.py matrix /tmp/cts/results
 ```
 
-`run` exits non-zero when a project fails.
-`--launch` starts each application with `HUXERUI_CTS_PROBE` set and compares what it recorded; without a display the launch check is reported as unavailable and the other facts are still checked.
-`compare` prints the result matrix and checks the facts that integrations must agree on.
+`build` builds the projects and records their facts; `check` evaluates the named checkpoints, or all of them when none is named; `run` does both.
+`--project` limits any of them to the named projects.
+`compare` checks the facts integrations must agree on, and `matrix` prints the build status of every project and integration.
+Every command exits non-zero when something it checked failed.
+The `launch` checkpoint starts each application with `HUXERUI_CTS_PROBE` set and reads what it recorded.
 
 The suite currently collects facts on Linux.
-Other platforms are reported as unavailable until their fact collection is added.
+Other targets are reported as unavailable until their fact collection is added.
 
-`.github/workflows/build-system-conformance.yml` runs both integrations and the comparison on pull requests that touch a build system, the framework sources, or the suite.
+`.github/workflows/build-system-conformance.yml` runs every checkpoint as its own step for each integration, then compares the integrations, on pull requests that touch a build system, the framework sources, or the suite.

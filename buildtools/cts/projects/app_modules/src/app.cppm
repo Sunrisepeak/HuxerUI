@@ -1,13 +1,9 @@
-module;
-
-#include <app_resources.h>
-
-#include "probe.h"
-
 export module app;
 
 import std;
 import huxerui;
+import app.resources;
+import cts.probe;
 import ctskit.widgets;
 
 using namespace huxerui;

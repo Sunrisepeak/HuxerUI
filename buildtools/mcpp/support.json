@@ -1,7 +1,11 @@
 {
   "schema": 1,
   "integration": "mcpp",
-  "platforms": {
-    "linux": {"hosts": ["linux"], "capabilities": ["modules"]}
+  "targets": {
+    "linux": {
+      "hosts": ["linux"],
+      "checks": ["build", "linkage", "resources", "libraries", "launch"],
+      "capabilities": ["modules"]
+    }
   }
 }
