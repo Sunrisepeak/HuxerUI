@@ -172,7 +172,7 @@ class CMakeIntegration:
                 "artifact": str(core / f"lib{name}_huxerui.a"),
                 "bundle": "",
                 "link_inputs": str(core / "link.rsp"),
-                "resources": str(work / "build" / "huxerui-resources" / name / "package"),
+                "resources": str(core / "resources" / "package"),
                 "profile": "debug",
                 "libraries": load_json(graph)["libraries"] if graph.exists() else [],
                 "launch_environment": {},
