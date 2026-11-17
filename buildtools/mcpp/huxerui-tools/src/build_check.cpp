@@ -164,6 +164,9 @@ void check_platform(const std::filesystem::path& root, const toml::table& manife
         if (const toml::table* runtime = manifest["runtime"].as_table()) {
             for (const std::string& v : string_array(*runtime, "frameworks")) declared.insert(v);
         }
+        if (const toml::table* runtime = (*target)["runtime"].as_table()) {
+            for (const std::string& v : string_array(*runtime, "frameworks")) declared.insert(v);
+        }
         std::string ldflags;
         if (const toml::table* build = (*target)["build"].as_table()) {
             for (const std::string& v : string_array(*build, "ldflags")) ldflags += v + " ";
@@ -183,7 +186,7 @@ void check_platform(const std::filesystem::path& root, const toml::table& manife
             }
         }
         if (!missing.empty())
-            fail(std::string(cmake_file) + ": frameworks missing from [runtime] frameworks: " +
+            fail(std::string(cmake_file) + ": frameworks missing from [target.macos.runtime] frameworks: " +
                  join(missing));
     }
     // Linux: both sides go through pkg-config or a payload; nothing to compare.

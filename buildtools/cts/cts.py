@@ -196,7 +196,7 @@ class CMakeIntegration:
 class McppIntegration:
     name = "mcpp"
     # Targets built by cross-compilation name their triple; a desktop target is the host's own.
-    TRIPLES = {"web": "wasm32-emscripten", "android": "aarch64-linux-android"}
+    TRIPLES = {"web": "wasm32-emscripten", "android": "aarch64-linux-android", "ios": "aarch64-ios-sim"}
 
     def __init__(self, arguments: argparse.Namespace) -> None:
         self.toolchain = arguments.mcpp_toolchain
@@ -231,6 +231,19 @@ class McppIntegration:
                 "profile": {"dev": "debug", "release": "release"}.get(profile, profile),
                 "libraries": load_json(graph)["libraries"] if graph.exists() else [],
                 "launch_environment": launch,
+            }
+        if target == "ios":
+            # The application core the integration assembles beside the linked program.
+            core = artifact.parent / "huxerui-ios" / name
+            return {
+                "target": name,
+                "artifact": str(core / f"lib{name}_huxerui.a"),
+                "bundle": "",
+                "link_inputs": str(core / "link.rsp"),
+                "resources": str(core / "resources" / "package"),
+                "profile": {"dev": "debug", "release": "release"}.get(profile, profile),
+                "libraries": load_json(graph)["libraries"] if graph.exists() else [],
+                "launch_environment": {},
             }
         return {
             "target": name,

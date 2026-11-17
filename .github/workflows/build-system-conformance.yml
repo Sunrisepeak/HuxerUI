@@ -64,6 +64,7 @@ jobs:
           - { integration: cmake, target: web,     host: windows, os: windows-2022, python: python }
           - { integration: mcpp,  target: web,     host: windows, os: windows-2022, python: python }
           - { integration: cmake, target: android, host: windows, os: windows-2022, python: python }
+          - { integration: mcpp,  target: android, host: windows, os: windows-2022, python: python }
     steps:
       - uses: actions/checkout@v5
 
@@ -107,7 +108,9 @@ jobs:
       - name: Install macOS prerequisites
         if: matrix.host == 'macos'
         run: |
-          echo "DEVELOPER_DIR=/Applications/Xcode_26.2.app/Contents/Developer" >> "$GITHUB_ENV"
+          if [ -d /Applications/Xcode_26.2.app ]; then
+            echo "DEVELOPER_DIR=/Applications/Xcode_26.2.app/Contents/Developer" >> "$GITHUB_ENV"
+          fi
           if [ "${{ matrix.integration }}" = cmake ]; then brew install ninja; fi
 
       - name: Cache compiler output
@@ -200,7 +203,8 @@ jobs:
           if-no-files-found: error
 
   # CMake rows use Intel runners because GitHub's macOS arm64 runners are capacity constrained and can leave
-  # jobs unassigned. mcpp's toolchain supports arm64 macOS only, so its rows stay on arm64 runners.
+  # jobs unassigned. mcpp's toolchain supports arm64 macOS only, so its rows stay on arm64 runners,
+  # on the image whose pool has assigned jobs most reliably.
   conformance-macos:
     name: ${{ matrix.integration }} (${{ matrix.target }} on ${{ matrix.host }})
     runs-on: ${{ matrix.os }}
@@ -210,11 +214,13 @@ jobs:
       matrix:
         include:
           - { integration: cmake, target: macos,   host: macos,   os: macos-15-intel, python: python3 }
-          - { integration: mcpp,  target: macos,   host: macos,   os: macos-15,       python: python3 }
+          - { integration: mcpp,  target: macos,   host: macos,   os: macos-26,       python: python3 }
           - { integration: cmake, target: ios,     host: macos,   os: macos-15-intel, python: python3 }
           - { integration: cmake, target: web,     host: macos,   os: macos-15-intel, python: python3 }
           - { integration: cmake, target: android, host: macos,   os: macos-15-intel, python: python3 }
-          - { integration: mcpp,  target: android, host: macos,   os: macos-15,       python: python3 }
+          - { integration: mcpp,  target: android, host: macos,   os: macos-26,       python: python3 }
+          - { integration: mcpp,  target: web,     host: macos,   os: macos-26,       python: python3 }
+          - { integration: mcpp,  target: ios,     host: macos,   os: macos-26,       python: python3 }
     steps:
       - uses: actions/checkout@v5
 
@@ -258,7 +264,9 @@ jobs:
       - name: Install macOS prerequisites
         if: matrix.host == 'macos'
         run: |
-          echo "DEVELOPER_DIR=/Applications/Xcode_26.2.app/Contents/Developer" >> "$GITHUB_ENV"
+          if [ -d /Applications/Xcode_26.2.app ]; then
+            echo "DEVELOPER_DIR=/Applications/Xcode_26.2.app/Contents/Developer" >> "$GITHUB_ENV"
+          fi
           if [ "${{ matrix.integration }}" = cmake ]; then brew install ninja; fi
 
       - name: Cache compiler output

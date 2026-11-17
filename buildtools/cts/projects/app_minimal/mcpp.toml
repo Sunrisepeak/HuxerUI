@@ -19,6 +19,9 @@ main = "platform/windows/main.cpp"
 [target.'cfg(os = "macos")'.targets.cts_app_minimal]
 main = "platform/macos/main.cpp"
 
+[target.'cfg(os = "ios")'.targets.cts_app_minimal]
+main = "platform/ios/App/main.mm"
+
 [build]
 sources = []
 

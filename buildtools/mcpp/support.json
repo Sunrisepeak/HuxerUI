@@ -50,6 +50,7 @@
     "web": {
       "hosts": [
         "linux",
+        "macos",
         "windows"
       ],
       "checks": [
@@ -65,6 +66,21 @@
     "android": {
       "hosts": [
         "linux",
+        "macos",
+        "windows"
+      ],
+      "checks": [
+        "build",
+        "linkage",
+        "resources",
+        "libraries"
+      ],
+      "capabilities": [
+        "modules"
+      ]
+    },
+    "ios": {
+      "hosts": [
         "macos"
       ],
       "checks": [

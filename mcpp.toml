@@ -56,6 +56,7 @@ cxxflags                = ["-Wall", "-Wextra", "-Wpedantic"]
 # `import huxerui;` being undefined.
 dialect_cxxflags        = ["-pthread"]
 macos_deployment_target = "12.0"
+ios_deployment_target   = "15.0"
 
 # BUILD-dependencies: none of these reaches the artifact. hcg and hrc run on the
 # build machine and produce sources; the rule module is compiled into build.mcpp
@@ -193,15 +194,25 @@ sources = ["platform/web/*.cpp"]
 # `.mm` is a first-class source kind but is not in the default glob.
 sources  = ["platform/macos/*.mm"]
 cxxflags = ["-fobjc-arc"]
-# `-weak_framework` has no neutral spelling; [runtime] frameworks covers only
-# ordinary linkage.
+# `-weak_framework` has no neutral spelling; `frameworks` covers only ordinary
+# linkage.
 ldflags  = ["-weak_framework", "UniformTypeIdentifiers"]
 
-# frameworks is a TOP-LEVEL [runtime] key -- the per-target vocabulary is
-# `libraries` only, and a [target.macos.runtime] frameworks entry is ignored,
-# failing at link on macOS alone. Unconditional is correct: the engine renders
-# it only for Mach-O.
-[runtime]
+# Frameworks are stated per platform: AppKit and Carbon do not exist on iOS, and
+# UIKit does not exist on macOS.
+[target.macos.runtime]
 frameworks = ["AppKit", "AVFoundation", "Carbon", "Contacts", "CoreBluetooth",
               "CoreGraphics", "CoreImage", "CoreLocation", "CoreText", "CoreVideo", "EventKit", "ImageIO",
               "Foundation", "Metal", "MetalPerformanceShaders", "Photos", "QuartzCore", "UserNotifications"]
+
+# iOS. Sources, options and frameworks mirror cmake/platform/IOS.cmake.
+[target.'cfg(os = "ios")'.build]
+sources  = ["platform/ios/*.mm"]
+cxxflags = ["-fobjc-arc"]
+ldflags  = ["-weak_framework", "UniformTypeIdentifiers"]
+
+[target.'cfg(os = "ios")'.runtime]
+frameworks = ["Contacts", "CoreBluetooth", "CoreFoundation", "CoreGraphics", "CoreImage", "CoreLocation",
+              "CoreText", "CoreVideo", "EventKit", "Foundation", "ImageIO", "Metal", "MetalPerformanceShaders",
+              "MobileCoreServices", "AVFoundation", "BackgroundTasks", "Photos", "QuartzCore", "UIKit",
+              "UserNotifications"]

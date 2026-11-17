@@ -793,6 +793,60 @@ inline std::vector<edge> plan_resources(const options& opt, const project_graph&
         return out;
     }
 
+    if (std::string_view(mcpp::target_os()) == "ios") {
+        // The iOS application core the Xcode shell links, in the layout the CMake
+        // integration uses: one static archive with the application, its libraries
+        // and the framework, the link inputs that go with it, and the package.
+        // The shell supplies the process entry, so the entry object stays out.
+        std::vector<std::string> frameworks;
+        {
+            const std::string manifest = detail::read_text(std::filesystem::path(root) / "mcpp.toml");
+            const std::size_t table = manifest.find("[target.'cfg(os = \"ios\")'.runtime]");
+            const std::size_t open = table == std::string::npos ? table : manifest.find('[', table + 1);
+            const std::size_t close = open == std::string::npos ? open : manifest.find(']', open);
+            if (close != std::string::npos) {
+                std::size_t at = open;
+                while ((at = manifest.find('"', at + 1)) != std::string::npos && at < close) {
+                    const std::size_t end = manifest.find('"', at + 1);
+                    frameworks.push_back(manifest.substr(at + 1, end - at - 1));
+                    at = end;
+                }
+            }
+        }
+        for (const std::string& program : graph.programs) {
+            const std::string core = "huxerui-ios/" + program;
+            for (const std::string& file : package_files) {
+                const std::string directory =
+                    std::filesystem::path(core + "/resources/package/" + file).parent_path().generic_string();
+                mcpp::deploy((final_package + "/" + file).c_str(), directory.c_str());
+            }
+            const std::string directory = "${mcpp.bin_dir}/" + core;
+            const std::string archive = directory + "/lib" + program + "_huxerui.a";
+            const std::string linked = "${mcpp.target_file:" + program + "}";
+            // The frameworks are known now; the archive's absolute path is known only where the action runs.
+            std::string tail;
+            for (const std::string& framework : frameworks) tail += "-framework " + framework + "\n";
+            tail += "-weak_framework UniformTypeIdentifiers\n";
+            const std::string link_tail = odir + "/ios/" + program + "/link-tail.rsp";
+            detail::write_if_changed(link_tail, tail);
+            const std::string script =
+                "set -e; mkdir -p '" + directory + "'; rm -f '" + archive + "'; "
+                "find obj -name '*.o' ! -path '*platform/ios/App/*' -print0 | xargs -0 libtool -static -o '" + archive +
+                "'; core=$(cd '" + directory + "' && pwd); "
+                "{ printf '%s\\n\"%s\"\\n' -force_load \"$core/lib" + program + "_huxerui.a\"; cat '" + link_tail +
+                "'; } > '" + directory + "/link.rsp'";
+            out.push_back(edge{
+                .id          = "ios-core:" + program,
+                .role        = "artifact",
+                .description = "iOS application core " + program,
+                .command     = { "/bin/sh", "-c", script },
+                .inputs      = { linked, link_tail },
+                .outputs     = { archive, directory + "/link.rsp" },
+            });
+        }
+        return out;
+    }
+
     if (std::string_view(mcpp::target_os()) == "emscripten") {
         // The Web has no directory beside the program: the package is preloaded
         // into the module's virtual file system at its root.
