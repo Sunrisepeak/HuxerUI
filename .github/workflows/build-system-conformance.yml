@@ -94,7 +94,9 @@ jobs:
       - name: Install the Android NDK
         if: matrix.target == 'android' && matrix.integration == 'cmake'
         run: |
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;29.0.14206865" > /dev/null
+          # `yes` ends with a broken pipe once sdkmanager stops reading, which must not fail the step.
+          (yes || true) | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;29.0.14206865" > /dev/null
+          test -f "$ANDROID_HOME/ndk/29.0.14206865/build/cmake/android.toolchain.cmake"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/29.0.14206865" >> "$GITHUB_ENV"
 
       - name: Install macOS prerequisites
