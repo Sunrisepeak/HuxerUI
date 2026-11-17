@@ -49,7 +49,9 @@
     },
     "web": {
       "hosts": [
-        "linux"
+        "linux",
+        "macos",
+        "windows"
       ],
       "checks": [
         "build",
@@ -63,7 +65,8 @@
     },
     "android": {
       "hosts": [
-        "linux"
+        "linux",
+        "macos"
       ],
       "checks": [
         "build",

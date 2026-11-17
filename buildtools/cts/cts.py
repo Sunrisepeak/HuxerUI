@@ -119,7 +119,7 @@ def selected_projects(names: list[str] | None) -> list[Path]:
 
 
 def result_path(out: Path, integration: str, target: str, project: str) -> Path:
-    return out / "results" / f"{integration}-{target}" / f"{project}.json"
+    return out / "results" / f"{integration}-{target}-on-{current_host()}" / f"{project}.json"
 
 
 # ---------------------------------------------------------------- integrations
@@ -142,7 +142,7 @@ class CMakeIntegration:
         configure = ["cmake", "-S", str(project), "-B", str(work / "build"), "-G", "Ninja",
                      "-DCMAKE_BUILD_TYPE=Debug", f"-DHUXERUI_HOME={self.home}"]
         if target == "web":
-            configure.insert(0, "emcmake")
+            configure.insert(0, shutil.which("emcmake") or "emcmake")
         if target == "android":
             ndk = os.environ.get("ANDROID_NDK_HOME") or os.environ.get("ANDROID_NDK_ROOT") or os.environ.get("ANDROID_NDK_LATEST_HOME")
             if not ndk:
@@ -338,14 +338,26 @@ def library_facts(project: Path, record: dict) -> dict:
     }
 
 
+def find_readelf() -> str:
+    """An ELF reader for a cross-built artifact: the host's, or the one an installed Android NDK carries."""
+    found = shutil.which("readelf") or shutil.which("llvm-readelf")
+    if found:
+        return found
+    roots = [os.environ.get(name) for name in ("ANDROID_NDK_HOME", "ANDROID_NDK_ROOT", "ANDROID_NDK_LATEST_HOME")]
+    roots += [str(path) for path in (Path.home() / ".mcpp" / "registry" / "data" / "xpkgs").glob("xim-x-android-ndk/*")]
+    for root in filter(None, roots):
+        for candidate in Path(root).glob("toolchains/llvm/prebuilt/*/bin/llvm-readelf*"):
+            if candidate.is_file():
+                return str(candidate)
+    raise Unavailable("no ELF reader was found on this host")
+
+
 def android_facts(artifact: Path, package: Path) -> dict:
     """Facts of an Android application core: the application's shared library and the final resource package
     the platform shell stages into the APK."""
     facts: dict = {"artifact.bundle": "<none>"}
     facts["artifact.name"] = artifact.name if artifact.is_file() else "<missing>"
-    readelf = shutil.which("readelf") or shutil.which("llvm-readelf")
-    if readelf is None:
-        raise Unavailable("readelf is not installed")
+    readelf = find_readelf()
     dynamic = subprocess.run([readelf, "-d", str(artifact)], text=True, stdout=subprocess.PIPE, check=True).stdout
     needed = [line.split("[", 1)[1].rstrip("]") for line in dynamic.splitlines() if "(NEEDED)" in line and "[" in line]
     facts["framework.linkage"] = "shared" if any("huxerui" in name for name in needed) else "static"
@@ -604,7 +616,9 @@ def command_compare(arguments) -> int:
             result = load_json(path)
             if "integration" not in result:
                 continue
-            results.setdefault(result["target"], {}).setdefault(result["project"], {})[result["integration"]] = result
+            # Builds are compared within one host: a host's checkout and tools are part of what produced them.
+            group = f"{result['target']} on {result.get('host', 'unknown')}"
+            results.setdefault(group, {}).setdefault(result["project"], {})[result["integration"]] = result
     if not results:
         log("no conformance results were found")
         return 1
@@ -658,11 +672,11 @@ def command_matrix(arguments) -> int:
         for path in sorted(Path(directory).rglob("*.json")):
             result = load_json(path)
             if "integration" in result:
-                rows.setdefault(result["project"], {})[f"{result['integration']}/{result['target']}"] = result["status"]
+                column = f"{result['integration']}/{result['target']}@{result.get('host', '?')}"
+                rows.setdefault(result["project"], {})[column] = result["status"]
     columns = sorted({column for row in rows.values() for column in row})
-    log("project".ljust(18) + "".join(column.ljust(18) for column in columns))
-    for project in sorted(rows):
-        log(project.ljust(18) + "".join(rows[project].get(column, "not run").ljust(18) for column in columns))
+    for column in columns:
+        log(f"{column:<28}" + "  ".join(f"{project}={rows[project].get(column, 'not run')}" for project in sorted(rows)))
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with open(summary, "a", encoding="utf-8") as stream:
