@@ -26,6 +26,13 @@
       "facts": {
         "resources.location": "<artifact>.data:/huxerui/resources.bin"
       }
+    },
+    "android": {
+      "facts": {
+        "artifact.name": "libcts_app_minimal.so",
+        "resources.location": "application core",
+        "android.exports": "JNI entries only"
+      }
     }
   }
 }

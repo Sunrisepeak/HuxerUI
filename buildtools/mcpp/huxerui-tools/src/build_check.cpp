@@ -380,7 +380,7 @@ int main(int argc, char** argv) {
 
     check_standard(root, manifest);
     check_core_sources(root, manifest);
-    check_platform(root, manifest, "Linux.cmake", "cfg(linux)");
+    check_platform(root, manifest, "Linux.cmake", "cfg(all(os = \"linux\", not(env = \"android\")))");
     check_platform(root, manifest, "Windows.cmake", "windows");
     check_platform(root, manifest, "MacOS.cmake", "macos");
     check_package_template(root);

@@ -24,8 +24,8 @@ The suite is divided into checkpoints so a run shows which part of the contract 
 
 | Checkpoint | Checked against `expected.json` | Compared between integrations |
 | --- | --- | --- |
-| `build` | `profile`, `artifact.name` | |
-| `linkage` | `framework.linkage`, read from the artifact's dynamic dependencies | |
+| `build` | `profile`, `artifact.name`, `artifact.bundle` | |
+| `linkage` | `framework.linkage`, read from the artifact's dynamic dependencies; on Android also `android.exports` | |
 | `resources` | `resources.location`: the final package where the Runtime looks for it | `resources.sha256`, `resources.files` |
 | `libraries` | `libraries`: the ordered library-graph record | `libraries.roots` |
 | `launch` | `launch.*`: what the started application resolved | |
@@ -58,7 +58,16 @@ python3 buildtools/cts/cts.py matrix /tmp/cts/results
 Every command exits non-zero when something it checked failed.
 The `launch` checkpoint starts each application with `HUXERUI_CTS_PROBE` set and reads what it recorded.
 
-The suite currently collects facts on Linux.
-Other targets are reported as unavailable until their fact collection is added.
+## Targets
+
+| Target | What is checked |
+| --- | --- |
+| `linux`, `windows` | The program, its dynamic dependencies, and the package in `<program>.resources/`; the application is started. |
+| `macos` | The application bundle, the program inside it, and the package in the bundle's resources; the application is started. |
+| `web` | The ES module and WebAssembly module, and the package preloaded into the module's data file. |
+| `android` | The application core the platform shell consumes: `lib<target>.so` for `arm64-v8a`, its exported JNI entries, and the final resource package. |
+
+The Android checks stop at the application core; building the APK through the Gradle shell is not yet a checkpoint.
+iOS is not covered yet.
 
 `.github/workflows/build-system-conformance.yml` runs every checkpoint as its own step for each integration, then compares the integrations, on pull requests that touch a build system, the framework sources, or the suite.

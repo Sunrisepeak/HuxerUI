@@ -50,7 +50,7 @@ cxxflags                = ["-Wall", "-Wextra", "-Wpedantic"]
 # clang records the thread model in the BMI and refuses one that disagrees with
 # the importing translation unit, which reads as every name in
 # `import huxerui;` being undefined. It has to be here rather than under
-# cfg(linux) -- mcpp allows only build INPUTS in a conditional section and
+# cfg(all(os = "linux", not(env = "android"))) -- mcpp allows only build INPUTS in a conditional section and
 # clang records the thread model in the BMI and refuses one that disagrees with
 # the importing translation unit, which reads as every name in
 # `import huxerui;` being undefined.
@@ -83,7 +83,7 @@ huxerui-build-rules       = { path = "buildtools/mcpp/huxerui-build-rules", host
 
 # ---------------------------------------------------------------- Linux ----
 # Sources mirror cmake/platform/Linux.cmake.
-[target.'cfg(linux)'.build]
+[target.'cfg(all(os = "linux", not(env = "android")))'.build]
 sources = ["platform/linux/*.cpp"]
 
 # THE GTK STACK COMES FROM XLINGS, NOT FROM THE MACHINE.
@@ -106,7 +106,7 @@ sources = ["platform/linux/*.cpp"]
 # cost is that `mcpp emit xpkg` derives a descriptor's consumer dependencies
 # from the top-level table only, so a PUBLISHED package carries none of this --
 # see docs/design/mcpp-build-system.md.
-[target.'cfg(linux)'.xlings.workspace]
+[target.'cfg(all(os = "linux", not(env = "android")))'.xlings.workspace]
 "xim:cairo" = "1.18.4"
 "xim:expat" = "2.6.2"
 "xim:fontconfig" = "2.15.0.1"
@@ -169,6 +169,15 @@ libraries = ["advapi32", "d2d1", "d3d11", "dwrite", "dwmapi", "dxguid", "dxgi",
              "dcomp", "windowsapp", "crypt32", "propsys",
              "kernel32", "gdi32", "winspool", "uuid", "comdlg32"]
 # ---------------------------------------------------------------- macOS ----
+# Android. Sources and system libraries mirror cmake/platform/Android.cmake; the
+# options that keep the JNI entry points in an application's shared library are
+# emitted by build.mcpp, because they belong to the application's link.
+[target.'cfg(env = "android")'.build]
+sources = ["platform/android/huxerui/src/main/cpp/*.cpp"]
+
+[target.'cfg(env = "android")'.runtime]
+libraries = ["android", "EGL", "GLESv2", "log"]
+
 # The Web. Sources mirror cmake/platform/Web.cmake. Exceptions are a property of
 # the whole module graph on this target, so the framework states the
 # requirement and the application's manifest grants it under

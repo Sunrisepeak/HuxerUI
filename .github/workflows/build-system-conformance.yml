@@ -60,6 +60,8 @@ jobs:
           - { integration: mcpp,  target: macos,   host: macos,   os: macos-15,     python: python3 }
           - { integration: cmake, target: web,     host: linux,   os: ubuntu-24.04, python: python3 }
           - { integration: mcpp,  target: web,     host: linux,   os: ubuntu-24.04, python: python3 }
+          - { integration: cmake, target: android, host: linux,   os: ubuntu-24.04, python: python3 }
+          - { integration: mcpp,  target: android, host: linux,   os: ubuntu-24.04, python: python3 }
     steps:
       - uses: actions/checkout@v5
 
@@ -74,8 +76,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends xvfb xauth fonts-dejavu-core
           if [ "${{ matrix.integration }}" = cmake ]; then
+            sudo apt-get install -y --no-install-recommends ninja-build
+          fi
+          if [ "${{ matrix.integration }}" = cmake ] && [ "${{ matrix.target }}" = linux ]; then
             sudo apt-get install -y --no-install-recommends \
-              libgtk-4-dev libepoxy-dev libsoup-3.0-dev pkg-config ninja-build gcc-14 g++-14 ccache
+              libgtk-4-dev libepoxy-dev libsoup-3.0-dev pkg-config gcc-14 g++-14 ccache
             echo "CC=gcc-14" >> "$GITHUB_ENV"
             echo "CXX=g++-14" >> "$GITHUB_ENV"
             echo "CTS_BUILD_ARGUMENTS=--cmake-compiler-launcher ccache" >> "$GITHUB_ENV"
@@ -90,7 +95,7 @@ jobs:
         run: brew install ninja
 
       - name: Cache compiler output
-        if: matrix.integration == 'cmake' && matrix.host == 'linux'
+        if: matrix.integration == 'cmake' && matrix.target == 'linux'
         uses: actions/cache@v4
         with:
           path: ~/.cache/ccache

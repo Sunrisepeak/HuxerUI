@@ -195,7 +195,7 @@ another.
 So the transitive `.pc` closure of `gtk4 + epoxy + libsoup` is declared as
 xlings payloads and `build.mcpp` points `PKG_CONFIG_LIBDIR` at those only,
 which keeps the host out entirely. They are declared on the **target** axis
-(`[target.'cfg(linux)'.xlings.workspace]`) because they are what the produced
+(`[target.'cfg(all(os = "linux", not(env = "android")))'.xlings.workspace]`) because they are what the produced
 code is compiled and linked against.
 
 ### Dialect flags belong to the whole graph

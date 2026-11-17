@@ -44,7 +44,7 @@ CHECKS: dict[str, dict] = {
     },
     "linkage": {
         "title": "Framework linkage",
-        "facts": ["framework.linkage"],
+        "facts": ["framework.linkage", "android.exports"],
         "equivalent": [],
     },
     "resources": {
@@ -143,6 +143,12 @@ class CMakeIntegration:
                      "-DCMAKE_BUILD_TYPE=Debug", f"-DHUXERUI_HOME={self.home}"]
         if target == "web":
             configure.insert(0, "emcmake")
+        if target == "android":
+            ndk = os.environ.get("ANDROID_NDK_HOME") or os.environ.get("ANDROID_NDK_ROOT") or os.environ.get("ANDROID_NDK_LATEST_HOME")
+            if not ndk:
+                raise Unavailable("the Android NDK was not found; set ANDROID_NDK_HOME")
+            configure += [f"-DCMAKE_TOOLCHAIN_FILE={ndk}/build/cmake/android.toolchain.cmake",
+                          "-DANDROID_ABI=arm64-v8a", "-DANDROID_PLATFORM=android-23"]
         if self.launcher:
             configure += [f"-DCMAKE_C_COMPILER_LAUNCHER={self.launcher}", f"-DCMAKE_CXX_COMPILER_LAUNCHER={self.launcher}"]
         run_command(configure, project)
@@ -158,6 +164,7 @@ class CMakeIntegration:
             "target": plan["target"],
             "artifact": plan["artifact"],
             "bundle": plan.get("bundle") or "",
+            "resources": str(work / "build" / "huxerui-resources" / plan["target"] / "package"),
             "profile": "debug",
             "libraries": load_json(graph)["libraries"] if graph.exists() else [],
             "launch_environment": {},
@@ -167,7 +174,7 @@ class CMakeIntegration:
 class McppIntegration:
     name = "mcpp"
     # Targets built by cross-compilation name their triple; a desktop target is the host's own.
-    TRIPLES = {"web": "wasm32-emscripten"}
+    TRIPLES = {"web": "wasm32-emscripten", "android": "aarch64-linux-android"}
 
     def __init__(self, arguments: argparse.Namespace) -> None:
         self.toolchain = arguments.mcpp_toolchain
@@ -186,7 +193,7 @@ class McppIntegration:
         envelope = self._build(command, project)
 
         name = load_json(project / "expected.json")["target"]
-        artifacts = [a for a in envelope["data"]["artifacts"] if a["name"] == name and a["kind"] in ("bin", "app")]
+        artifacts = [a for a in envelope["data"]["artifacts"] if a["name"] == name and a["kind"] in ("bin", "app", "shared")]
         if not artifacts:
             raise RuntimeError(f"mcpp reported no program artifact named {name}")
         profile = envelope["data"]["configuration"]["profile"]
@@ -206,6 +213,7 @@ class McppIntegration:
         return {
             "target": name,
             "bundle": "",
+            "resources": str(artifact.parent / f"{name}.resources"),
             "artifact": artifacts[0]["path"],
             "profile": {"dev": "debug", "release": "release"}.get(profile, profile),
             "libraries": load_json(graph)["libraries"] if graph.exists() else [],
@@ -257,12 +265,14 @@ def dynamic_dependencies(target: str, artifact: Path) -> list[str]:
 
 
 def collect_facts(target: str, project: Path, record: dict) -> dict:
-    if target not in ("linux", "windows", "macos", "web"):
+    if target not in ("linux", "windows", "macos", "web", "android"):
         raise Unavailable(f"fact collection is not implemented for target {target}")
     artifact = Path(record["artifact"])
     facts: dict = {"profile": record["profile"]}
     if target == "web":
         return {**facts, **web_facts(artifact), **library_facts(project, record)}
+    if target == "android":
+        return {**facts, **android_facts(artifact, Path(record["resources"])), **library_facts(project, record)}
     # The contract fixes the basename; the platform adds its own extension.
     name = artifact.name[:-4] if target == "windows" and artifact.name.lower().endswith(".exe") else artifact.name
     facts["artifact.name"] = name if artifact.is_file() else "<missing>"
@@ -302,6 +312,39 @@ def library_facts(project: Path, record: dict) -> dict:
             for entry in record["libraries"]
         ],
     }
+
+
+def android_facts(artifact: Path, package: Path) -> dict:
+    """Facts of an Android application core: the application's shared library and the final resource package
+    the platform shell stages into the APK."""
+    facts: dict = {"artifact.bundle": "<none>"}
+    facts["artifact.name"] = artifact.name if artifact.is_file() else "<missing>"
+    readelf = shutil.which("readelf") or shutil.which("llvm-readelf")
+    if readelf is None:
+        raise Unavailable("readelf is not installed")
+    dynamic = subprocess.run([readelf, "-d", str(artifact)], text=True, stdout=subprocess.PIPE, check=True).stdout
+    needed = [line.split("[", 1)[1].rstrip("]") for line in dynamic.splitlines() if "(NEEDED)" in line and "[" in line]
+    facts["framework.linkage"] = "shared" if any("huxerui" in name for name in needed) else "static"
+
+    # The platform finds JNI entries by name: they must be exported, and nothing else may be.
+    symbols = subprocess.run([readelf, "--dyn-syms", "-W", str(artifact)], text=True, stdout=subprocess.PIPE, check=True).stdout
+    exported = [fields[7] for fields in (line.split() for line in symbols.splitlines())
+                if len(fields) >= 8 and fields[4] in ("GLOBAL", "WEAK") and fields[6] != "UND"]
+    jni = [name for name in exported if name.startswith("Java_") or name.startswith("JNI_On")]
+    if not jni:
+        facts["android.exports"] = "no JNI entries"
+    elif len(jni) != len(exported):
+        facts["android.exports"] = "JNI entries and other symbols"
+    else:
+        facts["android.exports"] = "JNI entries only"
+
+    index = package / "huxerui" / "resources.bin"
+    facts["resources.location"] = "<missing>"
+    if index.is_file():
+        facts["resources.location"] = "application core"
+        facts["resources.sha256"] = hashlib.sha256(index.read_bytes()).hexdigest()
+        facts["resources.files"] = sorted(path.relative_to(package).as_posix() for path in package.rglob("*") if path.is_file())
+    return facts
 
 
 def web_facts(artifact: Path) -> dict:

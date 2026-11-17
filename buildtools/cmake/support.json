@@ -52,6 +52,18 @@
         "libraries"
       ],
       "capabilities": []
+    },
+    "android": {
+      "hosts": [
+        "linux"
+      ],
+      "checks": [
+        "build",
+        "linkage",
+        "resources",
+        "libraries"
+      ],
+      "capabilities": []
     }
   }
 }
