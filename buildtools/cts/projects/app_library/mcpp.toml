@@ -1,0 +1,15 @@
+[package]
+name     = "cts_app_library"
+version  = "0.1.0"
+standard = "c++20"
+
+[dependencies]
+huxerui        = { path = "../../../.." }
+ctskit_widgets = { path = "libraries/widgets" }
+
+[targets.cts_app_library]
+kind = "bin"
+main = "platform/linux/main.cpp"
+
+[build]
+sources = []

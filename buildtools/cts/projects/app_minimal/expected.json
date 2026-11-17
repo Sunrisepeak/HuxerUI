@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "target": "cts_app_minimal",
+  "requires": [],
+  "facts": {
+    "profile": "debug",
+    "artifact.name": "cts_app_minimal",
+    "framework.linkage": "static",
+    "resources.location": "<artifact>.resources/huxerui/resources.bin",
+    "libraries": []
+  },
+  "launch": {
+    "app.title": "CTS minimal application",
+    "app.greeting": "Hello from the application package",
+    "composable.state": "1"
+  }
+}

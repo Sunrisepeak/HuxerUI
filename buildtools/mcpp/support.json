@@ -1,0 +1,7 @@
+{
+  "schema": 1,
+  "integration": "mcpp",
+  "platforms": {
+    "linux": {"hosts": ["linux"], "capabilities": ["modules"]}
+  }
+}

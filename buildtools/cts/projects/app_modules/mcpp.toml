@@ -1,0 +1,16 @@
+# `import std;` needs c++23 with mcpp today (mcpp#603); see docs/design/mcpp-build-system.md.
+[package]
+name     = "cts_app_modules"
+version  = "0.1.0"
+standard = "c++23"
+
+[dependencies]
+huxerui        = { path = "../../../.." }
+ctskit_widgets = { path = "libraries/widgets" }
+
+[targets.cts_app_modules]
+kind = "bin"
+main = "platform/linux/main.cpp"
+
+[build]
+sources = []

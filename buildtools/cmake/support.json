@@ -1,0 +1,7 @@
+{
+  "schema": 1,
+  "integration": "cmake",
+  "platforms": {
+    "linux": {"hosts": ["linux"], "capabilities": []}
+  }
+}

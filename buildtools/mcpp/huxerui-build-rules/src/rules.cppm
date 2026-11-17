@@ -223,17 +223,410 @@ inline std::vector<edge> plan_codegen(std::span<const std::string> sources) {
     return out;
 }
 
+// ------------------------------------------------------------------ graph --
+// What an application's build needs from the packages it does not name: every
+// HuxerUI library in its dependency closure, in the order the build-system
+// contract fixes (depth-first, declaration order, each library once), with the
+// identity and resource root each library states about itself in
+// `[package.metadata.huxerui]`.
+namespace detail {
+
+struct json_value {
+    enum class kind { null, boolean, number, string, array, object };
+    kind                                             type = kind::null;
+    bool                                             flag = false;
+    std::string                                      text;
+    std::vector<json_value>                          items;
+    std::vector<std::pair<std::string, json_value>>  members;
+
+    [[nodiscard]] const json_value* find(std::string_view key) const {
+        for (const auto& [name, value] : members)
+            if (name == key) return &value;
+        return nullptr;
+    }
+    [[nodiscard]] std::string string_at(std::string_view key) const {
+        const json_value* value = find(key);
+        return (value != nullptr && value->type == kind::string) ? value->text : std::string{};
+    }
+};
+
+class json_reader {
+public:
+    explicit json_reader(std::string_view text) : text_(text) {}
+
+    bool parse(json_value& out) {
+        if (!value(out)) return false;
+        skip();
+        return position_ == text_.size();
+    }
+
+private:
+    void skip() {
+        while (position_ < text_.size() &&
+               (text_[position_] == ' ' || text_[position_] == '\t' ||
+                text_[position_] == '\n' || text_[position_] == '\r'))
+            ++position_;
+    }
+    bool literal(std::string_view word) {
+        if (text_.substr(position_, word.size()) != word) return false;
+        position_ += word.size();
+        return true;
+    }
+    static void append_utf8(std::string& out, unsigned code) {
+        if (code < 0x80) {
+            out.push_back(static_cast<char>(code));
+        } else if (code < 0x800) {
+            out.push_back(static_cast<char>(0xC0 | (code >> 6)));
+            out.push_back(static_cast<char>(0x80 | (code & 0x3F)));
+        } else {
+            out.push_back(static_cast<char>(0xE0 | (code >> 12)));
+            out.push_back(static_cast<char>(0x80 | ((code >> 6) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | (code & 0x3F)));
+        }
+    }
+    bool string(std::string& out) {
+        if (position_ >= text_.size() || text_[position_] != '"') return false;
+        ++position_;
+        while (position_ < text_.size()) {
+            const char c = text_[position_++];
+            if (c == '"') return true;
+            if (c != '\\') { out.push_back(c); continue; }
+            if (position_ >= text_.size()) return false;
+            const char escaped = text_[position_++];
+            switch (escaped) {
+                case 'n': out.push_back('\n'); break;
+                case 't': out.push_back('\t'); break;
+                case 'r': out.push_back('\r'); break;
+                case 'b': out.push_back('\b'); break;
+                case 'f': out.push_back('\f'); break;
+                case 'u': {
+                    if (position_ + 4 > text_.size()) return false;
+                    unsigned code = 0;
+                    for (int digit = 0; digit < 4; ++digit) {
+                        const char h = text_[position_++];
+                        code <<= 4;
+                        if (h >= '0' && h <= '9') code |= static_cast<unsigned>(h - '0');
+                        else if (h >= 'a' && h <= 'f') code |= static_cast<unsigned>(h - 'a' + 10);
+                        else if (h >= 'A' && h <= 'F') code |= static_cast<unsigned>(h - 'A' + 10);
+                        else return false;
+                    }
+                    append_utf8(out, code);
+                    break;
+                }
+                default: out.push_back(escaped); break;
+            }
+        }
+        return false;
+    }
+    bool value(json_value& out) {
+        skip();
+        if (position_ >= text_.size()) return false;
+        const char c = text_[position_];
+        if (c == '{') {
+            ++position_;
+            out.type = json_value::kind::object;
+            skip();
+            if (position_ < text_.size() && text_[position_] == '}') { ++position_; return true; }
+            while (true) {
+                skip();
+                std::string key;
+                if (!string(key)) return false;
+                skip();
+                if (position_ >= text_.size() || text_[position_++] != ':') return false;
+                json_value member;
+                if (!value(member)) return false;
+                out.members.emplace_back(std::move(key), std::move(member));
+                skip();
+                if (position_ >= text_.size()) return false;
+                if (text_[position_] == ',') { ++position_; continue; }
+                if (text_[position_] == '}') { ++position_; return true; }
+                return false;
+            }
+        }
+        if (c == '[') {
+            ++position_;
+            out.type = json_value::kind::array;
+            skip();
+            if (position_ < text_.size() && text_[position_] == ']') { ++position_; return true; }
+            while (true) {
+                json_value item;
+                if (!value(item)) return false;
+                out.items.push_back(std::move(item));
+                skip();
+                if (position_ >= text_.size()) return false;
+                if (text_[position_] == ',') { ++position_; continue; }
+                if (text_[position_] == ']') { ++position_; return true; }
+                return false;
+            }
+        }
+        if (c == '"') {
+            out.type = json_value::kind::string;
+            return string(out.text);
+        }
+        if (literal("true"))  { out.type = json_value::kind::boolean; out.flag = true;  return true; }
+        if (literal("false")) { out.type = json_value::kind::boolean; out.flag = false; return true; }
+        if (literal("null"))  { out.type = json_value::kind::null; return true; }
+        const std::size_t start = position_;
+        while (position_ < text_.size() &&
+               (std::string_view("+-.eE0123456789").find(text_[position_]) != std::string_view::npos))
+            ++position_;
+        if (position_ == start) return false;
+        out.type = json_value::kind::number;
+        out.text = std::string(text_.substr(start, position_ - start));
+        return true;
+    }
+
+    std::string_view text_;
+    std::size_t      position_ = 0;
+};
+
+inline std::string read_text(const std::filesystem::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    std::ostringstream out;
+    out << in.rdbuf();
+    return out.str();
+}
+
+inline void write_if_changed(const std::filesystem::path& path, const std::string& content) {
+    if (std::filesystem::exists(path) && read_text(path) == content) return;
+    std::filesystem::create_directories(path.parent_path());
+    std::ofstream(path, std::ios::binary) << content;
+}
+
+inline std::string json_escape(std::string_view text) {
+    std::string out;
+    for (const char c : text) {
+        if (c == '"' || c == '\\') out.push_back('\\');
+        out.push_back(c);
+    }
+    return out;
+}
+
+// One value of this package's own `[package.metadata.huxerui]` table. A
+// dependency's build program is not handed the resolved graph, so a library
+// reads what it states about itself from its own manifest.
+inline std::string own_metadata(std::string_view key) {
+    const std::string manifest =
+        read_text(std::filesystem::path(mcpp::manifest_dir()) / "mcpp.toml");
+    std::istringstream lines(manifest);
+    std::string line;
+    bool inside = false;
+    while (std::getline(lines, line)) {
+        const std::size_t first = line.find_first_not_of(" \t");
+        if (first == std::string::npos || line[first] == '#') continue;
+        if (line[first] == '[') {
+            inside = line.find("[package.metadata.huxerui]") != std::string::npos;
+            continue;
+        }
+        if (!inside) continue;
+        const std::size_t equals = line.find('=');
+        if (equals == std::string::npos) continue;
+        std::string name = line.substr(first, equals - first);
+        name.erase(name.find_last_not_of(" \t") + 1);
+        if (name != key) continue;
+        const std::size_t open = line.find('"', equals);
+        const std::size_t close = open == std::string::npos ? open : line.find('"', open + 1);
+        if (close == std::string::npos) return {};
+        return line.substr(open + 1, close - open - 1);
+    }
+    return {};
+}
+
+} // namespace detail
+
+// The resource namespace a library's public identity projects to, by the rule
+// the CLI and the CMake helpers use: each `::` segment lower-cased, the
+// segments joined by `_`, and one segment when both are the same token
+// (`CameraKit::CameraKit` is `camerakit`, `Scave::Camera` is `scave_camera`).
+inline std::string library_namespace(std::string_view identity) {
+    std::vector<std::string> segments;
+    std::string current;
+    for (std::size_t index = 0; index < identity.size(); ++index) {
+        if (identity[index] == ':') {
+            if (!current.empty()) segments.push_back(std::move(current));
+            current.clear();
+            continue;
+        }
+        current.push_back(static_cast<char>(
+            std::tolower(static_cast<unsigned char>(identity[index]))));
+    }
+    if (!current.empty()) segments.push_back(std::move(current));
+    if (segments.empty()) return {};
+    if (segments.size() == 2 && segments[0] == segments[1]) return segments[0];
+    std::string out = segments[0];
+    for (std::size_t index = 1; index < segments.size(); ++index) out += "_" + segments[index];
+    return out;
+}
+
+struct library {
+    std::string identity;    // the public identity, e.g. CameraKit::CameraKit
+    std::string root;        // the library's source root
+    std::string resources;   // its absolute resource root; empty when it has none
+};
+
+struct project_graph {
+    bool                      is_root = false;
+    std::vector<std::string>  programs;    // the root package's program targets
+    std::vector<library>      libraries;   // contract order
+};
+
+inline project_graph load_graph() {
+    project_graph graph;
+    const std::string file = mcpp::graph_file();
+    if (file.empty()) return graph;
+
+    detail::json_value document;
+    const std::string text = detail::read_text(file);
+    if (!detail::json_reader(text).parse(document)) {
+        std::cerr << "huxerui.rules: cannot read the resolved graph " << file << "\n";
+        return graph;
+    }
+    const detail::json_value* packages = document.find("packages");
+    if (packages == nullptr) return graph;
+    graph.is_root = true;
+
+    std::map<std::string, std::size_t> by_canonical;
+    std::size_t root_index = packages->items.size();
+    for (std::size_t index = 0; index < packages->items.size(); ++index) {
+        const detail::json_value& entry = packages->items[index];
+        if (const detail::json_value* package = entry.find("package"))
+            by_canonical[package->string_at("canonical")] = index;
+        const detail::json_value* root = entry.find("root");
+        if (root != nullptr && root->flag) root_index = index;
+    }
+    if (root_index == packages->items.size()) return graph;
+
+    if (const detail::json_value* targets = packages->items[root_index].find("targets")) {
+        for (const detail::json_value& target : targets->items) {
+            const std::string kind = target.string_at("kind");
+            if (kind == "bin" || kind == "app") graph.programs.push_back(target.string_at("name"));
+        }
+    }
+
+    // Each requester's dependencies in the order its manifest declares them:
+    // the graph lists dependencies before their requesters, not in declaration
+    // order, and the contract's order is the declaration's.
+    std::map<std::size_t, std::vector<std::pair<std::size_t, std::size_t>>> children;
+    std::map<std::size_t, std::string> manifests;
+    for (std::size_t index = 0; index < packages->items.size(); ++index) {
+        const detail::json_value* requests = packages->items[index].find("requested_by");
+        if (requests == nullptr) continue;
+        for (const detail::json_value& request : requests->items) {
+            // Only what the produced program links: a build-dependency is a
+            // tool or a rule module, not a library of the application.
+            if (request.string_at("table") != "[dependencies]") continue;
+            const auto requester = by_canonical.find(request.string_at("requester"));
+            if (requester == by_canonical.end()) continue;
+            auto manifest = manifests.find(requester->second);
+            if (manifest == manifests.end()) {
+                const std::string dir = packages->items[requester->second].string_at("manifest_dir");
+                manifest = manifests.emplace(requester->second,
+                    detail::read_text(std::filesystem::path(dir) / "mcpp.toml")).first;
+            }
+            std::size_t position = manifest->second.find("\n" + request.string_at("key"));
+            if (position == std::string::npos) position = manifest->second.size() + index;
+            children[requester->second].emplace_back(position, index);
+        }
+    }
+    for (auto& [requester, list] : children) std::ranges::sort(list);
+
+    std::vector<bool> visited(packages->items.size(), false);
+    const auto visit = [&](auto&& self, std::size_t index) -> void {
+        const auto found = children.find(index);
+        if (found == children.end()) return;
+        for (const auto& [position, child] : found->second) {
+            if (visited[child]) continue;
+            visited[child] = true;
+            const detail::json_value& entry = packages->items[child];
+            const detail::json_value* metadata = entry.find("metadata");
+            const detail::json_value* huxerui = metadata ? metadata->find("huxerui") : nullptr;
+            const std::string identity = huxerui ? huxerui->string_at("library") : std::string{};
+            if (!identity.empty()) {
+                library lib;
+                lib.identity = identity;
+                lib.root = entry.string_at("manifest_dir");
+                const std::string resources = huxerui->string_at("resources");
+                if (!resources.empty())
+                    lib.resources = (std::filesystem::path(lib.root) / resources).string();
+                graph.libraries.push_back(std::move(lib));
+            }
+            self(self, child);
+        }
+    };
+    visited[root_index] = true;
+    visit(visit, root_index);
+    return graph;
+}
+
+// The ordered library-graph record of the build-system contract, in the
+// location and with the schema the CMake integration uses, so a platform shell
+// reads the same file whichever integration built the application.
+inline void write_library_graph(const project_graph& graph) {
+    std::string content = "{\n  \"schema\": 1,\n  \"libraries\": [\n";
+    for (std::size_t index = 0; index < graph.libraries.size(); ++index) {
+        const library& lib = graph.libraries[index];
+        const std::string root =
+            std::filesystem::weakly_canonical(lib.root).generic_string();
+        content += "    {\"target\": \"" + detail::json_escape(lib.identity) +
+                   "\", \"sourceRoot\": \"" + detail::json_escape(root) + "\"}";
+        content += index + 1 < graph.libraries.size() ? ",\n" : "\n";
+    }
+    content += "  ]\n}\n";
+    detail::write_if_changed(
+        std::filesystem::path(mcpp::manifest_dir()) / ".huxerui" / "generated" / "libraries.json",
+        content);
+}
+
 // --------------------------------------------------------------- resources --
-// Two hrc invocations plus a merge, which is the shape of
-// cmake/HuxerUIResourceBuild.cmake: compile each root, then merge the packages.
+// The shape of cmake/HuxerUIResourceBuild.cmake: compile each root, merge the
+// packages in contract order, and place the one final package where the
+// Runtime looks for it.
 //
-// The framework's own builtin package is compiled HERE, in the consumer's
-// build, rather than reused from the framework's build. It has to be: the
-// framework generates it into its own MCPP_OUT_DIR, and a consumer is given
-// dep_dir() -- the dependency's SOURCE root. `resources/` is source, so it is
-// reachable; the compiled package is not. Recompiling 44 files / 196 KB is the
-// cost of not inventing a channel mcpp deliberately does not have.
-inline std::vector<edge> plan_resources(const options& opt) {
+// The framework's builtin package and each library's package are compiled
+// HERE, in the application's build. A consumer is handed a dependency's SOURCE
+// root and never its MCPP_OUT_DIR; `resources/` is source, so it is reachable,
+// and the compiled package is not.
+namespace detail {
+
+inline std::vector<std::string> files_below(const std::string& root) {
+    std::vector<std::string> out;
+    std::error_code ec;
+    for (auto it = std::filesystem::recursive_directory_iterator(root, ec);
+         it != std::filesystem::recursive_directory_iterator(); ++it) {
+        if (it->is_regular_file(ec)) out.push_back(it->path().string());
+    }
+    std::ranges::sort(out);
+    return out;
+}
+
+// The payload files hrc writes for one root, relative to a package directory.
+// A deployed file has to be a declared output, and a declared output has to be
+// named before hrc runs, so the set is predicted from the root by hrc's own
+// rule: images keep their path, an SVG becomes `.huxv`, raw files keep theirs.
+inline std::vector<std::string> payloads(const std::string& root, const std::string& ns) {
+    std::vector<std::string> out;
+    const std::filesystem::path images = std::filesystem::path(root) / "images";
+    for (const std::string& file : files_below(images.string())) {
+        std::filesystem::path relative = std::filesystem::relative(file, images);
+        std::string extension = relative.extension().string();
+        std::ranges::transform(extension, extension.begin(), [](char c) {
+            return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        });
+        if (extension == ".svg") relative.replace_extension(".huxv");
+        else if (extension != ".png" && extension != ".jpg" && extension != ".jpeg") continue;
+        out.push_back("huxerui/" + ns + "/images/" + relative.generic_string());
+    }
+    const std::filesystem::path raw = std::filesystem::path(root) / "raw";
+    for (const std::string& file : files_below(raw.string())) {
+        out.push_back("huxerui/" + ns + "/raw/" +
+                      std::filesystem::relative(file, raw).generic_string());
+    }
+    return out;
+}
+
+} // namespace detail
+
+inline std::vector<edge> plan_resources(const options& opt, const project_graph& graph) {
     std::vector<edge> out;
     const std::string hrc = host_tool("hrc");
     if (hrc.empty()) return out;
@@ -243,77 +636,98 @@ inline std::vector<edge> plan_resources(const options& opt) {
     const std::string builtin_src = root + "/resources";
 
     std::vector<std::string> packages;
+    std::vector<std::string> package_files{ "huxerui/resources.bin" };
+    const auto add_root = [&](std::string id, std::string description, const std::string& source,
+                              const std::string& ns, const std::string& directory,
+                              std::string header) {
+        std::vector<std::string> inputs = detail::files_below(source);
+        inputs.insert(inputs.begin(), hrc);
+        edge compile{
+            .id          = std::move(id),
+            .role        = "source",
+            .description = std::move(description),
+            .command     = { hrc, "--root", source, "--output", directory, "--namespace", ns },
+            .inputs      = std::move(inputs),
+            .outputs     = { directory + "/include/" + (header.empty() ? ns + "_resources.h" : header),
+                             directory + "/package/huxerui/resources.bin" },
+        };
+        if (!header.empty()) {
+            compile.command.push_back("--header-name");
+            compile.command.push_back(header);
+        }
+        for (const std::string& payload : detail::payloads(source, ns)) {
+            compile.outputs.push_back(directory + "/package/" + payload);
+            if (std::ranges::find(package_files, payload) == package_files.end())
+                package_files.push_back(payload);
+        }
+        out.push_back(std::move(compile));
+        packages.push_back(directory + "/package");
+    };
 
     if (std::filesystem::exists(builtin_src)) {
-        std::vector<std::string> inputs{ hrc };
-        std::error_code ec;
-        for (auto it = std::filesystem::recursive_directory_iterator(builtin_src, ec);
-             it != std::filesystem::recursive_directory_iterator(); ++it) {
-            if (it->is_regular_file(ec)) inputs.push_back(it->path().string());
-        }
-        out.push_back(edge{
-            .id          = "hrc:builtin",
-            .role        = "source",
-            .description = "huxerui builtin resources",
-            .command     = { hrc, "--root", builtin_src,
-                             "--output", odir + "/builtin",
-                             "--namespace", "huxerui",
-                             "--header-name", "huxerui_builtin_resources.h" },
-            .inputs      = inputs,
-            .outputs     = { odir + "/builtin/include/huxerui_builtin_resources.h",
-                             odir + "/builtin/package/huxerui/resources.bin" },
-        });
-        packages.push_back(odir + "/builtin/package");
+        add_root("hrc:builtin", "huxerui builtin resources", builtin_src, "huxerui",
+                 odir + "/builtin", "huxerui_builtin_resources.h");
     }
 
-    if (!opt.resources.empty()) {
-        // The package name is not necessarily a C++ identifier; hrc requires
-        // one for the generated accessors.
+    for (const library& lib : graph.libraries) {
+        if (lib.resources.empty() || !std::filesystem::is_directory(lib.resources)) continue;
+        const std::string ns = library_namespace(lib.identity);
+        add_root("hrc:library:" + ns, "library resources " + lib.identity, lib.resources, ns,
+                 odir + "/library/" + ns, {});
+    }
+
+    // This package's own root: an application's is the namespace `app` unless
+    // it states another; a library's is the one its public identity projects.
+    const std::string own_identity = detail::own_metadata("library");
+    std::string own_root = opt.resources.empty() ? detail::own_metadata("resources") : opt.resources;
+    if (!own_root.empty()) {
         const std::string ns =
-            opt.resource_namespace.empty()
-                ? huxerui::rules::sources::identifier(mcpp::package_name())
-                : opt.resource_namespace;
+            !opt.resource_namespace.empty() ? opt.resource_namespace
+            : !own_identity.empty()         ? library_namespace(own_identity)
+                                            : std::string("app");
         // ABSOLUTE. An action's command runs with the BUILD directory as its
-        // working directory, not the package root, so a relative root reaches
-        // hrc as "resource root is not a directory: resources".
-        const std::string app_src =
-            (std::filesystem::path(mcpp::manifest_dir()) / opt.resources).string();
-        std::vector<std::string> inputs{ hrc };
-        std::error_code ec;
-        for (auto it = std::filesystem::recursive_directory_iterator(app_src, ec);
-             it != std::filesystem::recursive_directory_iterator(); ++it) {
-            if (it->is_regular_file(ec)) inputs.push_back(it->path().string());
-        }
-        out.push_back(edge{
-            .id          = "hrc:app",
-            .role        = "source",
-            .description = "application resources " + opt.resources,
-            .command     = { hrc, "--root", app_src,
-                             "--output", odir + "/app",
-                             "--namespace", ns },
-            .inputs      = inputs,
-            .outputs     = { odir + "/app/package/huxerui/resources.bin" },
-        });
-        packages.push_back(odir + "/app/package");
+        // working directory, not the package root.
+        const std::string source =
+            (std::filesystem::path(mcpp::manifest_dir()) / own_root).string();
+        add_root("hrc:own", "resources " + own_root, source, ns, odir + "/own", {});
+        mcpp::include_dir((odir + "/own/include").c_str());
     }
 
+    if (!graph.is_root || graph.programs.empty()) return out;
+
+    std::string final_package = packages.empty() ? std::string{} : packages.front();
     if (packages.size() > 1) {
         edge merge{
             .id          = "hrc:merge",
             .role        = "source",
             .description = "merge huxerui resource packages",
             .command     = { hrc, "merge" },
-            .inputs      = {},
-            .outputs     = { odir + "/final/huxerui/resources.bin" },
+            .inputs      = { hrc },
+            .outputs     = {},
         };
-        for (const std::string& p : packages) {
+        for (const std::string& package : packages) {
             merge.command.push_back("--input");
-            merge.command.push_back(p);
-            merge.inputs.push_back(p + "/huxerui/resources.bin");
+            merge.command.push_back(package);
+            merge.inputs.push_back(package + "/huxerui/resources.bin");
         }
         merge.command.push_back("--output");
         merge.command.push_back(odir + "/final");
+        final_package = odir + "/final/package";
+        for (const std::string& file : package_files)
+            merge.outputs.push_back(final_package + "/" + file);
         out.push_back(std::move(merge));
+    }
+
+    // Where the Runtime looks: `<program>.resources/` beside the program, the
+    // directory every integration stages the final package into.
+    if (!final_package.empty()) {
+        for (const std::string& program : graph.programs) {
+            for (const std::string& file : package_files) {
+                const std::string directory =
+                    std::filesystem::path(program + ".resources/" + file).parent_path().generic_string();
+                mcpp::deploy((final_package + "/" + file).c_str(), directory.c_str());
+            }
+        }
     }
     return out;
 }
@@ -594,7 +1008,10 @@ inline bool configure(options opt = {}) {
         edges.insert(edges.end(), cg.begin(), cg.end());
     }
 
-    auto rs = plan_resources(opt);
+    const project_graph graph = load_graph();
+    if (graph.is_root && !graph.programs.empty()) write_library_graph(graph);
+
+    auto rs = plan_resources(opt, graph);
     if (!rs.empty()) {
         mcpp::include_dir(
             (std::string(mcpp::out_dir()) + "/hrc/builtin/include").c_str());

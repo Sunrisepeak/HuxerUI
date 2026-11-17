@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "target": "cts_app_modules",
+  "requires": ["modules"],
+  "sameModelAs": "app_library",
+  "facts": {
+    "profile": "debug",
+    "artifact.name": "cts_app_modules",
+    "framework.linkage": "static",
+    "resources.location": "<artifact>.resources/huxerui/resources.bin",
+    "libraries": ["CtsKit::Widgets", "CtsKit::Core"]
+  },
+  "launch": {
+    "app.title": "CTS library application",
+    "widgets.caption": "Caption from the widgets library",
+    "core.name": "Name from the core library"
+  }
+}

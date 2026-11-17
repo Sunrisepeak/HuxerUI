@@ -1,0 +1,14 @@
+[package]
+name     = "cts_app_minimal"
+version  = "0.1.0"
+standard = "c++20"
+
+[dependencies]
+huxerui = { path = "../../../.." }
+
+[targets.cts_app_minimal]
+kind = "bin"
+main = "platform/linux/main.cpp"
+
+[build]
+sources = []
