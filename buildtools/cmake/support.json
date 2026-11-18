@@ -53,6 +53,7 @@
         "linkage",
         "resources",
         "libraries",
+        "launch",
         "package"
       ],
       "capabilities": []

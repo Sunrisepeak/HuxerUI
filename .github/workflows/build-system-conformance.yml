@@ -223,7 +223,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           ${{ matrix.target == 'linux' && 'xvfb-run -a ' || '' }}${{ matrix.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
-            --target ${{ matrix.target }} --check launch --out "$RUNNER_TEMP/cts"
+            --target ${{ matrix.target }} --check launch --launch-timeout 120 --out "$RUNNER_TEMP/cts"
 
       - name: "Check: distributable"
         if: env.CTS_CLI != ''
@@ -416,7 +416,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           ${{ matrix.target == 'linux' && 'xvfb-run -a ' || '' }}${{ matrix.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
-            --target ${{ matrix.target }} --check launch --out "$RUNNER_TEMP/cts"
+            --target ${{ matrix.target }} --check launch --launch-timeout 120 --out "$RUNNER_TEMP/cts"
 
       - name: "Check: distributable"
         if: env.CTS_CLI != ''

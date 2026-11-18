@@ -338,6 +338,92 @@ def web_facts(artifact: Path) -> dict:
     return facts
 
 
+def find_browser() -> str | None:
+    """A Chrome or Chromium for the Web launch; HUXERUI_CTS_BROWSER names one explicitly."""
+    named = os.environ.get("HUXERUI_CTS_BROWSER")
+    if named:
+        return named
+    for name in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome", "msedge"):
+        found = shutil.which(name)
+        if found:
+            return found
+    for candidate in (r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"):
+        if Path(candidate).is_file():
+            return candidate
+    return None
+
+
+def web_launch_facts(record: dict, expected: dict, project: Path, work: Path, timeout: float) -> dict:
+    """Serves the Web build with the project's own page and reads the probe from a headless browser's console."""
+    import http.server
+    import re
+    import threading
+
+    browser = find_browser()
+    if browser is None:
+        raise Unavailable("no Chrome or Chromium is available; set HUXERUI_CTS_BROWSER")
+    artifact = Path(record["artifact"])
+    page = project / "platform" / "web" / "index.html.in"
+    if not page.is_file():
+        raise RuntimeError(f"the project has no Web page: {page}")
+    values = {"HUXERUI_WEB_MODULE_FILE": artifact.name, "HUXERUI_WEB_STORAGE_KEY": "org.huxerui.cts.launch",
+              "HUXERUI_WEB_FAVICON_FILE": "favicon.svg", "HUXERUI_WEB_APPLE_TOUCH_ICON_FILE": "apple-touch-icon.png"}
+    html = re.sub(r"@([A-Z0-9_]+)@", lambda match: values.get(match.group(1), match.group(0)),
+                  page.read_text(encoding="utf-8"))
+    (artifact.parent / "cts-launch.html").write_text(html, encoding="utf-8")
+
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        extensions_map = {**http.server.SimpleHTTPRequestHandler.extensions_map, ".wasm": "application/wasm",
+                          ".js": "text/javascript"}
+
+        def __init__(self, *arguments, **options):
+            super().__init__(*arguments, directory=str(artifact.parent), **options)
+
+        def log_message(self, *arguments):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{server.server_address[1]}/cts-launch.html"
+    profile = work / "browser-profile"
+    shutil.rmtree(profile, ignore_errors=True)
+    command = [browser, "--headless=new", "--no-sandbox", "--no-first-run", "--disable-gpu",
+               "--enable-unsafe-swiftshader", "--enable-logging=stderr", "--v=0", f"--user-data-dir={profile}", url]
+    log("  $ " + " ".join(command))
+    observed: dict[str, str] = {}
+    pattern = re.compile(r'HUXERUI_CTS_PROBE ([^=\s]+)=(.*?)", source')
+    with (work / "launch.log").open("w", encoding="utf-8") as output:
+        process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+                                   encoding="utf-8", errors="replace")
+        deadline = time.monotonic() + timeout
+
+        def watchdog():
+            while process.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.2)
+            if process.poll() is None:
+                process.kill()
+
+        threading.Thread(target=watchdog, daemon=True).start()
+        try:
+            for line in process.stderr:
+                output.write(line)
+                match = pattern.search(line)
+                if match:
+                    observed[match.group(1)] = match.group(2)
+                    if all(key in observed for key in expected):
+                        break
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.wait()
+            server.shutdown()
+    if not observed:
+        tail = "\n".join((work / "launch.log").read_text(encoding="utf-8", errors="replace").splitlines()[-20:])
+        raise RuntimeError(f"the page recorded no probe facts before the timeout\n{tail}")
+    return {f"launch.{key}": observed.get(key, "<missing>") for key in expected}
+
+
 def launch_facts(record: dict, expected: dict, work: Path, timeout: float) -> dict:
     if current_host() == "linux" and not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
         raise Unavailable("no display is available to start the application")
@@ -568,7 +654,10 @@ def check_project(check: str, integration: str, target: str, host: str, project:
             return "pass", "the project defines no launch facts"
         work = out / "work" / f"{integration}-{target}" / project.name
         try:
-            result["facts"].update(launch_facts(result["record"], launch, work, arguments.launch_timeout))
+            if target == "web":
+                result["facts"].update(web_launch_facts(result["record"], launch, project, work, arguments.launch_timeout))
+            else:
+                result["facts"].update(launch_facts(result["record"], launch, work, arguments.launch_timeout))
         except Unavailable as unavailable:
             return "unavailable", str(unavailable)
         except RuntimeError as failure:
