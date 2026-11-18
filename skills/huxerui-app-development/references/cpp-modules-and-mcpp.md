@@ -1,22 +1,32 @@
 # C++ Modules and mcpp
 
-Use this reference for a project whose `mcpp.toml` depends on `huxerui.huxerui` and whose `build.mcpp` imports `huxerui.rules`. Generated projects use `import huxerui;` for the same public entities exposed by the umbrella header. Preserve the dependency version and build setup selected by the project.
+Use this reference for a C++ modules project: its sources are module units that write `import huxerui;`, its `mcpp.toml` depends on `huxerui`, and its `build.mcpp` imports `huxerui.rules`. `import huxerui;` exposes the same public entities as the umbrella header. Preserve the dependency version and build setup selected by the project.
 
-The HuxerUI mcpp path builds for Linux, Windows, macOS, the Web, Android, and iOS. `huxerui build`, `run`, and `package` dispatch to mcpp for an mcpp project; `run` starts the host's own desktop platform. `huxerui package <platform>`, or `mcpp pack --pkg-format <format>`, writes the platform's package through the official `mcpp:plugins` members, and Android, iOS, and macOS packages need the `id` in `[package.metadata.huxerui]`.
+A headers project that also carries an mcpp declaration (`--build-system cmake,mcpp`) builds with the same rules; its sources stay as described in the other references.
+
+Drive the project with the HuxerUI CLI, which dispatches to mcpp:
+
+```bash
+huxerui build linux
+huxerui run linux
+huxerui package linux
+```
+
+The mcpp integration builds Linux, Windows, macOS, the Web, Android, and iOS. `huxerui package <platform>` writes the platform's package through the official `mcpp:plugins` members, and Android, iOS, and macOS packages need the `id` in `[package.metadata.huxerui]`. `mcpp build`, `mcpp run`, `mcpp test`, and `mcpp pack --pkg-format <format>` remain available underneath.
 
 For an existing project that manually links prebuilt SDK binaries instead of using the package rules, read [mcpp-build.md](mcpp-build.md).
 
 ## Project structure
 
 ```text
-mcpp.toml       package, dependency, target, and language standard
-build.mcpp      HuxerUI build-rule configuration
-src/main.cpp    application entry
-src/app.cppm    application module and composables
-resources/     optional resource input
+mcpp.toml               package, dependency, targets, and language standard
+build.mcpp              HuxerUI build-rule configuration
+src/app.cppm            application module: the page, its composables, and the Application object
+platform/<id>/main.cpp  each desktop platform's process entry; the Android, iOS, and Web shells as in any project
+resources/              optional resource input
 ```
 
-Create a modules application with `huxerui create app <name> --style modules`; library creation accepts the same selection. `--template` selects the application content (`app` or `navigation`), and `--platform` selects the platform shells as for any other project; a modules library takes no `--platform` yet. `--style headers --build-system mcpp` creates a headers project with only an mcpp declaration. Inspect the generated manifest rather than copying a fixed dependency version into an existing project.
+Create a C++ modules application with `huxerui create app <name> --build-system mcpp`; `huxerui create library <name> --build-system mcpp` creates a C++ modules library. mcpp alone selects C++ modules, and a build-system list that names `cmake` selects headers. `--template` selects the application content (`app` or `navigation`), and `--platform` selects the platform shells as for any other project. Inspect the generated manifest rather than copying a fixed dependency version into an existing project.
 
 The build program imports the HuxerUI rules:
 
@@ -29,9 +39,9 @@ int main() {
 }
 ```
 
-Keep `[build] sources = []` when the rules own source discovery. They transform composables and add the resulting sources; also globbing the originals can link duplicate definitions. Preserve the generated binary target and its `main` path.
+Keep `[build] sources = []` when the rules own source discovery. They transform composables and add the resulting sources; also globbing the originals can link duplicate definitions. Preserve the generated application target and each platform's `main` path.
 
-The rules compile and stage resource packages through `hrc`. The resource namespace defaults to a sanitized package name unless `resource_namespace` is supplied; do not assume the CMake application's `app` namespace or invent an automatically exported resource module. Inspect the selected rules and compiler outputs when resource access needs integration.
+The rules compile and stage resource packages through `hrc`. An application's resource namespace is `app`, as in a CMake application, unless `resource_namespace` is supplied; a library's follows its public identity. A package written as module units reaches its resources with `import <namespace>.resources;`, such as `import app.resources;`, and needs no header.
 
 ## Module code
 
@@ -57,15 +67,15 @@ Use module imports rather than `#include` in the generated module application. I
 
 mcpp projects use C++23, mcpp's default: `huxerui.rules` runs in the build program and imports `mcpp:plugins` members that need it. The CMake path keeps its C++20 floor. A newer language mode alone does not solve binary compatibility with a prebuilt SDK.
 
-Define annotated composables in source or module units processed by `huxerui.rules`. The application root already owns a scope. Keep `src/main.cpp` focused on required entry setup and `RunApplication()`; the rules exclude that entry file from transformation. Platform registration required before startup can still live in explicit entry code.
+Define annotated composables in source or module units processed by `huxerui.rules`. The application root already owns a scope. Keep each `platform/<id>/main.cpp` focused on required entry setup and `RunApplication()`; platform registration required before startup can still live there.
 
 Macros do not cross module boundaries. Prefer `[[huxerui::composable]]`; when explicitly writing a scope, use the exported `Scope` and `View` APIs rather than assuming `HUXERUI_SCOPE` is imported.
 
 ## Build and verification
 
 ```bash
-mcpp build
-mcpp run
+huxerui build <platform>
+huxerui run <platform>
 mcpp test
 ```
 

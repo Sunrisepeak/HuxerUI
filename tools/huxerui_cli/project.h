@@ -49,17 +49,15 @@ struct CreateSelection {
 /// The command-line spelling of a source style: `headers` or `modules`.
 [[nodiscard]] std::string_view SourceStyleName(SourceStyle style) noexcept;
 
-/// Applies `huxerui create`'s defaults to the explicit choices.
+/// Applies `huxerui create`'s defaults to the explicit build-system choice.
 ///
-/// Without choices an application uses headers and CMake and a library uses headers with both CMake and mcpp
-/// declarations. C++ modules imply mcpp, and an mcpp-only list without a style selects modules.
+/// The source style follows the build systems: mcpp alone is C++ modules, the only integration offering the
+/// `modules` capability, and any list naming CMake is headers. Without a choice an application uses CMake and a
+/// library declares both CMake and mcpp.
 /// @param kind Application or library.
-/// @param style Explicit source style, if any.
 /// @param build_systems Explicit build systems; empty when none were given.
 /// @return The complete selection.
-/// @throws std::invalid_argument when a selected build system does not offer the selected style.
-[[nodiscard]] CreateSelection ResolveCreateSelection(ProjectKind kind, std::optional<SourceStyle> style,
-                                                     std::span<const BuildSystem> build_systems);
+[[nodiscard]] CreateSelection ResolveCreateSelection(ProjectKind kind, std::span<const BuildSystem> build_systems);
 
 /// Validated template identity for either an application or a reusable library.
 using ProjectTemplate = std::variant<ProjectTemplateContext, LibraryTemplateContext>;

@@ -13,19 +13,24 @@ cd hello_huxer
 The command creates shared sources under `src`, resources under `resources`, the requested platform shells, and the HuxerUI application-development Skill under `.agents/skills`.
 Only build platforms supported by the current development host.
 
-Run in a terminal, `huxerui create` asks for whatever the command line leaves out: the kind and name, the source style, the build systems, the template, and the platforms.
+Run in a terminal, `huxerui create` asks for whatever the command line leaves out: the kind and name, the build system, the template, and the platforms.
 `--yes`, or running without a terminal, applies the defaults instead, and the command prints the options that recreate the same project.
 
-The source style is `headers`, where sources write `#include <huxerui/huxerui.h>`, or `modules`, where they are C++ module units that write `import huxerui;`.
-`--build-system` lists the native declarations the project carries: `cmake`, `mcpp`, or `cmake,mcpp`.
-An application defaults to headers with CMake, a library with headers declares both build systems, and a modules project is built with mcpp:
+A project is written in one of two source styles, and its build system selects which:
+
+| `--build-system` | Source style | Sources write |
+| --- | --- | --- |
+| `cmake` (an application's default) | headers | `#include <huxerui/huxerui.h>` |
+| `mcpp` | C++ modules | `import huxerui;` in module units |
+| `cmake,mcpp` (a library's default) | headers, with both declarations | `#include <huxerui/huxerui.h>` |
 
 ```bash
-huxerui create app hello_modules --style modules --template navigation
+huxerui create app hello_modules --build-system mcpp
 huxerui create app hello_both --build-system cmake,mcpp
 ```
 
-`--template` selects the modules application's content, `app` or `navigation`.
+`--template` selects a C++ modules application's content, `app` (the default) or `navigation`.
+`build`, `run`, and `package` are the same commands for every style and build system.
 
 Use `--agent` to select a different Agent Skill directory:
 
@@ -156,8 +161,53 @@ const Application application{
 };
 ```
 
+In a C++ modules project the same application is a module unit, `src/app.cppm`, and each desktop platform's `main.cpp` holds the process entry:
+
+```cpp
+export module app;
+
+import std;
+import huxerui;
+
+using namespace huxerui;
+
+[[huxerui::composable]]
+View Counter() {
+  auto count = UseState(0);
+
+  return Column {
+    Text::Format("Count: {}", count),
+    Button("Increment").OnClick([count] {
+      count += 1;
+    }),
+  }.With(
+      Padding(24.0F),
+      Spacing(12.0F)
+  );
+}
+
+View App() {
+  return MaterialTheme {
+    Counter(),
+  };
+}
+
+const Application application{
+    App,
+    {
+        .window = {
+            .title = "Counter",
+            .initial_size = {480.0F, 320.0F},
+            .minimum_size = Size{320.0F, 240.0F},
+        },
+    }
+};
+```
+
+`import std;` makes the standard-library declarations that HuxerUI's templates instantiate visible to the module unit.
+
 Mark a reusable function `[[huxerui::composable]]` when it directly calls a composition-bound `UseXxx()` function.
-Composable code generation is enabled by the generated CMake project.
+Composable code generation is enabled by the generated project, under either build system.
 
 ## Resources
 
@@ -198,8 +248,8 @@ To read a separate resource package, pass the directory produced by `hrc` to `Re
 ## Project commands
 
 ```text
-huxerui create [app <name>] [--style headers|modules] [--build-system <build-system-list>] [--template <name>] [--id <project-id>] [-p|--platform <platform-list>] [--agent <agent-list>] [--yes]
-huxerui create [library <name>] [--style headers|modules] [--build-system <build-system-list>] [--namespace <cpp-namespace>] [--target <public-cmake-target>] [--id <project-id>] [-p|--platform <platform-list>] [--agent <agent-list>] [--yes]
+huxerui create [app <name>] [--build-system <build-system-list>] [--template <name>] [--id <project-id>] [-p|--platform <platform-list>] [--agent <agent-list>] [--yes]
+huxerui create [library <name>] [--build-system <build-system-list>] [--namespace <cpp-namespace>] [--target <public-cmake-target>] [--id <project-id>] [-p|--platform <platform-list>] [--agent <agent-list>] [--yes]
 huxerui platform add <platform-list>
 huxerui doctor [platform-list]
 huxerui setup <platform-list> [--yes]

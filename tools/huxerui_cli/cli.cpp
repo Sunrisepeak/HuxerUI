@@ -102,9 +102,9 @@ void PrintBuildHelp(std::ostream& output, std::string_view command) {
 void PrintHelp(std::ostream& output) {
   output << "HuxerUI project and platform tool\n\n"
          << "Usage:\n"
-         << "  huxerui create [app <name>] [--style headers|modules] [--build-system <build-system-list>] "
+         << "  huxerui create [app <name>] [--build-system <build-system-list>] "
             "[--template <name>] [--id <project-id>] [-p|--platform <platform-list>] [--agent <agent-list>] [--yes]\n"
-         << "  huxerui create [library <name>] [--style headers|modules] [--build-system <build-system-list>] "
+         << "  huxerui create [library <name>] [--build-system <build-system-list>] "
             "[--namespace <cpp-namespace>] [--target <public-cmake-target>] "
             "[--id <project-id>] [-p|--platform <platform-list>] [--agent <agent-list>] [--yes]\n"
          << "  huxerui platform add <platform-list>\n"
@@ -125,9 +125,10 @@ void PrintHelp(std::ostream& output) {
   PrintBuildOptions(output);
   output << watch_option_help;
   PrintPackageOptions(output);
-  output << "create asks for a missing kind, name, style, build system, template, or platform list when run in a\n"
+  output << "create asks for a missing kind, name, build system, template, or platform list when run in a\n"
          << "terminal; --yes, or no terminal, applies the defaults instead. A build-system list is cmake, mcpp, or\n"
-         << "cmake,mcpp. Headers default to cmake for an app and to both for a library; modules use mcpp.\n"
+         << "cmake,mcpp: mcpp alone creates a C++ modules project (import huxerui;), and a list naming cmake a\n"
+         << "headers project (#include <huxerui/huxerui.h>). An app defaults to cmake and a library to both.\n"
          << "Without --platform, an app and a common library's Preview enable all platforms.\n"
          << "An agent list is comma-separated and supports ";
   for (std::size_t index = 0; index < agent_skill_mappings.size(); ++index) {
@@ -451,7 +452,6 @@ int RunCreate(std::span<const std::string_view> arguments, const std::filesystem
   std::optional<std::string_view> public_target;
   std::optional<std::string_view> platform_list;
   std::optional<std::string_view> agent_list;
-  std::optional<SourceStyle> style;
   std::vector<BuildSystem> build_systems;
   std::optional<std::string_view> template_name;
   std::string prompted_platforms;
@@ -482,8 +482,8 @@ int RunCreate(std::span<const std::string_view> arguments, const std::filesystem
       continue;
     }
     if (argument != "-p" && argument != "--platform" && argument != "--id" && argument != "--agent" &&
-        argument != "--namespace" && argument != "--target" && argument != "--style" &&
-        argument != "--build-system" && argument != "--template") {
+        argument != "--namespace" && argument != "--target" && argument != "--build-system" &&
+        argument != "--template") {
       throw UsageError("unexpected create argument: " + std::string(argument));
     }
     if (++index >= arguments.size()) {
@@ -513,15 +513,6 @@ int RunCreate(std::span<const std::string_view> arguments, const std::filesystem
     } else if (argument == "--template") {
       once(template_name, argument);
       template_name = value;
-    } else if (argument == "--style") {
-      once(style, argument);
-      if (value == "headers") {
-        style = SourceStyle::Headers;
-      } else if (value == "modules") {
-        style = SourceStyle::Modules;
-      } else {
-        throw UsageError("--style must be headers or modules");
-      }
     } else {
       if (!build_systems.empty()) {
         throw UsageError("--build-system may be specified only once");
@@ -574,36 +565,27 @@ int RunCreate(std::span<const std::string_view> arguments, const std::filesystem
                      " is supported only for library creation");
   }
 
-  if (prompter != nullptr && !style && build_systems.empty()) {
-    const std::array<prompt::Choice, 2> styles{{
-        {"headers", "#include <huxerui/huxerui.h>"},
-        {"modules", "import huxerui; built with mcpp"},
+  if (prompter != nullptr && build_systems.empty()) {
+    // One question selects both the build systems and, through them, the source style.
+    const std::array<prompt::Choice, 3> choices{{
+        {"cmake", "headers: #include <huxerui/huxerui.h>"},
+        {"mcpp", "C++ modules: import huxerui;"},
+        {"cmake+mcpp", "headers, with both declarations"},
     }};
-    style = RequireAnswer(prompter->Select("Source style", styles, 0)) == 0 ? SourceStyle::Headers
-                                                                            : SourceStyle::Modules;
-  }
-  if (prompter != nullptr && build_systems.empty() && style == SourceStyle::Headers) {
-    const std::array<prompt::Choice, 2> choices{{{"cmake", ""}, {"mcpp", ""}}};
-    if (kind == ProjectKind::App) {
-      build_systems.push_back(RequireAnswer(prompter->Select("Build system", choices, 0)) == 0 ? BuildSystem::CMake
-                                                                                               : BuildSystem::Mcpp);
-    } else {
-      const std::array<std::size_t, 2> both{0, 1};
-      for (const std::size_t index : RequireAnswer(prompter->MultiSelect("Build systems", choices, both))) {
-        build_systems.push_back(index == 0 ? BuildSystem::CMake : BuildSystem::Mcpp);
-      }
+    const std::size_t answer =
+        RequireAnswer(prompter->Select("Build system", choices, kind == ProjectKind::App ? 0 : 2));
+    if (answer != 1) {
+      build_systems.push_back(BuildSystem::CMake);
+    }
+    if (answer != 0) {
+      build_systems.push_back(BuildSystem::Mcpp);
     }
   }
-  CreateSelection selection;
-  try {
-    selection = ResolveCreateSelection(*kind, style, build_systems);
-  } catch (const std::invalid_argument& error) {
-    throw UsageError(error.what());
-  }
+  const CreateSelection selection = ResolveCreateSelection(*kind, build_systems);
 
   const bool modules_library = kind == ProjectKind::Library && selection.style == SourceStyle::Modules;
   if (template_name && selection.style != SourceStyle::Modules) {
-    throw UsageError("--template selects C++ modules content from templates/; it needs --style modules");
+    throw UsageError("--template selects C++ modules content from templates/; it needs --build-system mcpp");
   }
   if (template_name) {
     const bool known = kind == ProjectKind::App ? *template_name == "app" || *template_name == "navigation"
@@ -700,8 +682,7 @@ int RunCreate(std::span<const std::string_view> arguments, const std::filesystem
 
   // The selections as options, so the same project can be created again without prompts.
   std::string command = "huxerui create " + std::string(kind == ProjectKind::App ? "app " : "library ") + *name +
-                        " --style " + std::string(SourceStyleName(selection.style)) + " --build-system " +
-                        JoinBuildSystems(selection.build_systems, ",");
+                        " --build-system " + JoinBuildSystems(selection.build_systems, ",");
   if (template_name) {
     command += " --template " + std::string(*template_name);
   }

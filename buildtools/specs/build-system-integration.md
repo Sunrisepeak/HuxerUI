@@ -38,7 +38,7 @@ An option that would change the product, such as an ABI, optimization, LTO, or p
 An option that only steers the driver, such as a native generator or a tool location, is reported with a warning and not applied, and the operation continues.
 
 `huxerui create` composes a project from one source style, headers or C++ modules, and the native declaration of each selected build system, from explicit options, interactive prompts, or the CLI's defaults.
-A build system that does not declare a capability the style needs, such as `modules`, cannot be selected with it.
+The source style follows the selected build systems: it is the one every selected integration can build, so a selection that includes a build system without the `modules` capability is headers, and a selection whose every build system declares `modules` is C++ modules.
 
 The common sources, the `resources/` root, and the `platform/<platform-id>` shells have the same layout and meaning under every integration, so the following work needs no build-system-specific knowledge:
 

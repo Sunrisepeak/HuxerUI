@@ -30,7 +30,7 @@ For toolchain requirements and SDK version selection, see [Installation](docs/gu
 
 ### Run an application
 
-Open a new terminal to create a CMake application. Replace `windows` with a target you can build and run from your development machine.
+Open a new terminal to create an application. Replace `windows` with a target you can build and run from your development machine.
 
 ```bash
 huxerui create app hello_huxer
@@ -39,7 +39,13 @@ huxerui doctor
 huxerui run windows
 ```
 
-For a C++ modules project, pass `--style modules` to `huxerui create app`; it is built with mcpp and its sources use `import huxerui;`. `--build-system cmake,mcpp` gives a headers project both declarations. [C++ Modules and mcpp](skills/huxerui-app-development/references/cpp-modules-and-mcpp.md)
+The project above uses headers (`#include <huxerui/huxerui.h>`) and CMake. For a C++ modules project, whose sources write `import huxerui;` and which mcpp builds, create it with mcpp as its build system; `huxerui run` is the same for both:
+
+```bash
+huxerui create app hello_modules --build-system mcpp
+```
+
+`--build-system cmake,mcpp` gives a headers project both declarations. See [C++ Modules and mcpp](skills/huxerui-app-development/references/cpp-modules-and-mcpp.md).
 
 ## Example
 

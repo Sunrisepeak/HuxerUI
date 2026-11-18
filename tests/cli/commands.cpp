@@ -102,7 +102,7 @@ TEST_CASE("HuxerUICliHasNoCommandNamedAfterABuildSystem") {
 
 TEST_CASE("HuxerUICliDispatchesToTheProjectsBuildSystem") {
   TemporaryDirectory temporary;
-  REQUIRE(Invoke(temporary.Path(), {"create", "app", "mods", "--style", "modules", "--agent", "none"}).result == 0);
+  REQUIRE(Invoke(temporary.Path(), {"create", "app", "mods", "--build-system", "mcpp", "--agent", "none"}).result == 0);
   REQUIRE(Invoke(temporary.Path(), {"create", "app", "both", "--build-system", "cmake,mcpp", "--agent", "none"})
               .result == 0);
   const std::filesystem::path modules = temporary.Path() / "mods";
@@ -166,7 +166,7 @@ TEST_CASE("HuxerUICliDiscoversTheNearestDeclaringRoot") {
   TemporaryDirectory temporary;
   REQUIRE(Invoke(temporary.Path(), {"create", "app", "outer", "--platform", "linux", "--agent", "none"}).result == 0);
   const std::filesystem::path outer = temporary.Path() / "outer";
-  REQUIRE(Invoke(outer, {"create", "app", "inner", "--style", "modules", "--platform", "linux", "--agent", "none"})
+  REQUIRE(Invoke(outer, {"create", "app", "inner", "--build-system", "mcpp", "--platform", "linux", "--agent", "none"})
               .result == 0);
   const huxerui::cli::Project project = huxerui::cli::DiscoverProject(outer / "inner/src");
   REQUIRE(project.root == outer / "inner");
@@ -176,7 +176,7 @@ TEST_CASE("HuxerUICliDiscoversTheNearestDeclaringRoot") {
 
 TEST_CASE("HuxerUICliAddsPlatformsToMcppProjects") {
   TemporaryDirectory temporary;
-  REQUIRE(Invoke(temporary.Path(), {"create", "app", "Mods", "--style", "modules", "--id", "dev.example.mods",
+  REQUIRE(Invoke(temporary.Path(), {"create", "app", "Mods", "--build-system", "mcpp", "--id", "dev.example.mods",
                                     "--platform", "linux", "--agent", "none"})
               .result == 0);
   const std::filesystem::path project = temporary.Path() / "Mods";
@@ -186,13 +186,6 @@ TEST_CASE("HuxerUICliAddsPlatformsToMcppProjects") {
   // The shell carries the identity recorded at creation and the modules form of the entry.
   REQUIRE(Read(project / "platform/macos/Info.plist.in").find("dev.example.mods") != std::string::npos);
   REQUIRE(Read(project / "platform/macos/main.cpp").find("import huxerui;") != std::string::npos);
-
-  REQUIRE(Invoke(temporary.Path(), {"create", "app", "Plain", "--style", "headers", "--build-system", "mcpp",
-                                    "--platform", "linux", "--agent", "none"})
-              .result == 0);
-  REQUIRE(Invoke(temporary.Path() / "Plain", {"platform", "add", "windows"}).result == 0);
-  REQUIRE(Read(temporary.Path() / "Plain/platform/windows/main.cpp").find("#include <huxerui/app.h>") !=
-          std::string::npos);
 }
 
 TEST_CASE("HuxerUICliRejectsInvalidSdkAndDeviceOptions") {

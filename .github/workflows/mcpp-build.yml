@@ -599,9 +599,9 @@ jobs:
             echo "--- $dir"
           }
 
-          run_one AppDemo create app AppDemo --style modules --agent none
-          run_one NavDemo create app NavDemo --style modules --template navigation --agent none
-          run_one my-widgets create library my-widgets --style modules --agent none
+          run_one AppDemo create app AppDemo --build-system mcpp --agent none
+          run_one NavDemo create app NavDemo --build-system mcpp --template navigation --agent none
+          run_one my-widgets create library my-widgets --build-system mcpp --agent none
 
           # The two applications build; the library is a lib, so its own test is
           # what says it works -- and `mcpp test` proves the module it exports

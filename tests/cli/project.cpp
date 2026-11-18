@@ -22,40 +22,38 @@ TEST_CASE("HuxerUICliResolvesCreateSelections") {
   using huxerui::cli::ProjectKind;
   using huxerui::cli::SourceStyle;
   using Systems = std::vector<BuildSystem>;
-  const auto resolve = [](ProjectKind kind, std::optional<SourceStyle> style, Systems systems) {
-    return huxerui::cli::ResolveCreateSelection(kind, style, systems);
+  const auto resolve = [](ProjectKind kind, Systems systems) {
+    return huxerui::cli::ResolveCreateSelection(kind, systems);
   };
 
-  auto selection = resolve(ProjectKind::App, std::nullopt, {});
+  auto selection = resolve(ProjectKind::App, {});
   REQUIRE(selection.style == SourceStyle::Headers);
   REQUIRE(selection.build_systems == Systems{BuildSystem::CMake});
-  selection = resolve(ProjectKind::Library, std::nullopt, {});
+  selection = resolve(ProjectKind::Library, {});
   REQUIRE(selection.style == SourceStyle::Headers);
   REQUIRE(selection.build_systems == Systems{BuildSystem::CMake, BuildSystem::Mcpp});
-  selection = resolve(ProjectKind::App, SourceStyle::Modules, {});
-  REQUIRE(selection.build_systems == Systems{BuildSystem::Mcpp});
-  selection = resolve(ProjectKind::Library, SourceStyle::Modules, {});
-  REQUIRE(selection.build_systems == Systems{BuildSystem::Mcpp});
-  selection = resolve(ProjectKind::App, SourceStyle::Headers, {BuildSystem::Mcpp});
-  REQUIRE(selection.style == SourceStyle::Headers);
-  REQUIRE(selection.build_systems == Systems{BuildSystem::Mcpp});
-  selection = resolve(ProjectKind::App, std::nullopt, {BuildSystem::Mcpp, BuildSystem::CMake, BuildSystem::Mcpp});
+  // mcpp alone is C++ modules, for an application and a library alike.
+  for (const ProjectKind kind : {ProjectKind::App, ProjectKind::Library}) {
+    selection = resolve(kind, {BuildSystem::Mcpp});
+    REQUIRE(selection.style == SourceStyle::Modules);
+    REQUIRE(selection.build_systems == Systems{BuildSystem::Mcpp});
+  }
+  selection = resolve(ProjectKind::App, {BuildSystem::Mcpp, BuildSystem::CMake, BuildSystem::Mcpp});
   REQUIRE(selection.style == SourceStyle::Headers);
   REQUIRE(selection.build_systems == Systems{BuildSystem::CMake, BuildSystem::Mcpp});
-  selection = resolve(ProjectKind::App, std::nullopt, {BuildSystem::Mcpp});
-  REQUIRE(selection.style == SourceStyle::Modules);
-  REQUIRE_THROWS_WITH(resolve(ProjectKind::App, SourceStyle::Modules, {BuildSystem::CMake}),
-                      Catch::Matchers::ContainsSubstring("modules capability"));
+  selection = resolve(ProjectKind::Library, {BuildSystem::CMake});
+  REQUIRE(selection.style == SourceStyle::Headers);
+  REQUIRE(selection.build_systems == Systems{BuildSystem::CMake});
 }
 
 TEST_CASE("HuxerUICliCreatesModulesApplications") {
   TemporaryDirectory temporary;
   const Invocation invocation =
-      Invoke(temporary.Path(), {"create", "app", "Sample-App", "--style", "modules", "--agent", "none"});
+      Invoke(temporary.Path(), {"create", "app", "Sample-App", "--build-system", "mcpp", "--agent", "none"});
 
   REQUIRE(invocation.result == 0);
   REQUIRE(invocation.output.find("Style: modules\nBuild systems: mcpp\n") != std::string::npos);
-  REQUIRE(invocation.output.find("Command: huxerui create app Sample-App --style modules --build-system mcpp "
+  REQUIRE(invocation.output.find("Command: huxerui create app Sample-App --build-system mcpp "
                                  "--platform ") != std::string::npos);
   const std::filesystem::path project = temporary.Path() / "Sample-App";
   REQUIRE(std::filesystem::is_regular_file(project / "mcpp.toml"));
@@ -93,7 +91,7 @@ TEST_CASE("HuxerUICliCreatesModulesApplications") {
 
 TEST_CASE("HuxerUICliKeepsOnlySelectedPlatformEntries") {
   TemporaryDirectory temporary;
-  REQUIRE(Invoke(temporary.Path(), {"create", "app", "Solo", "--style", "modules", "--platform", "windows",
+  REQUIRE(Invoke(temporary.Path(), {"create", "app", "Solo", "--build-system", "mcpp", "--platform", "windows",
                                     "--agent", "none"})
               .result == 0);
   const std::filesystem::path project = temporary.Path() / "Solo";
@@ -117,8 +115,8 @@ TEST_CASE("HuxerUICliInfersModulesFromAnMcppOnlyList") {
 
 TEST_CASE("HuxerUICliCreatesApplicationsWithBothDeclarations") {
   TemporaryDirectory temporary;
-  REQUIRE(Invoke(temporary.Path(), {"create", "app", "Dual-App", "--style", "headers", "--build-system",
-                                    "cmake,mcpp", "--agent", "none"})
+  REQUIRE(Invoke(temporary.Path(), {"create", "app", "Dual-App", "--build-system", "cmake,mcpp", "--agent",
+                                    "none"})
               .result == 0);
   const std::filesystem::path project = temporary.Path() / "Dual-App";
   REQUIRE(std::filesystem::is_regular_file(project / "CMakeLists.txt"));
@@ -134,18 +132,6 @@ TEST_CASE("HuxerUICliCreatesApplicationsWithBothDeclarations") {
   REQUIRE(manifest.find("huxerui = { path = \"") != std::string::npos);
   REQUIRE(manifest.find("@") == std::string::npos);
   REQUIRE(Read(project / ".gitignore").find("/target/") != std::string::npos);
-}
-
-TEST_CASE("HuxerUICliCreatesHeadersApplicationsForMcppAlone") {
-  TemporaryDirectory temporary;
-  REQUIRE(Invoke(temporary.Path(), {"create", "app", "Plain", "--style", "headers", "--build-system", "mcpp",
-                                    "--platform", "linux", "--agent", "none"})
-              .result == 0);
-  const std::filesystem::path project = temporary.Path() / "Plain";
-  REQUIRE_FALSE(std::filesystem::exists(project / "CMakeLists.txt"));
-  REQUIRE_FALSE(std::filesystem::exists(project / "HuxerUIProject.cmake"));
-  REQUIRE(std::filesystem::is_regular_file(project / "mcpp.toml"));
-  REQUIRE(std::filesystem::is_regular_file(project / "src/app.cpp"));
 }
 
 TEST_CASE("HuxerUICliCreatesLibrariesForEveryBuildSystemByDefault") {
@@ -168,7 +154,7 @@ TEST_CASE("HuxerUICliCreatesLibrariesForEveryBuildSystemByDefault") {
 
 TEST_CASE("HuxerUICliCreatesModulesLibraries") {
   TemporaryDirectory temporary;
-  REQUIRE(Invoke(temporary.Path(), {"create", "library", "my-widgets", "--style", "modules", "--agent", "none"})
+  REQUIRE(Invoke(temporary.Path(), {"create", "library", "my-widgets", "--build-system", "mcpp", "--agent", "none"})
               .result == 0);
   const std::filesystem::path project = temporary.Path() / "my-widgets";
   REQUIRE(std::filesystem::is_regular_file(project / "src/component.cppm"));
@@ -189,16 +175,17 @@ TEST_CASE("HuxerUICliRejectsUnsupportedCreateSelections") {
   };
   REQUIRE(usage({"create", "app", "Sample-App", "--build-system", "meson"}).find("unknown build system: meson") !=
           std::string::npos);
-  REQUIRE(usage({"create", "app", "Sample-App", "--style", "modules", "--build-system", "cmake,mcpp"})
-              .find("modules capability") != std::string::npos);
-  REQUIRE(usage({"create", "app", "Sample-App", "--style", "classes"}).find("--style") != std::string::npos);
-  // `--build` was renamed to `--build-system` without an alias.
-  usage({"create", "app", "Sample-App", "--build", "mcpp"});
-  usage({"create", "app", "Sample-App", "--style", "modules", "--template", "nonesuch"});
-  // `--template` selects C++ modules content.
-  REQUIRE(usage({"create", "app", "Sample-App", "--template", "navigation"}).find("--style modules") !=
+  // The build systems select the source style, so there is no separate style option; `--build` was renamed to
+  // `--build-system` without an alias.
+  REQUIRE(usage({"create", "app", "Sample-App", "--style", "modules"}).find("unexpected create argument: --style") !=
           std::string::npos);
-  usage({"create", "library", "my-widgets", "--style", "modules", "--platform", "windows"});
+  usage({"create", "app", "Sample-App", "--build", "mcpp"});
+  usage({"create", "app", "Sample-App", "--build-system", "mcpp", "--template", "nonesuch"});
+  // `--template` selects C++ modules content.
+  REQUIRE(usage({"create", "app", "Sample-App", "--template", "navigation"}).find("--build-system mcpp") !=
+          std::string::npos);
+  REQUIRE(usage({"create", "app", "Sample-App", "--build-system", "cmake,mcpp", "--template", "app"})
+              .find("--build-system mcpp") != std::string::npos);
   // Without a terminal nothing can ask for the missing name.
   usage({"create", "app"});
   usage({"create"});
@@ -207,7 +194,7 @@ TEST_CASE("HuxerUICliRejectsUnsupportedCreateSelections") {
 
 TEST_CASE("HuxerUICliPromptsForMissingCreateSelections") {
   TemporaryDirectory temporary;
-  // Kind: app; name: Asked; style: modules; template: navigation; platforms: 1 and 2 of the list.
+  // Kind: app; name: Asked; build system: mcpp; template: navigation; platforms: 1 and 2 of the list.
   std::istringstream answers("1\nAsked\n2\n2\n1,2\n");
   std::ostringstream prompts;
   huxerui::cli::prompt::LinePrompter prompter(answers, prompts);
@@ -217,14 +204,14 @@ TEST_CASE("HuxerUICliPromptsForMissingCreateSelections") {
   const std::vector<std::string_view> arguments{"create", "--agent", "none"};
   const huxerui::cli::SdkLocation sdk{HUXERUI_TEST_SOURCE_DIRECTORY, huxerui::cli::SdkLocationSource::Executable};
   REQUIRE(huxerui::cli::Run(arguments, temporary.Path(), sdk, input, output, error, &prompter) == 0);
-  for (const std::string_view question : {"? Project kind", "? Project name", "? Source style", "? Template",
+  for (const std::string_view question : {"? Project kind", "? Project name", "? Build system", "? Template",
                                           "? Platforms"}) {
     REQUIRE(prompts.str().find(question) != std::string::npos);
   }
-  // A modules project has one build system, so that question is not asked.
-  REQUIRE(prompts.str().find("? Build system") == std::string::npos);
+  // The build-system answer selects the source style, so no separate question asks for it.
+  REQUIRE(prompts.str().find("? Source style") == std::string::npos);
   const auto platforms = huxerui::cli::PlatformIds();
-  const std::string expected = "Command: huxerui create app Asked --style modules --build-system mcpp --template "
+  const std::string expected = "Command: huxerui create app Asked --build-system mcpp --template "
                                "navigation --platform " + std::string(platforms[0]) + "," +
                                std::string(platforms[1]) + " --agent none\n";
   REQUIRE(output.str().find(expected) != std::string::npos);

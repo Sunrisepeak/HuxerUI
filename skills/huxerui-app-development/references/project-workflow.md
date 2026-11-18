@@ -1,6 +1,6 @@
 # Project Workflow
 
-Use the selected CLI and generated project as the contract. This reference covers the CMake/SDK workflow; package-based mcpp projects follow [cpp-modules-and-mcpp.md](cpp-modules-and-mcpp.md). CLI arguments can change between SDK versions.
+Use the selected CLI and generated project as the contract. This reference covers headers projects and the CMake/SDK workflow; C++ modules projects follow [cpp-modules-and-mcpp.md](cpp-modules-and-mcpp.md). CLI arguments can change between SDK versions.
 
 ## Locate the tools and SDK
 
@@ -10,7 +10,7 @@ If the project has no configured package, use `HUXERUI_HOME` when it identifies 
 
 Check the shell-selected executable with `huxerui --version` and `huxerui --help` before relying on flags. Try subcommand help where available and use `huxerui doctor` for setup or environment diagnosis. Use the selected CLI's help for available scaffold options and agent destinations.
 
-CMake is the default build system. For mcpp scaffolding and build commands, use the [mcpp package workflow](cpp-modules-and-mcpp.md).
+Headers with CMake is the default project. `--build-system cmake,mcpp` adds an mcpp declaration to a headers project, and `--build-system mcpp` creates a C++ modules project, which [cpp-modules-and-mcpp.md](cpp-modules-and-mcpp.md) covers.
 
 ## Create a minimal application
 

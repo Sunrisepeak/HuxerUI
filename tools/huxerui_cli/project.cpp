@@ -810,35 +810,21 @@ std::string_view SourceStyleName(SourceStyle style) noexcept {
   return style == SourceStyle::Modules ? "modules" : "headers";
 }
 
-CreateSelection ResolveCreateSelection(ProjectKind kind, std::optional<SourceStyle> style,
-                                       std::span<const BuildSystem> build_systems) {
+CreateSelection ResolveCreateSelection(ProjectKind kind, std::span<const BuildSystem> build_systems) {
   CreateSelection selection;
   for (const BuildSystem build_system : {BuildSystem::CMake, BuildSystem::Mcpp}) {
     if (std::ranges::find(build_systems, build_system) != build_systems.end()) {
       selection.build_systems.push_back(build_system);
     }
   }
-  if (style) {
-    selection.style = *style;
-  } else {
-    // mcpp alone selects the source form only mcpp offers; any list naming CMake keeps headers.
-    selection.style = selection.build_systems == std::vector{BuildSystem::Mcpp} ? SourceStyle::Modules
-                                                                                 : SourceStyle::Headers;
-  }
   if (selection.build_systems.empty()) {
-    if (selection.style == SourceStyle::Modules) {
-      selection.build_systems = {BuildSystem::Mcpp};
-    } else if (kind == ProjectKind::Library) {
-      // A library is built by its consumer's build system, so it declares every one that can build it.
-      selection.build_systems = {BuildSystem::CMake, BuildSystem::Mcpp};
-    } else {
-      selection.build_systems = {BuildSystem::CMake};
-    }
+    // A library is built by its consumer's build system, so it declares every one that can build it.
+    selection.build_systems = kind == ProjectKind::Library ? std::vector{BuildSystem::CMake, BuildSystem::Mcpp}
+                                                           : std::vector{BuildSystem::CMake};
   }
-  if (selection.style == SourceStyle::Modules && selection.Has(BuildSystem::CMake)) {
-    throw std::invalid_argument("the cmake integration does not offer the modules capability; "
-                                "a C++ modules project is built with mcpp");
-  }
+  // The style a project's sources use is the one every declared integration can build: a list naming CMake,
+  // which lacks the `modules` capability, is headers, and mcpp alone is C++ modules.
+  selection.style = selection.Has(BuildSystem::CMake) ? SourceStyle::Headers : SourceStyle::Modules;
   return selection;
 }
 
