@@ -26,6 +26,14 @@ enum class SourceStyle {
   Modules,
 };
 
+/// Build system whose native declaration a project carries.
+enum class BuildSystem {
+  /// `CMakeLists.txt` with the HuxerUI CMake helpers.
+  CMake,
+  /// `mcpp.toml` and `build.mcpp` with the `huxerui.rules` build program.
+  Mcpp,
+};
+
 /// Values shared by generated project and platform templates.
 struct ProjectTemplateContext {
   /// User-facing project name.

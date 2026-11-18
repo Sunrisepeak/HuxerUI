@@ -572,6 +572,18 @@ inline void write_library_graph(const project_graph& graph) {
     mcpp::rerun_if_changed(record.string().c_str());
 }
 
+// Where the framework the application resolved lives, for the platform shells: the Gradle shell includes the
+// framework's Android library module from it, as a CMake build takes it from HUXERUI_HOME. mcpp resolves the
+// framework, so only this build knows the directory.
+inline void write_framework_record() {
+    const std::string root = std::filesystem::weakly_canonical(sdk_root()).generic_string();
+    const std::filesystem::path record =
+        std::filesystem::path(mcpp::manifest_dir()) / ".huxerui" / "generated" / "framework.json";
+    detail::write_if_changed(record, "{\n  \"schema\": 1,\n  \"sourceRoot\": \"" + detail::json_escape(root) +
+                                     "\"\n}\n");
+    mcpp::rerun_if_changed(record.string().c_str());
+}
+
 // --------------------------------------------------------------- resources --
 // The shape of cmake/HuxerUIResourceBuild.cmake: compile each root, merge the
 // packages in contract order, and place the one final package where the
@@ -1293,7 +1305,10 @@ inline bool configure(options opt = {}) {
     }
 
     const project_graph graph = load_graph();
-    if (graph.is_root && !graph.programs.empty()) write_library_graph(graph);
+    if (graph.is_root && !graph.programs.empty()) {
+        write_library_graph(graph);
+        write_framework_record();
+    }
 
     auto rs = plan_resources(opt, graph, has_module_interface);
     if (!rs.empty()) {

@@ -724,7 +724,10 @@ ProjectTemplate LoadMcppProjectTemplate(const Project& project) {
       context.project.source_style = style;
       return context;
     }
-    ProjectTemplateContext context = MakeProjectTemplateContext(display, id);
+    // The table's `name` is the display name the shells show, which may be any text, as a CMake project's name
+    // is; the target and the defaults derive from the package name, which is an identifier.
+    ProjectTemplateContext context = MakeProjectTemplateContext(IsValidProjectName(display) ? display : package, id);
+    context.project_name = std::string(display);
     context.source_style = style;
     return context;
   } catch (const std::invalid_argument& error) {

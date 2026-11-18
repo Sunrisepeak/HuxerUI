@@ -367,8 +367,28 @@ public:
 
 namespace detail {
 
+std::string AndroidMcppTriple(std::string_view abi) {
+  if (abi == "arm64-v8a") {
+    return "aarch64-linux-android";
+  }
+  if (abi == "x86_64") {
+    return "x86_64-linux-android";
+  }
+  throw std::invalid_argument("the mcpp integration builds no Android ABI " + std::string(abi));
+}
+
 std::vector<ProcessCommand>
 AndroidLibraryGraphCommands(const PlatformCommandContext& context, std::string_view host_id) {
+  if (context.build_system == BuildSystem::Mcpp) {
+    // The build program writes the library graph and the framework record the shell's settings read, so the first
+    // ABI is built before Gradle runs; the shell's own build of that ABI then finds it current.
+    const std::string abi = context.abis.empty() ? std::string("arm64-v8a") : context.abis.front();
+    std::vector<std::string> arguments{"build", "--target", AndroidMcppTriple(abi)};
+    if (context.profile == "release") {
+      arguments.emplace_back("--release");
+    }
+    return {{"mcpp", std::move(arguments), context.project_root}};
+  }
   std::vector<ProcessCommand> commands = LibraryGraphConfigureCommands(context);
   if (host_id == "android") {
     commands.front().arguments.push_back("-DANDROID_ABI=arm64-v8a");
@@ -394,6 +414,8 @@ AndroidBuildCommands(const PlatformCommandContext& context, std::string_view hos
   } else if (!context.abis.empty()) {
     arguments.push_back("-PhuxeruiAbis=" + JoinTargetAbis(context.abis, ','));
   }
+  arguments.push_back(std::string("-PhuxeruiBuildSystem=") +
+                      (context.build_system == BuildSystem::Mcpp ? "mcpp" : "cmake"));
   arguments.push_back(":app:assemble" + configuration);
   if (context.optimization) {
     arguments.push_back("-PhuxeruiOptimization=" + *context.optimization);

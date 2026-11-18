@@ -20,14 +20,6 @@ enum class ProjectKind {
   Library,
 };
 
-/// Build system whose native declaration a project carries.
-enum class BuildSystem {
-  /// `CMakeLists.txt` with the HuxerUI CMake helpers.
-  CMake,
-  /// `mcpp.toml` and `build.mcpp` with the `huxerui.rules` build program.
-  Mcpp,
-};
-
 /// What `huxerui create` composes: one source style and one native declaration per selected build system.
 struct CreateSelection {
   /// How the sources reach HuxerUI.

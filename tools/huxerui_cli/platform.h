@@ -118,6 +118,8 @@ struct PlatformCommandContext {
   bool profiling = false;
   /// Whether this build belongs to a development watch session.
   bool watch = false;
+  /// The integration that builds the application core the platform shell consumes.
+  BuildSystem build_system = BuildSystem::CMake;
 };
 
 /// One file or directory published by the `package` command.
@@ -309,7 +311,12 @@ ValidateRequiredFiles(const std::filesystem::path& root, std::span<const std::st
 /// Plans the CMake configure command that emits the app-side library graph.
 [[nodiscard]] std::vector<ProcessCommand> LibraryGraphConfigureCommands(const PlatformCommandContext& context);
 
-/// Plans the Android library-graph configure command for an explicit host.
+/// The mcpp target triple of a canonical Android ABI.
+/// @throws std::invalid_argument for an ABI the mcpp integration does not build.
+[[nodiscard]] std::string AndroidMcppTriple(std::string_view abi);
+
+/// Plans the command that writes the library graph before the Gradle shell runs, for an explicit host: the CMake
+/// graph-only configure, or for the mcpp integration the build of the first ABI, whose build program writes it.
 [[nodiscard]] std::vector<ProcessCommand>
 AndroidLibraryGraphCommands(const PlatformCommandContext& context, std::string_view host_id);
 

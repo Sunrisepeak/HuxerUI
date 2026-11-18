@@ -138,24 +138,38 @@ TEST_CASE("HuxerUICliDispatchesToTheProjectsBuildSystem") {
   REQUIRE(steered.error.find("warning: --generator") != std::string::npos);
   REQUIRE(steered.error.find("unknown platform: plan9") != std::string::npos);
 
-  // mcpp packages without the standard shell, so a named platform needs no shell directory; a platform the host
-  // cannot build still stops the command, but a CMake project still needs the platform enabled.
+  // Android and iOS build through their standard shells for every integration, so a platform the project does not
+  // enable stops either. `--no-shell` leaves the shell out for mcpp, and a platform the host cannot build still
+  // stops the command.
   REQUIRE(Invoke(temporary.Path(), {"create", "app", "linuxonly", "--build-system", "cmake,mcpp", "--platform",
                                     "linux", "--agent", "none"})
               .result == 0);
   const std::filesystem::path linux_only = temporary.Path() / "linuxonly";
   const std::string foreign{huxerui::cli::CurrentHostId() == "macos" ? "windows" : "ios"};
   for (const std::string_view command : {"build", "package"}) {
-    const Invocation shellless = Invoke(linux_only, {command, foreign, "--build-system", "mcpp"});
-    INFO(shellless.error);
-    REQUIRE(shellless.result == 1);
-    REQUIRE(shellless.error.find("cannot be built from host") != std::string::npos);
+    const Invocation mcpp = Invoke(linux_only, {command, foreign, "--build-system", "mcpp"});
+    INFO(mcpp.error);
+    REQUIRE(mcpp.result == 1);
+    REQUIRE(mcpp.error.find("platform is not enabled by this project: " + foreign) != std::string::npos);
     const Invocation cmake =
         Invoke(linux_only, {command, foreign, "--build-system", "cmake", "--sdk", HUXERUI_TEST_SOURCE_DIRECTORY});
     INFO(cmake.error);
     REQUIRE(cmake.result == 1);
     REQUIRE(cmake.error.find("platform is not enabled by this project: " + foreign) != std::string::npos);
+    if (foreign == "ios") {
+      const Invocation shellless = Invoke(linux_only, {command, foreign, "--build-system", "mcpp", "--no-shell"});
+      INFO(shellless.error);
+      REQUIRE(shellless.result == 1);
+      REQUIRE(shellless.error.find("cannot be built from host") != std::string::npos);
+    }
   }
+  // `--no-shell` is a capability of the mcpp integration, for a platform that has a standard shell to leave out.
+  const Invocation cmake_shellless = Invoke(linux_only, {"build", "linux", "--build-system", "cmake", "--no-shell"});
+  REQUIRE(cmake_shellless.result == 2);
+  REQUIRE(cmake_shellless.error.find("not available for a CMake project") != std::string::npos);
+  const Invocation desktop_shellless = Invoke(linux_only, {"build", "linux", "--build-system", "mcpp", "--no-shell"});
+  REQUIRE(desktop_shellless.result == 2);
+  REQUIRE(desktop_shellless.error.find("linux has none") != std::string::npos);
 
   const Invocation open = Invoke(modules, {"open", "ios"});
   REQUIRE(open.result == 1);
