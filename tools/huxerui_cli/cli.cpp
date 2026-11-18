@@ -1000,8 +1000,18 @@ std::filesystem::path ResolveAndExportBuildHome(const std::filesystem::path& sdk
   return huxerui_home;
 }
 
-std::vector<const PlatformDriver*>
-ResolveBuildPlatforms(const Project& project, BuildOptions& options, std::string_view command) {
+/// How a command treats the standard platform shells under `platform/<platform-id>`.
+enum class ShellUse {
+  /// The command drives the shell, so a selected platform must be enabled and its shell complete.
+  Required,
+  /// The integration packages without the standard shell, which the contract allows for an explicitly named
+  /// platform; its build rules read whatever shell inputs exist and report what they lack.
+  Optional,
+};
+
+std::vector<const PlatformDriver*> ResolveBuildPlatforms(const Project& project, BuildOptions& options,
+                                                         std::string_view command,
+                                                         ShellUse shells = ShellUse::Required) {
   std::vector<const PlatformDriver*> platforms;
   if (!options.platforms) {
     const PlatformDriver* current = FindPlatformDriver(CurrentHostId());
@@ -1057,13 +1067,17 @@ ResolveBuildPlatforms(const Project& project, BuildOptions& options, std::string
     throw UsageError("--java-home is supported only for Android builds");
   }
   for (const PlatformDriver* platform : platforms) {
-    if (std::find(project.platforms.begin(), project.platforms.end(), platform->Id()) == project.platforms.end()) {
+    if (shells == ShellUse::Required &&
+        std::find(project.platforms.begin(), project.platforms.end(), platform->Id()) == project.platforms.end()) {
       throw std::runtime_error("platform is not enabled by this project: " + std::string(platform->Id()));
     }
     if (!platform->SupportsCurrentHost()) {
       throw std::runtime_error(
           "platform " + std::string(platform->Id()) + " cannot be built from host " + std::string(CurrentHostId())
       );
+    }
+    if (shells == ShellUse::Optional) {
+      continue;
     }
     for (const Diagnostic& diagnostic : platform->Diagnose(project.root / "platform" / platform->Id())) {
       if (diagnostic.error) {
@@ -1321,7 +1335,7 @@ int RunMcppCommand(const Project& project, BuildOptions& options, std::string_vi
     throw std::runtime_error("unknown platform directory: " + project.unknown_platforms.front());
   }
   const std::vector<const PlatformDriver*> platforms =
-      ResolveBuildPlatforms(project, options, command == "build" ? std::string_view{} : command);
+      ResolveBuildPlatforms(project, options, command == "build" ? std::string_view{} : command, ShellUse::Optional);
   for (const PlatformDriver* platform : platforms) {
     const mcpp::CommandOptions mcpp_options{project.root, std::string(platform->Id()), options.profile};
     if (command == "run") {
@@ -1354,7 +1368,8 @@ int RunMcppPackage(const Project& project, BuildOptions& options, std::ostream& 
   if (!project.unknown_platforms.empty()) {
     throw std::runtime_error("unknown platform directory: " + project.unknown_platforms.front());
   }
-  const std::vector<const PlatformDriver*> platforms = ResolveBuildPlatforms(project, options, {});
+  const std::vector<const PlatformDriver*> platforms =
+      ResolveBuildPlatforms(project, options, {}, ShellUse::Optional);
   for (const PlatformDriver* platform : platforms) {
     const std::string format = mcpp::PackageFormat(platform->Id(), options.package_format.value_or(""));
     const mcpp::CommandOptions mcpp_options{project.root, std::string(platform->Id()), options.profile};

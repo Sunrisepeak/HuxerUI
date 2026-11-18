@@ -138,6 +138,25 @@ TEST_CASE("HuxerUICliDispatchesToTheProjectsBuildSystem") {
   REQUIRE(steered.error.find("warning: --generator") != std::string::npos);
   REQUIRE(steered.error.find("unknown platform: plan9") != std::string::npos);
 
+  // mcpp packages without the standard shell, so a named platform needs no shell directory; a platform the host
+  // cannot build still stops the command, but a CMake project still needs the platform enabled.
+  REQUIRE(Invoke(temporary.Path(), {"create", "app", "linuxonly", "--build-system", "cmake,mcpp", "--platform",
+                                    "linux", "--agent", "none"})
+              .result == 0);
+  const std::filesystem::path linux_only = temporary.Path() / "linuxonly";
+  const std::string foreign{huxerui::cli::CurrentHostId() == "macos" ? "windows" : "ios"};
+  for (const std::string_view command : {"build", "package"}) {
+    const Invocation shellless = Invoke(linux_only, {command, foreign, "--build-system", "mcpp"});
+    INFO(shellless.error);
+    REQUIRE(shellless.result == 1);
+    REQUIRE(shellless.error.find("cannot be built from host") != std::string::npos);
+    const Invocation cmake =
+        Invoke(linux_only, {command, foreign, "--build-system", "cmake", "--sdk", HUXERUI_TEST_SOURCE_DIRECTORY});
+    INFO(cmake.error);
+    REQUIRE(cmake.result == 1);
+    REQUIRE(cmake.error.find("platform is not enabled by this project: " + foreign) != std::string::npos);
+  }
+
   const Invocation open = Invoke(modules, {"open", "ios"});
   REQUIRE(open.result == 1);
   REQUIRE(open.error.find("CMake declaration") != std::string::npos);
