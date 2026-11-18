@@ -110,7 +110,6 @@ class CreatedProjectTests(unittest.TestCase):
         projects = self.suite["projects"]
         single = cts.created_expected("x", projects["created_cmake_app"], self.suite)
         dual = cts.created_expected("x", projects["created_dual_app"], self.suite)
-        dual.pop("sameModelAs")
         self.assertEqual(single, dual)
 
     def test_library_preview_names_follow_the_library(self):

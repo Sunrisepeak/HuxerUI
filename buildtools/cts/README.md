@@ -24,7 +24,7 @@ The suite also checks the projects `huxerui create` writes, so a change to the C
 [`created-projects.json`](created-projects.json) declares each one by kind and build systems: an application with CMake, one with mcpp, one with both, and a library with mcpp and its Preview.
 A project is created for every integration whose declaration it carries, and the library's Preview is the application that is built.
 `platforms` states whether a project is created with only the checked target's platform or with every platform the CLI offers, so a project missing another platform's shell and one carrying all of them are both checked.
-Expected facts are keyed by kind, source style, and template, never by build system, so the application that declares both build systems expects what each single-system application does, and names `created_cmake_app` in `sameModelAs`.
+Expected facts are keyed by kind, source style, and template, never by build system, so the application that declares both build systems expects what each single-system application does, and the integrations that build it must agree on it. Created projects name no `sameModelAs`: the CLI writes each project's name into its resources, so two created projects never share a resource package.
 The file also declares the targets and hosts where the projects are created; they start with Linux, the Web, and Android on Linux hosts.
 Created projects carry no probe, so their `launch` checkpoint has no facts to read.
 

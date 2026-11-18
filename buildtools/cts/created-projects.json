@@ -33,7 +33,6 @@
         "cmake",
         "mcpp"
       ],
-      "sameModelAs": "created_cmake_app",
       "platforms": "all"
     },
     "created_mcpp_library": {
