@@ -1194,7 +1194,8 @@ void BuildPlatform(const PlatformDriver& platform, const PlatformCommandContext&
   if (!context.abis.empty()) {
     output << ", " << detail::JoinTargetAbis(context.abis, ',');
   }
-  output << ")\n";
+  // The integration the command dispatched to, as the mcpp-only paths already state it.
+  output << ") with " << BuildSystemName(context.build_system) << '\n';
   platform.PrepareBuildEnvironment();
   auto library_graph = platform.LibraryGraphCommands(context);
   if (options.watch && library_graph.empty()) library_graph = detail::LibraryGraphConfigureCommands(context);
