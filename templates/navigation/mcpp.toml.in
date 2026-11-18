@@ -1,16 +1,15 @@
-# c++23, and it is a workaround rather than a language requirement.
-#
-# The module unit writes `import std;`, which every implementation this project
-# builds with supports at c++20. mcpp's clang-on-Windows path hardcodes a
-# c++23 floor instead of probing the STL it found (mcpp-community/mcpp#603) and
-# refuses the build below it.
-#
-# A module graph has exactly one standard, so this compiles huxerui at c++23
-# too. Change this line back to c++20 once #603 is fixed.
+# mcpp's default standard. huxerui.rules runs in this package's build program
+# and imports the official mcpp:plugins distribution members, which need C++23.
 [package]
 name     = "{{project.name}}"
 version  = "0.1.0"
 standard = "c++23"
+
+# The identity the platform shells and package formats use. `id` is the
+# reverse-DNS application identifier an Android, iOS, or macOS package needs.
+[package.metadata.huxerui]
+name = "{{project.name}}"
+# id = "org.example.{{project.name}}"
 
 # The EXACT package identity, not a bare name: namespace omission means
 # `mcpplibs` only, and mcpp's bare-name fallback is deprecated
@@ -62,3 +61,10 @@ exceptions = true
 # rather than on the Windows one.
 [resources]
 icon = "assets/app.ico"
+
+# The C++ runtime inside the application's shared library on Android, as the CMake integration's `c++_static`.
+[target.aarch64-linux-android]
+cxx_runtime = "self-contained"
+
+[target.x86_64-linux-android]
+cxx_runtime = "self-contained"

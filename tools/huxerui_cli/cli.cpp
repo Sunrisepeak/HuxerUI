@@ -1369,8 +1369,20 @@ int RunMcppPackage(const Project& project, BuildOptions& options, std::ostream& 
     }
     std::vector<PackageArtifact> artifacts;
     for (const mcpp::PackedArtifact& packed : mcpp::ParsePackArtifacts(result.output)) {
-      artifacts.push_back({packed.path, packed.path.filename()});
+      if (format != "web") {
+        artifacts.push_back({packed.path, packed.path.filename()});
+        continue;
+      }
+      // mcpp reports the Web page as the distributable; the page loads the module, its WebAssembly, and the
+      // preloaded data beside it, so the directory is what is published.
+      for (const std::filesystem::directory_entry& entry :
+           std::filesystem::directory_iterator(packed.path.parent_path())) {
+        if (entry.is_regular_file()) {
+          artifacts.push_back({entry.path(), entry.path().filename()});
+        }
+      }
     }
+    std::ranges::sort(artifacts, {}, &PackageArtifact::destination);
     PublishPackageArtifacts(artifacts, project.root / "dist" / platform->Id(), output);
   }
   return 0;

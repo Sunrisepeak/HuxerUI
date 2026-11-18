@@ -945,7 +945,7 @@ inline bool plan_android_shell(const std::string& program, const detail::identit
                                mcpp::dist::apk::options& apk) {
     if (app.id.empty()) {
         mcpp::warning("huxerui.rules: an Android package needs the application identifier; "
-                      "state `id` under [package.metadata.huxerui]");
+                      "state `id` under [package.metadata.huxerui] to pack one");
         return false;
     }
     std::string path = app.id;
@@ -1085,7 +1085,8 @@ inline bool plan_packages(const options& opt, const std::string& program) {
         apk.target         = program;
         apk.application_id = app.id;
         apk.label          = app.name;
-        ok = plan_android_shell(program, app, apk) && mcpp::dist::apk::generate(apk) && ok;
+        // Without an identifier there is no package to configure; the build itself goes on.
+        if (plan_android_shell(program, app, apk)) ok = mcpp::dist::apk::generate(apk) && ok;
     }
     return ok;
 }
