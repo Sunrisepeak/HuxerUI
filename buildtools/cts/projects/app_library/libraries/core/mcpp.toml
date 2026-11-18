@@ -1,7 +1,7 @@
 [package]
 name     = "ctskit_core"
 version  = "0.1.0"
-standard = "c++20"
+standard = "c++23"
 
 [package.metadata.huxerui]
 library   = "CtsKit::Core"

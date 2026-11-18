@@ -130,7 +130,7 @@ TEST_CASE("HuxerUICliCreatesApplicationsWithBothDeclarations") {
   // Both declarations name the same application target, which is the artifact's basename.
   REQUIRE(manifest.find("name     = \"dual_app\"") != std::string::npos);
   REQUIRE(manifest.find("[targets.dual_app]") != std::string::npos);
-  REQUIRE(manifest.find("standard = \"c++20\"") != std::string::npos);
+  REQUIRE(manifest.find("standard = \"c++23\"") != std::string::npos);
   REQUIRE(manifest.find("huxerui = { path = \"") != std::string::npos);
   REQUIRE(manifest.find("@") == std::string::npos);
   REQUIRE(Read(project / ".gitignore").find("/target/") != std::string::npos);

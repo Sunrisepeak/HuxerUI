@@ -14,10 +14,16 @@ license     = "Apache-2.0"
 
 # The pure half, split out so `mcpp test` can cover it: this package imports
 # mcpp and therefore cannot be built outside a build program's compile.
-# A rule declares an inner rule in its OWN build-dependencies; the consumer may
-# not import it, which is why nothing needs `reexport` here.
-[build-dependencies]
-huxerui-source-select = { path = "../huxerui-source-select", host-module = true }
+# A plugin's own imports are its `[dependencies]`: they serve the build program
+# the plugin serves. Nothing needs `reexport`, because the consumer imports only
+# `huxerui.rules`.
+[dependencies]
+huxerui-source-select = { path = "../huxerui-source-select" }
+# The official distribution members: `mcpp pack --pkg-format <format>` of an
+# application dispatches to the member its build program configured, and each
+# member's tool is installed only when a pack asks for it.
+mcpp.plugins = { version = "0.23.0", features = ["dist-appimage", "dist-deb", "dist-rpm", "dist-wix",
+                                                 "dist-apple", "dist-web", "dist-apk"] }
 
 [lib]
 # The module this package publishes is `huxerui.rules`; the package name is

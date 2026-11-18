@@ -167,23 +167,7 @@ struct module_interface {
     return out;
 }
 
-// The layout `xim:wix` installs, expressed once.
-//
-// Each of WiX's three NuGet payloads keeps its own directory shape under a
-// subdirectory of the package root, so these are the upstream-documented paths
-// rather than a repackaging. They are here rather than in the rule so they can
-// be tested: a wrong path surfaces on Windows only, at link time, as a missing
-// .lib -- and there is no Windows machine on the way to that discovery.
-struct wix_layout {
-    std::string tool;                   // wix.exe
-    std::string bootstrapper_include;   // BootstrapperApplication.h and friends
-    std::string bootstrapper_lib;       // balutil.lib
-    std::string bootstrapper_runtime;   // mbanative.dll, deployed beside the BA
-    std::string dutil_include;          // dutil.h and friends
-    std::string dutil_lib;              // dutil.lib
-};
-
-// ------------------------------------------------------------- installer --
+// ------------------------------------------------------------- packaging --
 
 // A WiX UpgradeCode is a GUID, and getting it wrong is not loud: WiX accepts a
 // malformed one as a literal and the MSI then never upgrades in place, which
@@ -202,69 +186,98 @@ struct wix_layout {
     return true;
 }
 
-struct msi_inputs {
-    std::string wix;             // wix.exe, from the xim:wix payload
-    std::string package_wxs;     // the rendered definition, absolute
-    std::string project_dir;     // holds the icon, absolute
-    std::string out;             // the .msi to write, absolute
-    std::string executable;      // the linked program, as mcpp names it
-};
+namespace detail {
 
-// The `wix build` argv.
-//
-// The program is passed as a preprocessor variable rather than through a
-// directory bindpath. A bindpath that resolves to nothing yields a valid,
-// empty installer and no diagnostic; a `<File Source>` whose path is wrong is
-// an error. `Project` stays a bindpath because it holds the icon, which the
-// manifest names and the rule has already checked exists.
-[[nodiscard]] inline std::vector<std::string> msi_arguments(const msi_inputs& in) {
-    return {
-        in.wix, "build", in.package_wxs,
-        "-arch", "x64",
-        "-d", "Executable=" + in.executable,
-        "-bindpath", "Project=" + in.project_dir,
-        "-out", in.out,
-    };
+[[nodiscard]] inline std::array<std::uint8_t, 20> sha1(std::span<const std::uint8_t> data) {
+    std::uint32_t h[5] = {0x67452301u, 0xEFCDAB89u, 0x98BADCFEu, 0x10325476u, 0xC3D2E1F0u};
+    std::vector<std::uint8_t> message(data.begin(), data.end());
+    const std::uint64_t bits = static_cast<std::uint64_t>(data.size()) * 8;
+    message.push_back(0x80);
+    while (message.size() % 64 != 56) message.push_back(0);
+    for (int shift = 56; shift >= 0; shift -= 8) message.push_back(static_cast<std::uint8_t>(bits >> shift));
+    const auto rotl = [](std::uint32_t v, int n) { return (v << n) | (v >> (32 - n)); };
+    for (std::size_t block = 0; block < message.size(); block += 64) {
+        std::uint32_t w[80];
+        for (int i = 0; i < 16; ++i) {
+            w[i] = (std::uint32_t{message[block + 4 * i]} << 24) | (std::uint32_t{message[block + 4 * i + 1]} << 16) |
+                   (std::uint32_t{message[block + 4 * i + 2]} << 8) | std::uint32_t{message[block + 4 * i + 3]};
+        }
+        for (int i = 16; i < 80; ++i) w[i] = rotl(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
+        std::uint32_t a = h[0], b = h[1], c = h[2], d = h[3], e = h[4];
+        for (int i = 0; i < 80; ++i) {
+            const std::uint32_t f = i < 20 ? ((b & c) | (~b & d)) : i < 40 ? (b ^ c ^ d)
+                                  : i < 60 ? ((b & c) | (b & d) | (c & d)) : (b ^ c ^ d);
+            const std::uint32_t k = i < 20 ? 0x5A827999u : i < 40 ? 0x6ED9EBA1u : i < 60 ? 0x8F1BBCDCu : 0xCA62C1D6u;
+            const std::uint32_t t = rotl(a, 5) + f + e + k + w[i];
+            e = d; d = c; c = rotl(b, 30); b = a; a = t;
+        }
+        h[0] += a; h[1] += b; h[2] += c; h[3] += d; h[4] += e;
+    }
+    std::array<std::uint8_t, 20> out{};
+    for (int i = 0; i < 20; ++i) out[i] = static_cast<std::uint8_t>(h[i / 4] >> (24 - 8 * (i % 4)));
+    return out;
 }
 
-// Replaces every @@TOKEN@@ in the shipped Package.wxs. An unresolved token is
-// an error rather than a literal: WiX would accept `@@VERSION@@` as a version
-// string and fail somewhere less obvious.
-[[nodiscard]] inline std::string render_wxs(
+} // namespace detail
+
+// A name-based UUID (RFC 9562 version 5) in upper case: what CMake's
+// `string(UUID ... TYPE SHA1 UPPER)` returns, so an application's installer
+// upgrade code is the same whichever integration packaged it. Empty when
+// `name_space` is not a UUID.
+[[nodiscard]] inline std::string name_uuid(std::string_view name_space, std::string_view name) {
+    if (!is_upgrade_code(name_space)) return {};
+    std::vector<std::uint8_t> input;
+    for (std::size_t i = 0; i < name_space.size(); i += (name_space[i] == '-') ? 1 : 2) {
+        if (name_space[i] == '-') continue;
+        input.push_back(static_cast<std::uint8_t>(std::stoi(std::string(name_space.substr(i, 2)), nullptr, 16)));
+    }
+    input.insert(input.end(), name.begin(), name.end());
+    auto digest = detail::sha1(input);
+    digest[6] = static_cast<std::uint8_t>((digest[6] & 0x0F) | 0x50);
+    digest[8] = static_cast<std::uint8_t>((digest[8] & 0x3F) | 0x80);
+    static constexpr char hex[] = "0123456789ABCDEF";
+    std::string out;
+    for (int i = 0; i < 16; ++i) {
+        if (i == 4 || i == 6 || i == 8 || i == 10) out.push_back('-');
+        out.push_back(hex[digest[i] >> 4]);
+        out.push_back(hex[digest[i] & 0x0F]);
+    }
+    return out;
+}
+
+// Replaces every @TOKEN@ a platform shell's template names, the spelling CMake's
+// configure_file(@ONLY) reads. An unknown token is an error rather than a
+// literal, so a shell that gains a token fails here and not in the package.
+[[nodiscard]] inline std::string render_at_tokens(
         std::string_view text,
         const std::vector<std::pair<std::string, std::string>>& values,
         std::string& error) {
     std::string out;
     std::size_t cursor = 0;
     while (cursor < text.size()) {
-        const std::size_t open = text.find("@@", cursor);
+        const std::size_t open = text.find('@', cursor);
         if (open == std::string_view::npos) { out.append(text.substr(cursor)); break; }
-        out.append(text.substr(cursor, open - cursor));
-        const std::size_t close = text.find("@@", open + 2);
-        if (close == std::string_view::npos) {
-            error = "unterminated @@ token"; return {};
+        const std::size_t close = text.find('@', open + 1);
+        const std::string_view key =
+            close == std::string_view::npos ? std::string_view{} : text.substr(open + 1, close - open - 1);
+        const bool token = !key.empty() && std::ranges::all_of(key, [](char c) {
+            return std::isupper(static_cast<unsigned char>(c)) || std::isdigit(static_cast<unsigned char>(c)) || c == '_';
+        });
+        if (!token) {
+            out.append(text.substr(cursor, open + 1 - cursor));
+            cursor = open + 1;
+            continue;
         }
-        const std::string_view key = text.substr(open + 2, close - open - 2);
+        out.append(text.substr(cursor, open - cursor));
         const auto it = std::ranges::find_if(values, [&](const auto& kv) { return kv.first == key; });
         if (it == values.end()) {
-            error = "unknown token '" + std::string(key) + "'"; return {};
+            error = "unknown token @" + std::string(key) + "@";
+            return {};
         }
         out.append(it->second);
-        cursor = close + 2;
+        cursor = close + 1;
     }
     return out;
-}
-
-[[nodiscard]] inline wix_layout wix_paths(std::string_view root) {
-    const std::string r(root);
-    return wix_layout{
-        .tool                 = r + "/tool/tools/net6.0/any/wix.exe",
-        .bootstrapper_include = r + "/bootstrapper/build/native/include",
-        .bootstrapper_lib     = r + "/bootstrapper/build/native/v14/x64/balutil.lib",
-        .bootstrapper_runtime = r + "/bootstrapper/runtimes/win-x64/native/mbanative.dll",
-        .dutil_include        = r + "/dutil/build/native/include",
-        .dutil_lib            = r + "/dutil/build/native/v14/x64/dutil.lib",
-    };
 }
 
 // ------------------------------------------------------------ CMake reading --

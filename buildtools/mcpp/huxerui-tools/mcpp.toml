@@ -24,7 +24,7 @@ license     = "Apache-2.0"
 
 [dependencies]
 huxerui-source-select = { path = "../huxerui-source-select" }
-"marzer.tomlplusplus"  = "3.4.0"
+marzer.tomlplusplus = "3.4.0"
 
 [build]
 # Each program is its own entry; there is no shared implementation to compile

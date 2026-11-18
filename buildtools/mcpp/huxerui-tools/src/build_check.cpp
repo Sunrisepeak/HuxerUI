@@ -68,17 +68,24 @@ std::string join(const std::set<std::string>& values) {
     return out;
 }
 
+// CMakeLists.txt states the floor; mcpp.toml states mcpp's default, C++23, which the
+// official dist members the rules import need. mcpp may be newer, never older.
 void check_standard(const std::filesystem::path& root, const toml::table& manifest) {
     const std::string cmake = read(root / "CMakeLists.txt");
     const std::size_t at = cmake.find("set(CMAKE_CXX_STANDARD ");
     if (at == std::string::npos) { fail("cannot find CMAKE_CXX_STANDARD in CMakeLists.txt"); return; }
     const std::size_t begin = at + std::string("set(CMAKE_CXX_STANDARD ").size();
     const std::size_t end = cmake.find(')', begin);
-    const std::string expected = "c++" + cmake.substr(begin, end - begin);
+    const std::string floor = cmake.substr(begin, end - begin);
     const auto declared = manifest["package"]["standard"].value<std::string>();
-    if (!declared || *declared != expected) {
-        fail("C++ standard differs: CMakeLists.txt says " + expected + ", mcpp.toml says " +
-             declared.value_or("(none)"));
+    const auto year = [](std::string_view standard) {
+        int value = 0;
+        std::from_chars(standard.data(), standard.data() + standard.size(), value);
+        return value;
+    };
+    if (!declared || !declared->starts_with("c++") || year(declared->substr(3)) < year(floor)) {
+        fail("C++ standard: CMakeLists.txt states the floor c++" + floor + ", mcpp.toml says " +
+             declared.value_or("nothing") + ", which is below it");
     }
 }
 
@@ -280,38 +287,6 @@ void check_one_template(const std::filesystem::path& root,
     }
 }
 
-// The MSI definition huxerui.rules ships is XML, and WiX parses it strictly.
-// An XML comment may not contain `--`, which is the dash a prose comment
-// reaches for; the failure is `error WIX0104: Not a valid source file` on
-// Windows only, after a full framework build.
-void check_wix_template(const std::filesystem::path& root) {
-    const std::filesystem::path wxs =
-        root / "buildtools" / "mcpp" / "huxerui-build-rules" / "wix" / "Package.wxs.in";
-    if (!std::filesystem::is_regular_file(wxs)) {
-        fail("buildtools/mcpp/huxerui-build-rules/wix/Package.wxs.in is missing");
-        return;
-    }
-    const std::string text = read(wxs);
-    std::size_t at = 0;
-    while ((at = text.find("<!--", at)) != std::string::npos) {
-        const std::size_t end = text.find("-->", at + 4);
-        if (end == std::string::npos) {
-            fail("Package.wxs.in has an unterminated XML comment");
-            return;
-        }
-        if (text.substr(at + 4, end - at - 4).find("--") != std::string::npos)
-            fail("Package.wxs.in has `--` inside an XML comment, which WIX0104 refuses");
-        at = end + 3;
-    }
-    // Every token the rule renders has to exist, or the definition silently
-    // stops carrying what it names.
-    for (std::string_view token : { "@@DISPLAY_NAME@@", "@@MANUFACTURER@@", "@@VERSION@@",
-                                    "@@UPGRADE_CODE@@", "@@ICON@@", "@@TARGET_FILE@@" }) {
-        if (text.find(token) == std::string::npos)
-            fail("Package.wxs.in no longer uses " + std::string(token));
-    }
-}
-
 void check_package_template(const std::filesystem::path& root) {
     const std::filesystem::path templates = root / "templates";
     if (!std::filesystem::is_directory(templates)) { fail("templates/ is missing"); return; }
@@ -387,7 +362,6 @@ int main(int argc, char** argv) {
     check_platform(root, manifest, "Windows.cmake", "windows");
     check_platform(root, manifest, "MacOS.cmake", "macos");
     check_package_template(root);
-    check_wix_template(root);
 
     if (!failures.empty()) {
         std::cerr << "mcpp/CMake parity check FAILED:\n\n";

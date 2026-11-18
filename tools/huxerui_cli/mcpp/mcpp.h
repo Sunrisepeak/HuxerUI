@@ -32,8 +32,9 @@ struct CommandOptions {
 /// The mcpp package format a platform's distributable is written in.
 /// @param platform HuxerUI platform identifier.
 /// @param requested The `--format` the caller selected, or empty for the platform's default.
-/// @return The format: `appimage`, `deb`, or `rpm` on Linux, `msi` on Windows, `dmg` on macOS, `web` on the Web.
-/// @throws std::runtime_error for a platform whose packaging the mcpp integration does not map yet.
+/// @return The format: `appimage`, `deb`, or `rpm` on Linux, `msi` on Windows, `dmg` on macOS, `web` on the Web,
+///         `apk` on Android, and `app` on iOS.
+/// @throws std::runtime_error for a platform mcpp has no package format for.
 [[nodiscard]] std::string PackageFormat(std::string_view platform, std::string_view requested);
 
 /// The `mcpp pack` command that writes a platform's distributable and reports it as JSON on standard output.

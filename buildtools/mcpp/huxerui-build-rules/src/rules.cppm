@@ -13,34 +13,35 @@
 
 export module huxerui.rules;
 
-// C++20, not C++23. A host module is compiled with the ROOT package's
-// `standard` -- module-graph-global, dependencies included -- and HuxerUI's is
-// c++20 because that is the SDK ABI baseline. So no std::println here.
+// C++23, mcpp's default: a host module is compiled with the package's
+// `standard`, and the official dist members it imports need C++23.
 import std;
 import mcpp;
 import huxerui.rules.sources;
+import mcpp.dist.appimage;
+import mcpp.dist.deb;
+import mcpp.dist.rpm;
+import mcpp.dist.wix;
+import mcpp.dist.apple;
+import mcpp.dist.web;
+import mcpp.dist.apk;
 
 export namespace huxerui::rules {
 
 // ---------------------------------------------------------------- options --
 // Field-for-field the arguments of huxerui_add_app() in cmake/HuxerUIApp.cmake,
 // so the two spellings of "an application" can be reviewed side by side.
-// What an application must state to get a Windows installer, and nothing it
-// could have been asked for twice.
-//
-// `mcpp` tells a build program the package NAME but not its version, so the
-// version is stated here rather than guessed. The upgrade code has to be a
-// stable GUID chosen once per product: a new one on every release makes every
-// release a separate installed product.
-struct installer_options {
-    std::string target;         // the [targets.*] bin to install; enables the rule
-    std::string version;        // "1.2.3"
-    std::string upgrade_code;   // a GUID, stable for the life of the product
-    std::string manufacturer;   // default: the package namespace, else its name
-    std::string display_name;   // default: the package name
-    std::string icon;           // .ico, relative to the manifest; default assets/app.ico
-
-    [[nodiscard]] bool requested() const { return !target.empty(); }
+// What packaging needs beyond the application's identity. Every field has a
+// default, so `mcpp pack --pkg-format <format>` works on an application that
+// states nothing here; the official `mcpp:plugins` member of each format
+// writes the package (`plan_packages` below).
+struct package_options {
+    std::vector<std::string> categories = {"Utility"};  // Linux desktop entry
+    std::string              maintainer;  // deb, rpm; default: the first of [package] authors
+    std::vector<std::string> depends;     // deb, rpm: packages the machine provides
+    std::string              manufacturer;  // MSI; default: the package namespace, else its name
+    // MSI; default: derived from the identifier as the CMake integration derives it.
+    std::string              upgrade_code;
 };
 
 struct options {
@@ -56,7 +57,7 @@ struct options {
     std::string              resource_namespace;  // = RESOURCE_NAMESPACE
     std::string              bundle_name;         // = BUNDLE_NAME
     std::string              bundle_identifier;   // = BUNDLE_IDENTIFIER
-    installer_options        installer;           // Windows MSI; empty = none
+    package_options          package;             // `mcpp pack` formats
 };
 
 // A planned build-graph edge, handed back so a caller that needs to adjust one
@@ -122,20 +123,6 @@ inline std::string host_tool(std::string_view tool) {
     if (tool == "hrc")
         return mcpp::dep_bin("huxerui-resource-compiler", "hrc");
     return {};
-}
-
-// ------------------------------------------------------------- WiX toolset --
-// Where the Windows installer's tool and libraries are, or empty when the
-// payload is not installed -- which is every non-Windows build, and a Windows
-// build whose project never asked for an installer.
-//
-// The paths themselves are composed in huxerui.rules.sources so they are unit
-// tested: a wrong one shows up on Windows only, at link time, as a missing
-// .lib.
-inline huxerui::rules::sources::wix_layout wix() {
-    const std::string root = mcpp::xpkg_dir("xim", "wix");
-    if (root.empty()) return {};
-    return huxerui::rules::sources::wix_paths(root);
 }
 
 // ------------------------------------------------------------------ globs --
@@ -629,6 +616,17 @@ inline std::vector<std::string> payloads(const std::string& root, const std::str
 
 } // namespace detail
 
+// The final package's files below `prefix` of the staged tree, which a package
+// format places where its platform's Runtime reads them.
+inline void deploy_package(const std::string& final_package, const std::vector<std::string>& files,
+                           const std::string& prefix) {
+    for (const std::string& file : files) {
+        std::string directory = std::filesystem::path(file).parent_path().generic_string();
+        if (!prefix.empty()) directory = prefix + "/" + directory;
+        mcpp::deploy((final_package + "/" + file).c_str(), directory.c_str());
+    }
+}
+
 inline std::vector<edge> plan_resources(const options& opt, const project_graph& graph,
                                         bool resource_module) {
     std::vector<edge> out;
@@ -790,6 +788,7 @@ inline std::vector<edge> plan_resources(const options& opt, const project_graph&
             assemble.command = { "/bin/sh", "-c", script };
             out.push_back(std::move(assemble));
         }
+        deploy_package(final_package, package_files, "HuxerUI");
         return out;
     }
 
@@ -813,6 +812,9 @@ inline std::vector<edge> plan_resources(const options& opt, const project_graph&
                 }
             }
         }
+        // The application dist-apple writes reads the package from the bundle's
+        // root, where its deployed files land.
+        deploy_package(final_package, package_files, "HuxerUI");
         for (const std::string& program : graph.programs) {
             const std::string core = "huxerui-ios/" + program;
             for (const std::string& file : package_files) {
@@ -855,6 +857,13 @@ inline std::vector<edge> plan_resources(const options& opt, const project_graph&
         return out;
     }
 
+    // Android reads the package from the APK's assets, where dist-apk packs the
+    // deployed files.
+    if (std::string_view(mcpp::target_env()) == "android") {
+        deploy_package(final_package, package_files, {});
+        return out;
+    }
+
     // Where the Runtime looks on the other desktop platforms: `<program>.resources/`
     // beside the program, the directory every integration stages the package into.
     for (const std::string& program : graph.programs) {
@@ -884,119 +893,201 @@ inline bool submit(std::span<const edge> edges) {
     return true;
 }
 
-// ------------------------------------------------------------- installer --
-// The Windows MSI, built by the WiX toolset from the xim:wix payload.
-//
-// One action, and it is a `role = "artifact"` one: its input is the link
-// output, which is what sequences it after the link without any phase
-// machinery. There is no staging step -- `bindpath.Application` is the
-// relative path `bin`, which is the directory ninja links into and the
-// directory this action's working directory contains, and HuxerUI's compiled
-// resources are linked INTO the executable rather than carried beside it.
-//
-// Silent on every non-Windows target and on a project that asked for nothing.
-inline bool plan_installer(const options& opt, std::vector<edge>& out) {
-    if (!opt.installer.requested()) return true;
-    if (std::string_view(mcpp::target_os()) != "windows") return true;
+// --------------------------------------------------------------- packages --
+// `mcpp pack --pkg-format <format>`: the official `mcpp:plugins` member of each
+// format writes the package from the tree the engine stages, which holds the
+// program, its closure and the resource package deployed beside it. This rule
+// supplies the application's identity and its platform shell's inputs; the
+// members declare their format in every pass and act only in the pass that
+// asked for it, so configuring all of them costs an ordinary build nothing.
+namespace detail {
 
-    const installer_options& in = opt.installer;
-    if (!huxerui::rules::sources::is_upgrade_code(in.upgrade_code)) {
-        std::cerr << "huxerui.rules: installer.upgrade_code must be a GUID "
-                     "(8-4-4-4-12 hex digits); got '" << in.upgrade_code << "'\n";
+struct identity {
+    std::string name;   // the display name
+    std::string id;     // the reverse-DNS identifier
+};
+
+inline identity application_identity(const options& opt) {
+    identity out;
+    out.name = !opt.bundle_name.empty() ? opt.bundle_name : own_metadata("name");
+    if (out.name.empty()) out.name = std::string(mcpp::package_name());
+    out.id = !opt.bundle_identifier.empty() ? opt.bundle_identifier : own_metadata("id");
+    return out;
+}
+
+// The first `authors` entry of [package], which is what dist-deb and dist-rpm
+// read themselves; returned so a stated maintainer and the default share a path.
+inline std::string first_author() {
+    const std::string manifest = read_text(std::filesystem::path(mcpp::manifest_dir()) / "mcpp.toml");
+    const std::size_t key = manifest.find("\nauthors");
+    if (key == std::string::npos) return {};
+    const std::size_t open = manifest.find('"', key);
+    const std::size_t close = open == std::string::npos ? open : manifest.find('"', open + 1);
+    return close == std::string::npos ? std::string{} : manifest.substr(open + 1, close - open - 1);
+}
+
+inline std::string shell_file(std::string_view platform, std::string_view file) {
+    const std::filesystem::path path = std::filesystem::path(mcpp::manifest_dir()) / "platform" / platform / file;
+    return std::filesystem::exists(path) ? path.string() : std::string{};
+}
+
+// The DNS namespace CMake's string(UUID ...) uses for the same name.
+inline constexpr std::string_view uuid_namespace = "6ba7b810-9dad-11d1-80b4-00c04fd430c8";
+
+} // namespace detail
+
+// The Android application shell the CMake integration's Gradle template holds:
+// an Application that loads the program's library and an Activity on the
+// framework's. The framework's own Java host and manifest entries arrive through
+// `[package.metadata.dist-apk]` in its manifest, which dist-apk reads from the
+// resolved graph.
+inline bool plan_android_shell(const std::string& program, const detail::identity& app,
+                               mcpp::dist::apk::options& apk) {
+    if (app.id.empty()) {
+        mcpp::warning("huxerui.rules: an Android package needs the application identifier; "
+                      "state `id` under [package.metadata.huxerui]");
         return false;
     }
-    if (in.version.empty()) {
-        std::cerr << "huxerui.rules: installer.version is required -- mcpp does not "
-                     "tell a build program the package version\n";
-        return false;
-    }
-
-    const auto layout = wix();
-    if (layout.tool.empty()) {
-        // `xpkg_dir` answers from `MCPP_XPKG_*_DIR`, which mcpp sets for what
-        // the BUILDING package declared. A dependency's declaration provisions
-        // the payload -- the framework's does, and the log says so -- but does
-        // not reach this build program, so an application that wants an
-        // installer names the tool it runs.
-        std::cerr << "huxerui.rules: the xim:wix payload is not visible to this build "
-                     "program. Add it to this package's manifest:\n\n"
-                     "    [xlings.workspace]\n"
-                     "    \"xim:wix\" = { windows = \"5.0.2\" }\n\n";
-        return false;
-    }
-
-    const std::string manifest = std::string(mcpp::manifest_dir());
-    const std::string odir     = std::string(mcpp::out_dir()) + "/wix";
-    const std::string icon     = in.icon.empty() ? std::string("assets/app.ico") : in.icon;
-    const std::string display  = in.display_name.empty() ? std::string(mcpp::package_name())
-                                                         : in.display_name;
-    std::string maker = in.manufacturer;
-    if (maker.empty()) {
-        maker = std::string(mcpp::package_namespace());
-        if (maker.empty()) maker = std::string(mcpp::package_name());
-    }
-
-    const std::filesystem::path icon_path = std::filesystem::path(manifest) / icon;
-    if (!std::filesystem::exists(icon_path)) {
-        std::cerr << "huxerui.rules: installer icon is missing: " << icon_path.string() << "\n";
-        return false;
-    }
-
-    // Read the definition the rule package ships, render it, and write it where
-    // the action will read it. build.mcpp runs before ninja, so this is a plain
-    // file write rather than another edge.
-    const std::string tmpl_path = sdk_root() + "/buildtools/mcpp/huxerui-build-rules/wix/Package.wxs.in";
-    std::ifstream tmpl(tmpl_path, std::ios::binary);
-    if (!tmpl) {
-        std::cerr << "huxerui.rules: cannot read " << tmpl_path << "\n";
-        return false;
-    }
-    const std::string text{std::istreambuf_iterator<char>(tmpl), std::istreambuf_iterator<char>()};
-
-    std::string error;
-    const std::string wxs = huxerui::rules::sources::render_wxs(text, {
-        {"DISPLAY_NAME",  display},
-        {"MANUFACTURER",  maker},
-        {"VERSION",       in.version},
-        {"UPGRADE_CODE",  in.upgrade_code},
-        {"ICON",          std::filesystem::path(icon).filename().string()},
-        {"TARGET_FILE",   in.target + ".exe"},
-    }, error);
-    if (!error.empty()) {
-        std::cerr << "huxerui.rules: " << tmpl_path << ": " << error << "\n";
-        return false;
-    }
-
-    std::error_code ec;
-    std::filesystem::create_directories(odir, ec);
-    const std::string wxs_out = odir + "/Package.wxs";
-    {
-        std::ofstream file(wxs_out, std::ios::binary | std::ios::trunc);
-        if (!file) { std::cerr << "huxerui.rules: cannot write " << wxs_out << "\n"; return false; }
-        file << wxs;
-    }
-    mcpp::rerun_if_changed(tmpl_path.c_str());
-
-    const std::string msi = odir + "/" + display + "-" + in.version + ".msi";
-    out.push_back(edge{
-        .id          = "wix:msi",
-        .role        = "artifact",
-        .description = "windows installer (" + display + ".msi)",
-        .command     = huxerui::rules::sources::msi_arguments({
-                           .wix         = layout.tool,
-                           .package_wxs = wxs_out,
-                           .project_dir = icon_path.parent_path().string(),
-                           .out         = msi,
-                           // `${mcpp.target_file:<name>}` is what mcpp expands
-                           // to the link output; a build program is told
-                           // neither the triple nor the fingerprint. An unknown
-                           // target name is refused rather than left empty.
-                           .executable  = "${mcpp.target_file:" + in.target + "}",
-                       }),
-        .inputs      = { "${mcpp.target_file:" + in.target + "}", wxs_out },
-        .outputs     = { msi },
-    });
+    std::string path = app.id;
+    std::ranges::replace(path, '.', '/');
+    const std::string root = std::string(mcpp::out_dir()) + "/android";
+    detail::write_if_changed(root + "/java/" + path + "/MainApplication.java",
+        "package " + app.id + ";\n\nimport android.app.Application;\nimport android.content.Context;\n\n"
+        "public final class MainApplication extends Application {\n"
+        "    @Override\n"
+        "    protected void attachBaseContext(Context base) {\n"
+        "        super.attachBaseContext(base);\n"
+        "        System.loadLibrary(\"" + program + "\");\n"
+        "    }\n"
+        "}\n");
+    detail::write_if_changed(root + "/java/" + path + "/MainActivity.java",
+        "package " + app.id + ";\n\nimport org.huxerui.HuxerUIActivity;\n\n"
+        "public final class MainActivity extends HuxerUIActivity {\n}\n");
+    detail::write_if_changed(root + "/AndroidManifest.xml.in",
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
+        "<manifest xmlns:android=\"http://schemas.android.com/apk/res/android\"\n"
+        "    package=\"{{application_id}}\"\n"
+        "    android:versionCode=\"{{version_code}}\"\n"
+        "    android:versionName=\"{{version_name}}\">\n"
+        "    <uses-sdk android:minSdkVersion=\"{{min_sdk}}\" android:targetSdkVersion=\"{{target_sdk}}\" />\n"
+        "    <application\n"
+        "        android:name=\".MainApplication\"\n"
+        "        android:label=\"{{label}}\"\n"
+        "        android:supportsRtl=\"true\"\n"
+        "        android:theme=\"@android:style/Theme.Material.Light.NoActionBar\">\n"
+        "        <activity\n"
+        "            android:name=\"{{activity}}\"\n"
+        "            android:configChanges=\"orientation|screenSize|smallestScreenSize|screenLayout|uiMode\"\n"
+        "            android:exported=\"true\"\n"
+        "            android:windowSoftInputMode=\"adjustResize\">\n"
+        "            <intent-filter>\n"
+        "                <action android:name=\"android.intent.action.MAIN\" />\n"
+        "                <category android:name=\"android.intent.category.LAUNCHER\" />\n"
+        "            </intent-filter>\n"
+        "        </activity>\n"
+        "    </application>\n"
+        "</manifest>\n");
+    apk.java_sources      = {root + "/java"};
+    apk.activity          = app.id + ".MainActivity";
+    apk.manifest_template = root + "/AndroidManifest.xml.in";
     return true;
+}
+
+inline bool plan_packages(const options& opt, const std::string& program) {
+    const std::string_view os = mcpp::target_os();
+    const bool android = std::string_view(mcpp::target_env()) == "android";
+    const detail::identity app = detail::application_identity(opt);
+    bool ok = true;
+
+    if (os == "linux" && !android) {
+        const std::string icon = detail::shell_file("linux", "package/" + program + ".svg");
+        mcpp::dist::appimage::options image;
+        image.target     = program;
+        image.app_name   = app.name;
+        image.categories = opt.package.categories;
+        image.terminal   = false;
+        image.icon       = icon;
+        ok = mcpp::dist::appimage::generate(image) && ok;
+
+        mcpp::dist::linux_package::options package;
+        package.target     = program;
+        package.app_name   = app.name;
+        package.categories = opt.package.categories;
+        package.terminal   = false;
+        package.icon       = icon;
+        package.maintainer = !opt.package.maintainer.empty() ? opt.package.maintainer : detail::first_author();
+        package.depends    = opt.package.depends;
+        ok = mcpp::dist::deb::generate(package) && ok;
+        ok = mcpp::dist::rpm::generate(package) && ok;
+    } else if (os == "windows") {
+        std::string upgrade_code = opt.package.upgrade_code;
+        if (upgrade_code.empty() && !app.id.empty())
+            upgrade_code = huxerui::rules::sources::name_uuid(detail::uuid_namespace, app.id + ".msi");
+        if (!upgrade_code.empty() && !huxerui::rules::sources::is_upgrade_code(upgrade_code)) {
+            std::cerr << "huxerui.rules: package.upgrade_code must be a GUID (8-4-4-4-12 hex digits); got '"
+                      << upgrade_code << "'\n";
+            return false;
+        }
+        std::string maker = opt.package.manufacturer;
+        if (maker.empty()) maker = std::string(mcpp::package_namespace());
+        if (maker.empty()) maker = std::string(mcpp::package_name());
+        mcpp::dist::wix::options installer;
+        installer.target       = program;
+        installer.product_name = app.name;
+        installer.manufacturer = maker;
+        installer.upgrade_code = upgrade_code;
+        ok = mcpp::dist::wix::generate(installer) && ok;
+    } else if (os == "macos" || os == "ios") {
+        mcpp::dist::apple::options bundle;
+        bundle.target    = program;
+        bundle.app_name  = app.name;
+        bundle.bundle_id = app.id;
+        if (os == "macos") bundle.icon = detail::shell_file("macos", "AppIcon.icns");
+        ok = mcpp::dist::apple::generate(bundle) && ok;
+    } else if (os == "emscripten") {
+        // The shell's page, rendered with the values the CMake integration gives
+        // it; dist-web copies it beside the module as the package's entry.
+        const std::string page = detail::shell_file("web", "index.html.in");
+        mcpp::dist::web::options web;
+        web.target = program;
+        web.title  = app.name;
+        if (!page.empty()) {
+            const std::string directory = std::string(mcpp::out_dir()) + "/huxerui-web";
+            std::vector<std::pair<std::string, std::string>> values{
+                {"HUXERUI_WEB_MODULE_FILE", program + ".js"},
+                {"HUXERUI_WEB_STORAGE_KEY", app.id.empty() ? program : app.id},
+            };
+            for (const auto& [token, file] : {std::pair{"HUXERUI_WEB_FAVICON_FILE", "favicon.svg"},
+                                              std::pair{"HUXERUI_WEB_APPLE_TOUCH_ICON_FILE", "apple-touch-icon.png"}}) {
+                const std::string source = detail::shell_file("web", file);
+                const std::string staged = program + "." + file;
+                values.emplace_back(token, staged);
+                if (source.empty()) continue;
+                const std::string copy = directory + "/" + staged;
+                detail::write_if_changed(copy, detail::read_text(source));
+                mcpp::rerun_if_changed(source.c_str());
+                mcpp::deploy(copy.c_str(), ".");
+            }
+            std::string error;
+            const std::string rendered =
+                huxerui::rules::sources::render_at_tokens(detail::read_text(page), values, error);
+            if (!error.empty()) {
+                std::cerr << "huxerui.rules: " << page << ": " << error << "\n";
+                return false;
+            }
+            web.template_file = directory + "/" + program + ".index.html.in";
+            detail::write_if_changed(web.template_file, rendered);
+            mcpp::rerun_if_changed(page.c_str());
+        }
+        ok = mcpp::dist::web::generate(web) && ok;
+    } else if (android) {
+        mcpp::dist::apk::options apk;
+        apk.target         = program;
+        apk.application_id = app.id;
+        apk.label          = app.name;
+        ok = plan_android_shell(program, app, apk) && mcpp::dist::apk::generate(apk) && ok;
+    }
+    return ok;
 }
 
 // -------------------------------------------------------------- configure --
@@ -1153,9 +1244,11 @@ inline bool configure(options opt = {}) {
     }
     edges.insert(edges.end(), rs.begin(), rs.end());
 
-    if (!plan_installer(opt, edges)) return false;
-
-    return submit(edges);
+    if (!submit(edges)) return false;
+    bool packaged = true;
+    if (graph.is_root)
+        for (const std::string& program : graph.programs) packaged = plan_packages(opt, program) && packaged;
+    return packaged;
 }
 
 // The framework's own build needs only the builtin resource header: 11 of its

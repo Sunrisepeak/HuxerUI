@@ -59,7 +59,9 @@ TEST_CASE("HuxerUICliCreatesMcppPackCommands") {
   REQUIRE(PackageFormat("windows", "") == "msi");
   REQUIRE(PackageFormat("macos", "") == "dmg");
   REQUIRE(PackageFormat("web", "") == "web");
-  REQUIRE_THROWS_WITH(PackageFormat("ios", ""), Catch::Matchers::ContainsSubstring("not available yet"));
+  REQUIRE(PackageFormat("android", "") == "apk");
+  REQUIRE(PackageFormat("ios", "") == "app");
+  REQUIRE_THROWS_WITH(PackageFormat("plan9", ""), Catch::Matchers::ContainsSubstring("no package format"));
 
   const auto release = huxerui::cli::mcpp::PackCommand({"/project", "web", "release"}, "web");
   REQUIRE(release.arguments == std::vector<std::string>{"pack", "--pkg-format", "web", "--message-format", "json",
@@ -136,9 +138,6 @@ TEST_CASE("HuxerUICliDispatchesToTheProjectsBuildSystem") {
   REQUIRE(steered.error.find("warning: --generator") != std::string::npos);
   REQUIRE(steered.error.find("unknown platform: plan9") != std::string::npos);
 
-  const Invocation package = Invoke(modules, {"package", "android"});
-  REQUIRE(package.result == 1);
-  REQUIRE(package.error.find("packaging an mcpp project for android is not available yet") != std::string::npos);
   const Invocation open = Invoke(modules, {"open", "ios"});
   REQUIRE(open.result == 1);
   REQUIRE(open.error.find("CMake declaration") != std::string::npos);

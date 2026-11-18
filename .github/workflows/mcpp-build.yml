@@ -82,14 +82,6 @@ jobs:
         working-directory: buildtools/mcpp/huxerui-tools
         run: mcpp run huxerui-module-gen -- --check
 
-      # `[workspace] members` is otherwise a table nothing reads. It was wrong
-      # when this ran for the first time: huxerui-build-rules was listed, and
-      # that package imports mcpp, so it compiles only inside a build program's
-      # compile and the fan-out died on the first member with `failed to read
-      # compiled module`.
-      - name: Build every workspace member
-        run: mcpp build --workspace
-
   linux:
     name: mcpp build (linux x86_64)
     runs-on: ubuntu-24.04

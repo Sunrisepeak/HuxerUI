@@ -140,14 +140,7 @@ The std module is a C++23 *library* feature that every implementation HuxerUI
 builds with offers in C++20 mode as well — the MSVC STL's named modules are
 documented as needing `/std:c++20` or later.
 
-**Applications nonetheless pin `standard = "c++23"`, and that is a workaround.**
-mcpp's clang-on-Windows path hardcodes `importStdMinLevel = 23` rather than
-probing the STL it found, and refuses `import std;` below c++23
-([mcpp#603](https://github.com/mcpp-community/mcpp/issues/603)). A module graph
-has exactly one standard, so an application at c++23 compiles the framework at
-c++23 too; the framework's own `standard` stays c++20, which is the SDK's ABI
-baseline and what it is when it is the root. One line in each manifest changes
-back when #603 is fixed.
+**Every mcpp package of HuxerUI states `standard = "c++23"`, mcpp's default.** A build program is compiled at its package's standard, and `huxerui.rules` imports the official `mcpp:plugins` distribution members, which need C++23; a module graph has one standard, so the framework, its tools and its applications agree on it. mcpp's clang-on-Windows path also refuses `import std;` below c++23 ([mcpp#603](https://github.com/mcpp-community/mcpp/issues/603)). The CMake integration keeps its C++20 floor.
 
 `[toolchain] windows = "msvc@system"` would sidestep it and put both build
 systems on one compiler, and is blocked separately: a host module's BMI reaches
@@ -307,7 +300,6 @@ unbuilt, not blocked.
 | `huxerui-module-gen --check` | a public name added to a header and not to the module shell |
 | `mcpp test` in `huxerui-source-select` | the scanning the rules and the tools share |
 | `mcpp test` in `huxerui-tests` | 209 cases and 11,521 assertions against the mcpp-built framework |
-| `mcpp build --workspace` | a workspace member that does not build |
 | `mcpp pack` shape | headers, module interface and library all present |
 
 Both tools are C++ programs built by mcpp: a repository that offers mcpp as a

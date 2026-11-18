@@ -87,8 +87,14 @@ std::string PackageFormat(std::string_view platform, std::string_view requested)
   if (platform == "web") {
     return "web";
   }
-  throw std::runtime_error("packaging an mcpp project for " + std::string(platform) +
-                           " is not available yet; no other format is produced in its place");
+  if (platform == "android") {
+    return "apk";
+  }
+  if (platform == "ios") {
+    return "app";
+  }
+  throw std::runtime_error("mcpp has no package format for " + std::string(platform) +
+                           "; no other format is produced in its place");
 }
 
 ProcessCommand PackCommand(const CommandOptions& options, std::string_view format) {
