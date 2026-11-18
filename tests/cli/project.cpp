@@ -157,12 +157,55 @@ TEST_CASE("HuxerUICliCreatesModulesLibraries") {
   REQUIRE(Invoke(temporary.Path(), {"create", "library", "my-widgets", "--build-system", "mcpp", "--agent", "none"})
               .result == 0);
   const std::filesystem::path project = temporary.Path() / "my-widgets";
-  REQUIRE(std::filesystem::is_regular_file(project / "src/component.cppm"));
-  REQUIRE(std::filesystem::is_regular_file(project / "tests/component.cpp"));
   REQUIRE_FALSE(std::filesystem::exists(project / "CMakeLists.txt"));
+  // The template's placeholder module takes the library's name, in the unit, the manifest, and the test.
+  REQUIRE_FALSE(std::filesystem::exists(project / "src/component.cppm"));
+  REQUIRE(Read(project / "src/my_widgets.cppm").find("export module my_widgets;") != std::string::npos);
+  REQUIRE(Read(project / "tests/component.cpp").find("import my_widgets;") != std::string::npos);
   const std::string manifest = Read(project / "mcpp.toml");
   REQUIRE(manifest.find("kind = \"lib\"") != std::string::npos);
-  REQUIRE(manifest.find("path = \"src/component.cppm\"") != std::string::npos);
+  REQUIRE(manifest.find("path = \"src/my_widgets.cppm\"") != std::string::npos);
+  REQUIRE(manifest.find("library   = \"MyWidgets::MyWidgets\"") != std::string::npos);
+  REQUIRE(manifest.find("component") == std::string::npos);
+
+  // The Preview is a C++ modules application that imports the library.
+  const std::filesystem::path preview = project / "examples/preview";
+  const std::string page = Read(preview / "src/app.cppm");
+  REQUIRE(page.find("import my_widgets;") != std::string::npos);
+  REQUIRE(page.find("#include") == std::string::npos);
+  REQUIRE(page.find("@") == std::string::npos);
+  const std::string preview_manifest = Read(preview / "mcpp.toml");
+  REQUIRE(preview_manifest.find("my-widgets = { path = \"../..\" }") != std::string::npos);
+  REQUIRE(preview_manifest.find("[targets.example_my_widgets]") != std::string::npos);
+  REQUIRE(Read(preview / "platform/linux/main.cpp").find("import huxerui;") != std::string::npos);
+  REQUIRE(std::filesystem::is_regular_file(preview / "build.mcpp"));
+  REQUIRE_FALSE(std::filesystem::exists(preview / "CMakeLists.txt"));
+  // The iOS standard library the Preview names is the one the application template names.
+  const auto libcxx = [](const std::string& text) {
+    const std::size_t start = text.find("llvm.libcxx = ");
+    REQUIRE(start != std::string::npos);
+    return text.substr(start, text.find('\n', start) - start);
+  };
+  REQUIRE(libcxx(preview_manifest) == libcxx(Read(std::filesystem::path(HUXERUI_TEST_SOURCE_DIRECTORY) /
+                                                  "templates/app/mcpp.toml.in")));
+}
+
+TEST_CASE("HuxerUICliGivesModulesLibrariesPlatformPackages") {
+  TemporaryDirectory temporary;
+  REQUIRE(Invoke(temporary.Path(), {"create", "library", "my-widgets", "--build-system", "mcpp", "--platform",
+                                    "android", "--agent", "none"})
+              .result == 0);
+  const std::filesystem::path project = temporary.Path() / "my-widgets";
+  REQUIRE(std::filesystem::is_regular_file(project / "platform/android/build.gradle"));
+  REQUIRE(std::filesystem::is_directory(project / "examples/preview/platform/android"));
+  REQUIRE_FALSE(std::filesystem::exists(project / "examples/preview/platform/linux"));
+
+  // `platform add` reads the identity from the manifest and writes the package and a C++ modules Preview shell.
+  const Invocation added = Invoke(project / "src", {"platform", "add", "linux"});
+  INFO(added.error);
+  REQUIRE(added.result == 0);
+  REQUIRE(std::filesystem::is_directory(project / "platform/linux"));
+  REQUIRE(Read(project / "examples/preview/platform/linux/main.cpp").find("import huxerui;") != std::string::npos);
 }
 
 TEST_CASE("HuxerUICliRejectsUnsupportedCreateSelections") {

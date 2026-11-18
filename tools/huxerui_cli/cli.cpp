@@ -583,7 +583,6 @@ int RunCreate(std::span<const std::string_view> arguments, const std::filesystem
   }
   const CreateSelection selection = ResolveCreateSelection(*kind, build_systems);
 
-  const bool modules_library = kind == ProjectKind::Library && selection.style == SourceStyle::Modules;
   if (template_name && selection.style != SourceStyle::Modules) {
     throw UsageError("--template selects C++ modules content from templates/; it needs --build-system mcpp");
   }
@@ -601,9 +600,6 @@ int RunCreate(std::span<const std::string_view> arguments, const std::filesystem
         {"navigation", "pages on a NavigationStack"},
     }};
     template_name = RequireAnswer(prompter->Select("Template", templates, 0)) == 0 ? "app" : "navigation";
-  }
-  if (modules_library && platform_list) {
-    throw UsageError("a C++ modules library has no platform packages or Preview yet; omit --platform");
   }
   if (prompter != nullptr && !platform_list && kind == ProjectKind::App) {
     std::vector<prompt::Choice> choices;
@@ -641,7 +637,7 @@ int RunCreate(std::span<const std::string_view> arguments, const std::filesystem
   std::vector<const PlatformDriver*> library_platforms;
   if (kind == ProjectKind::App) {
     application_platforms = ResolvePlatforms(platform_list.value_or("all"));
-  } else if (!modules_library) {
+  } else {
     application_platforms = ResolvePlatforms(platform_list.value_or("all"));
     if (platform_specified) {
       library_platforms = application_platforms;
@@ -665,7 +661,7 @@ int RunCreate(std::span<const std::string_view> arguments, const std::filesystem
       output << ' ' << platform->Id();
     }
     output << '\n';
-  } else if (!modules_library) {
+  } else {
     output << "Library platforms:";
     for (const PlatformDriver* platform : library_platforms) {
       output << ' ' << platform->Id();

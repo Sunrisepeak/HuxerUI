@@ -284,7 +284,8 @@ Selections resolve as follows:
 A missing selection is prompted for only when standard input and output are terminals; `--yes` suppresses every prompt.
 The prompts ask for the kind, the name, one build-system question whose answers `cmake`, `mcpp`, and `cmake+mcpp` also name the resulting source style, the template for a C++ modules application, and the platforms; the command then prints the options that recreate the project.
 The prompt module is a state machine fed by key events, with raw terminal input through termios on POSIX hosts and virtual-terminal console input on Windows, and numbered line input where raw mode is unavailable.
-A modules library is the `templates/library` package and has no platform packages or Preview yet, so `--platform` is a usage error for it.
+A C++ modules library is the `templates/library` package with the identity the CLI knows: its placeholder module `component` takes the library's C++ namespace as its name, since a module name is global to a program, and its manifest gains the `[package.metadata.huxerui]` table with `library`, `name`, `id`, and `namespace`.
+Its `examples/preview` is a C++ modules application whose `src/app.cppm` imports the library's module, with the same platform shells and the same `--platform` packages as a headers library's Preview.
 The `templates/app` and `templates/navigation` trees carry each desktop platform's entry, the iOS entry, and the macOS bundle metadata, because `mcpp new` renders them without the CLI; a CLI test checks that they equal the CLI's shell files rendered in mcpp's template vocabulary.
 `mcpp new` can substitute only the project name, so its macOS bundle identifier is `com.example.<project name>` verbatim, while the CLI normalizes the name as it does for every other platform identifier.
 

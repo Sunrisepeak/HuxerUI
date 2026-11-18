@@ -624,6 +624,8 @@ jobs:
           ( cd "$work/AppDemo" && mcpp build )
           ( cd "$work/NavDemo" && mcpp build )
           ( cd "$work/my-widgets" && mcpp test )
+          # The library's Preview is a C++ modules application that imports it.
+          ( cd "$work/my-widgets/examples/preview" && mcpp build )
 
       - name: Assert the transform ran on a generated project
         run: |
