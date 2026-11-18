@@ -79,7 +79,8 @@
         "linkage",
         "resources",
         "libraries",
-        "package"
+        "package",
+        "package-shellless"
       ],
       "capabilities": [
         "modules"
@@ -94,7 +95,7 @@
         "linkage",
         "resources",
         "libraries",
-        "package"
+        "package-shellless"
       ],
       "capabilities": [
         "modules"

@@ -237,10 +237,16 @@ jobs:
           xlings use mcpp "${MCPP_VERSION}" || true
           mcpp --version
 
-      # The package checkpoint runs `huxerui package` as a developer does, so the suite builds the CLI on rows
-      # that declare the checkpoint.
+      # The Android package comes from the Gradle shell for every integration; the Android Gradle plugin runs on
+      # JDK 17, which not every runner image selects by default.
+      - uses: actions/setup-java@v4
+        if: matrix.row.target == 'android'
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # The package checkpoints run `huxerui package` as a developer does, so the suite builds the CLI.
       - name: Build the HuxerUI CLI
-        if: matrix.integration == 'mcpp' || matrix.row.target == 'linux' || matrix.row.target == 'web'
         run: |
           cmake -S tools/huxerui_cli -B "$RUNNER_TEMP/cli" -DCMAKE_BUILD_TYPE=Release
           cmake --build "$RUNNER_TEMP/cli" --config Release --target huxerui_cli --parallel
@@ -285,10 +291,16 @@ jobs:
             --target ${{ matrix.row.target }} --check launch --launch-timeout 120 --out "$RUNNER_TEMP/cts"
 
       - name: "Check: distributable"
-        if: env.CTS_CLI != ''
+        if: ${{ !cancelled() }}
         run: |
           ${{ matrix.row.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
             --target ${{ matrix.row.target }} --check package --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts"
+
+      - name: "Check: distributable without the standard shell"
+        if: ${{ !cancelled() }}
+        run: |
+          ${{ matrix.row.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
+            --target ${{ matrix.row.target }} --check package-shellless --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts"
 
       - name: Upload the results
         if: always()
@@ -428,10 +440,16 @@ jobs:
           xlings use mcpp "${MCPP_VERSION}" || true
           mcpp --version
 
-      # The package checkpoint runs `huxerui package` as a developer does, so the suite builds the CLI on rows
-      # that declare the checkpoint.
+      # The Android package comes from the Gradle shell for every integration; the Android Gradle plugin runs on
+      # JDK 17, which not every runner image selects by default.
+      - uses: actions/setup-java@v4
+        if: matrix.row.target == 'android'
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # The package checkpoints run `huxerui package` as a developer does, so the suite builds the CLI.
       - name: Build the HuxerUI CLI
-        if: matrix.integration == 'mcpp' || matrix.row.target == 'linux' || matrix.row.target == 'web'
         run: |
           cmake -S tools/huxerui_cli -B "$RUNNER_TEMP/cli" -DCMAKE_BUILD_TYPE=Release
           cmake --build "$RUNNER_TEMP/cli" --config Release --target huxerui_cli --parallel
@@ -476,10 +494,16 @@ jobs:
             --target ${{ matrix.row.target }} --check launch --launch-timeout 120 --out "$RUNNER_TEMP/cts"
 
       - name: "Check: distributable"
-        if: env.CTS_CLI != ''
+        if: ${{ !cancelled() }}
         run: |
           ${{ matrix.row.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
             --target ${{ matrix.row.target }} --check package --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts"
+
+      - name: "Check: distributable without the standard shell"
+        if: ${{ !cancelled() }}
+        run: |
+          ${{ matrix.row.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
+            --target ${{ matrix.row.target }} --check package-shellless --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts"
 
       - name: Upload the results
         if: always()

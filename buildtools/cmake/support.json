@@ -68,7 +68,8 @@
         "build",
         "linkage",
         "resources",
-        "libraries"
+        "libraries",
+        "package"
       ],
       "capabilities": []
     },

@@ -140,9 +140,9 @@ That invocation is the only part of a shell that differs between integrations.
 The shell does not assume a filename, and the integration does not read or duplicate shell configuration such as application identifiers, SDK levels, permissions, or signing.
 
 Producing a platform package without its standard shell is a capability of the integration that offers it.
-It requires an explicit selection, and its result is not a default build.
+It requires an explicit selection, and its result is not a default build: `build`, `run`, and `package` for Android and iOS go through the standard shell for every integration, and the CLI's `--no-shell` option selects the integration's own path where one exists.
 
-Open question: the current Android shell reaches CMake through Gradle's `externalNativeBuild`, which accepts only CMake and ndk-build. Invoking another integration needs a Gradle task that supplies the application core to the same variant, and this has not been prototyped.
+Gradle's `externalNativeBuild` accepts only CMake and ndk-build, so the Android shell reaches any other integration through a task of each variant that builds the core for each ABI, hands each library to the variant as generated native libraries, and writes the same application-integration record and resource package location the CMake integration writes.
 
 ## Targets and dependencies
 
@@ -267,5 +267,6 @@ The conformance suite names the clauses each of its checks covers, and its [cove
 | `RECORD-SCHEMA` | Records carry a schema version; an unsupported version or a missing required artifact is diagnosed. | [Generated results](#generated-results) |
 | `RECORD-EQUIVALENCE` | For the same project content, every integration generates equal project and library-graph records. | [Conformance](#conformance) |
 | `PKG-KIND` | `package` produces the platform's standard distributable kind and publishes it below `dist/<platform>`. | [Conformance](#conformance) |
+| `SHELL-EXPLICIT` | Android and iOS are built and packaged through the standard shell by default; packaging without it is an explicit selection the integration offers. | [Platform shells and the application core](#platform-shells-and-the-application-core) |
 | `PKG-PUBLISH` | Publication validates the staged result before replacing the previous published output. | [Generated results](#generated-results) |
 | `LAUNCH` | A default build starts on an available target environment and resolves its resources at run time. | [Conformance](#conformance) |

@@ -79,7 +79,19 @@ CHECKS: dict[str, dict] = {
         "fixed": {"package.location": "dist/<platform>", "package.resources": "the built package"},
         "equivalent": {},
     },
+    # The same distributable, packaged by an integration without the standard shell; an integration offers this
+    # only on a platform that has a shell to leave out, and only as an explicit selection.
+    "package-shellless": {
+        "title": "Distributable without the standard shell",
+        "facts": {"package.kind": ["PKG-KIND", "SHELL-EXPLICIT"], "package.location": ["PKG-KIND", "PKG-PUBLISH"],
+                  "package.resources": ["PKG-KIND"]},
+        "fixed": {"package.location": "dist/<platform>", "package.resources": "the built package"},
+        "equivalent": {},
+    },
 }
+
+# The platforms whose standard shell builds and packages the application from the core an integration builds.
+SHELL_TARGETS = ("android", "ios")
 
 
 sys.path.insert(0, str(CTS_ROOT))
@@ -533,14 +545,31 @@ def packaged_resources(kind: str, dist: Path, work: Path, timeout: float) -> set
 
 
 def package_facts(cli: str | None, integration: str, target: str, project: Path, built: dict, work: Path,
-                  timeout: float) -> dict:
-    """Runs `huxerui package` the way a developer does and reads what it published."""
+                  timeout: float, shellless: bool = False) -> dict:
+    """Runs `huxerui package` the way a developer does and reads what it published.
+
+    On Android and iOS the package comes from the standard shell, which the CLI adds to the project first when the
+    project carries none; `shellless` packages without it instead."""
     if not cli:
         raise Unavailable("no HuxerUI CLI was given; pass --cli")
     created = [project / name for name in PACKAGE_OUTPUTS if not (project / name).exists()]
+    shell = project / "platform" / target
+    if target in SHELL_TARGETS and not shellless and not shell.exists():
+        created.append(shell)
+        add = [cli, "platform", "add", target]
+        log("  $ " + " ".join(add))
+        added = subprocess.run(add, cwd=project, capture_output=True, text=True, timeout=timeout)
+        if added.returncode != 0:
+            shutil.rmtree(shell, ignore_errors=True)
+            raise RuntimeError(f"`huxerui platform add {target}` exited with {added.returncode}\n{added.stderr}")
     command = [cli, "package", target, "--build-system", integration]
     if integration == "cmake":
         command += ["--sdk", str(REPOSITORY)]
+    if shellless:
+        command.append("--no-shell")
+    elif target == "android":
+        # One ABI bounds the run; the shell's handling of several is the same for every integration.
+        command += ["--abi", "arm64-v8a"]
     log("  $ " + " ".join(command))
     try:
         completed = subprocess.run(command, cwd=project, capture_output=True, text=True, timeout=timeout)
@@ -670,13 +699,15 @@ def check_project(check: str, integration: str, target: str, host: str, project:
             return "fail", str(failure)
         write_json(path, result)
         wanted = {f"launch.{key}": value for key, value in launch.items()}
-    if check == "package":
+    if check in ("package", "package-shellless"):
         if "package.kind" not in expected["facts"]:
             return "pass", "the project defines no package facts"
+        if check == "package-shellless" and target not in SHELL_TARGETS:
+            return "fail", f"{target} has no standard shell to package without"
         work = out / "work" / f"{integration}-{target}" / project.name
         try:
             result["facts"].update(package_facts(arguments.cli, integration, target, project, result["facts"], work,
-                                                 arguments.package_timeout))
+                                                 arguments.package_timeout, check == "package-shellless"))
         except Unavailable as unavailable:
             return "unavailable", str(unavailable)
         except RuntimeError as failure:

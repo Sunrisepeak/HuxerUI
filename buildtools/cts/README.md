@@ -30,6 +30,7 @@ The suite is divided into checkpoints so a run shows which part of the contract 
 | `libraries` | `libraries`: the ordered library-graph record | `libraries.roots` |
 | `launch` | `launch.*`: what the started application resolved | |
 | `package` | `package.kind`: the distributable `huxerui package` published; `package.location` and `package.resources`, which the contract fixes: it is below `dist/<platform>` and carries the resource package the build produced | |
+| `package-shellless` | The same facts for `huxerui package --no-shell`, on Android and iOS, where an integration packages without the standard shell | |
 
 The compared facts are also checked between a project and the project it names in `sameModelAs`.
 A difference is accepted only when [`allowed-differences.json`](allowed-differences.json) lists it with its reason.
@@ -70,8 +71,9 @@ A clause is `checked` when some project's `expected.json`, or the contract itsel
 | `INCREMENTAL` | checked | `build` |
 | `RECORD-SCHEMA` | not covered |  |
 | `RECORD-EQUIVALENCE` | compared only | `libraries` |
-| `PKG-KIND` | checked | `package` |
-| `PKG-PUBLISH` | checked | `package` |
+| `PKG-KIND` | checked | `package`, `package-shellless` |
+| `SHELL-EXPLICIT` | checked | `package-shellless` |
+| `PKG-PUBLISH` | checked | `package`, `package-shellless` |
 | `LAUNCH` | checked | `launch` |
 
 <!-- coverage:end -->
@@ -100,6 +102,8 @@ python3 buildtools/cts/cts.py matrix /tmp/cts/results
 Every command exits non-zero when something it checked failed.
 The `launch` checkpoint starts each application with `HUXERUI_CTS_PROBE` set and reads what it recorded; on the Web it serves the build with the project's own page and reads the facts the application prints to the console of a headless Chrome or Chromium, which `HUXERUI_CTS_BROWSER` names when it is not on `PATH`.
 The `package` checkpoint runs `huxerui package <platform> --build-system <integration>` in the project, as a developer does, with the CLI `--cli` names, reads the published distributable, and removes what the command created in the project.
+On Android and iOS the package comes from the standard shell: a project without one gets it from `huxerui platform add <platform>` first, which is removed afterwards, and Android is packaged for `arm64-v8a`.
+The `package-shellless` checkpoint adds `--no-shell` and is declared only by an integration that offers it.
 A project without `package.kind` in `expected.json` is not packaged.
 
 ## Targets
