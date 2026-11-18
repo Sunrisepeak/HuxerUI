@@ -259,13 +259,23 @@ jobs:
           sudo udevadm trigger --name-match=kvm
           image="system-images;android-34;google_apis;x86_64"
           (yes || true) | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install emulator platform-tools "$image" > /dev/null
+          # avdmanager and the emulator must agree on where the AVD is; both read ANDROID_AVD_HOME.
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/avd"
+          mkdir -p "$ANDROID_AVD_HOME"
           echo no | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd --force --name cts --package "$image"
+          emulator="$ANDROID_HOME/emulator/emulator"
+          if ! "$emulator" -list-avds | grep -qx cts; then
+            ini="$(find "$HOME" "$RUNNER_TEMP" -name cts.ini -path '*avd*' 2> /dev/null | head -n 1)"
+            test -n "$ini"
+            export ANDROID_AVD_HOME="$(dirname "$ini")"
+          fi
           ls -l /dev/kvm
-          nohup "$ANDROID_HOME/emulator/emulator" -avd cts -no-window -no-audio -no-boot-anim -no-snapshot \
+          nohup "$emulator" -avd cts -no-window -no-audio -no-boot-anim -no-snapshot \
             -gpu swiftshader_indirect > "$RUNNER_TEMP/emulator.log" 2>&1 &
+          emulator_pid=$!
           adb="$ANDROID_HOME/platform-tools/adb"
           booted() { [ "$("$adb" shell getprop sys.boot_completed 2> /dev/null | tr -d '\r')" = 1 ]; }
-          for _ in $(seq 120); do booted && break; sleep 5; done
+          for _ in $(seq 120); do booted && break; kill -0 "$emulator_pid" 2> /dev/null || break; sleep 5; done
           if ! booted; then
             tail -n 60 "$RUNNER_TEMP/emulator.log"
             exit 1
