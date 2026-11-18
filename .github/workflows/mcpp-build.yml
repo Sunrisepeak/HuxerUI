@@ -1,6 +1,6 @@
 name: mcpp Build
 
-# Manually validate HuxerUI and its application templates with mcpp.
+# Validate HuxerUI and its application templates with mcpp.
 #
 # The framework's own build, its unit suite, the examples, and the templates on
 # the desktop hosts; the Web, Android and iOS rows and every application's
@@ -12,6 +12,21 @@ name: mcpp Build
 # and not the other -- is reported before anyone waits on a compile.
 
 on:
+  # The paths only mcpp consumes, the C++ modules templates and the CLI that renders them, and the unit
+  # sources `mcpp test` builds. A change to the shared framework sources is built with mcpp by
+  # build-system-conformance.yml.
+  pull_request:
+    paths:
+      - 'mcpp.toml'
+      - 'build.mcpp'
+      - 'modules/**'
+      - 'buildtools/mcpp/**'
+      - 'templates/**'
+      - 'tools/huxerui_cli/**'
+      - 'tests/unit/**'
+      - '.github/workflows/mcpp-build.yml'
+      # Last, because the later pattern wins.
+      - '!**.[mM][dD]'
   workflow_dispatch:
 
 concurrency:

@@ -116,4 +116,6 @@ Which hosts build each target is stated per integration in its `support.json`, a
 
 The `build`, `linkage`, and `resources` checks of Android and iOS stop at the application core; the `package` checkpoint reads the APK or the application bundle where an integration declares it.
 
-`.github/workflows/build-system-conformance.yml` runs every checkpoint as its own step for each integration, then compares the integrations, on pull requests that touch a build system, the framework sources, or the suite.
+`.github/workflows/build-system-conformance.yml` runs every checkpoint as its own step for each integration, then compares the integrations, on pull requests that touch a build system, the framework sources, the CLI, the templates, or the suite; Markdown changes start nothing.
+Its plan job first runs the suite's own tests (`tests/scripts/cts_test.py`) and then selects the integrations from the changed paths: a path only one integration consumes, such as `cmake/**` or `buildtools/mcpp/**`, runs that integration's rows, and any other path runs both.
+Selection never narrows the targets of a selected integration, and the comparison runs only when both integrations ran. A push to `main` and a manual dispatch run every row.
