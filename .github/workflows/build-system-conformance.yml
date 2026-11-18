@@ -64,6 +64,7 @@ jobs:
           - { integration: cmake, target: web,     host: windows, os: windows-2022, python: python }
           - { integration: mcpp,  target: web,     host: windows, os: windows-2022, python: python }
           - { integration: cmake, target: android, host: windows, os: windows-2022, python: python }
+          - { integration: mcpp,  target: android, host: windows, os: windows-2022, python: python }
     steps:
       - uses: actions/checkout@v5
 

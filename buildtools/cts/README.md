@@ -113,7 +113,6 @@ A project without `package.kind` in `expected.json` is not packaged.
 | `ios` | The application core the Xcode shell links: `lib<target>_huxerui.a` for the Simulator with the framework inside it, its link inputs, and the final resource package. |
 
 Which hosts build each target is stated per integration in its `support.json`, and the workflow has one job for every declared combination.
-mcpp does not declare Android on Windows hosts: its Android NDK package cannot be installed there.
 
 The `build`, `linkage`, and `resources` checks of Android and iOS stop at the application core; the `package` checkpoint reads the APK or the application bundle where an integration declares it.
 
