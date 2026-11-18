@@ -27,6 +27,7 @@ A project is created for every integration whose declaration it carries, and the
 Expected facts are keyed by kind, source style, and template, never by build system, so the application that declares both build systems expects what each single-system application does, and the integrations that build it must agree on it. Created projects name no `sameModelAs`: the CLI writes each project's name into its resources, so two created projects never share a resource package.
 The file also declares the targets and hosts where the projects are created; they start with Linux, the Web, and Android on Linux hosts.
 Created projects carry no probe, so their `launch` checkpoint has no facts to read.
+When it creates a project, the runner records in `created.json` whether the root carries the native declaration, named by `declaration` in each `support.json`, of every build system it selected and of no other; the `build` checkpoint checks that fact as `create.declarations`.
 
 ## Checkpoints
 
@@ -34,12 +35,12 @@ The suite is divided into checkpoints so a run shows which part of the contract 
 
 | Checkpoint | Checked against `expected.json` | Compared between integrations |
 | --- | --- | --- |
-| `build` | `profile`, `artifact.name`, `artifact.bundle`; `rebuild`, which the contract fixes: the runner builds every project twice and the second build of unchanged inputs must succeed | |
+| `build` | `profile`, `artifact.name`, `artifact.bundle`; `rebuild`, which the contract fixes: the runner builds every project twice and the second build of unchanged inputs must succeed; for created projects, `create.declarations` | |
 | `linkage` | `framework.linkage`, read from the artifact's dynamic dependencies; on Android also `android.exports`, on iOS `ios.link_inputs` | |
 | `resources` | `resources.location`: the final package where the Runtime looks for it | `resources.sha256`, `resources.files` |
 | `libraries` | `libraries`: the ordered library-graph record | `libraries.roots` |
 | `launch` | `launch.*`: what the started application resolved | |
-| `package` | `package.kind`: the distributable `huxerui package` published; `package.location` and `package.resources`, which the contract fixes: it is below `dist/<platform>` and carries the resource package the build produced | |
+| `package` | `package.kind`: the distributable `huxerui package` published; `package.location` and `package.resources`, which the contract fixes: it is below `dist/<platform>` and carries the resource package the build produced; `package.dispatch`: the CLI is called as a developer calls it, with no `--build-system` for a root that declares only the checked integration or that declares several when the checked integration is CMake, and with it otherwise, and must state that it built with the checked integration | |
 | `package-shellless` | The same facts for `huxerui package --no-shell`, on Android and iOS, where an integration packages without the standard shell | |
 
 The compared facts are also checked between a project and the project it names in `sameModelAs`.
