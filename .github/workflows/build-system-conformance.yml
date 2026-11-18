@@ -259,11 +259,16 @@ jobs:
           image="system-images;android-34;google_apis;x86_64"
           (yes || true) | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install emulator platform-tools "$image" > /dev/null
           echo no | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd --force --name cts --package "$image"
+          ls -l /dev/kvm
           nohup "$ANDROID_HOME/emulator/emulator" -avd cts -no-window -no-audio -no-boot-anim -no-snapshot \
             -gpu swiftshader_indirect > "$RUNNER_TEMP/emulator.log" 2>&1 &
           adb="$ANDROID_HOME/platform-tools/adb"
-          "$adb" wait-for-device
-          until [ "$("$adb" shell getprop sys.boot_completed | tr -d '\r')" = 1 ]; do sleep 5; done
+          booted() { [ "$("$adb" shell getprop sys.boot_completed 2> /dev/null | tr -d '\r')" = 1 ]; }
+          for _ in $(seq 120); do booted && break; sleep 5; done
+          if ! booted; then
+            tail -n 60 "$RUNNER_TEMP/emulator.log"
+            exit 1
+          fi
           "$adb" shell getprop ro.product.cpu.abi
 
       # The package checkpoints run `huxerui package` as a developer does, so the suite builds the CLI.
@@ -322,7 +327,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           ${{ matrix.row.target == 'linux' && 'xvfb-run -a ' || '' }}${{ matrix.row.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
-            --target ${{ matrix.row.target }} --check launch --launch-timeout 120 --out "$RUNNER_TEMP/cts"
+            --target ${{ matrix.row.target }} --check launch --launch-timeout 120 --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts"
 
       - name: "Check: distributable without the standard shell"
         if: ${{ !cancelled() }}
@@ -532,7 +537,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           ${{ matrix.row.target == 'linux' && 'xvfb-run -a ' || '' }}${{ matrix.row.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
-            --target ${{ matrix.row.target }} --check launch --launch-timeout 120 --out "$RUNNER_TEMP/cts"
+            --target ${{ matrix.row.target }} --check launch --launch-timeout 120 --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts"
 
       - name: "Check: distributable without the standard shell"
         if: ${{ !cancelled() }}

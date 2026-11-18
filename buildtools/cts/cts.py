@@ -886,6 +886,14 @@ def command_create(arguments) -> int:
     return 1 if failed else 0
 
 
+def ensure_published(arguments, integration: str, target: str, project: Path, built: dict, work: Path) -> None:
+    """A device launch starts the distributable the package checkpoint published; a project that checks no package
+    facts is packaged here the same way, through the standard shell."""
+    if (work / "dist").is_dir() and any((work / "dist").iterdir()):
+        return
+    package_facts(arguments.cli, integration, target, project, built, work, arguments.package_timeout)
+
+
 # ----------------------------------------------------------------------- build
 
 
@@ -986,8 +994,14 @@ def check_project(check: str, integration: str, target: str, host: str, project:
             if target == "web":
                 result["facts"].update(web_launch_facts(result["record"], launch, project, work, arguments.launch_timeout))
             elif target == "android":
+                if android_device_abi() is None:
+                    raise Unavailable("no Android device or emulator is attached")
+                ensure_published(arguments, integration, target, project, result["facts"], work)
                 result["facts"].update(android_launch_facts(launch, work, arguments.launch_timeout))
             elif target == "ios":
+                if shutil.which("xcrun") is None:
+                    raise Unavailable("xcrun is not available")
+                ensure_published(arguments, integration, target, project, result["facts"], work)
                 result["facts"].update(ios_launch_facts(launch, work, arguments.launch_timeout))
             else:
                 result["facts"].update(launch_facts(result["record"], launch, work, arguments.launch_timeout))
