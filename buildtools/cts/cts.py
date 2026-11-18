@@ -799,9 +799,12 @@ def package_facts(cli: str | None, integration: str, target: str, project: Path,
         (work / "package.log").write_text(completed.stdout + completed.stderr, encoding="utf-8")
         if completed.returncode != 0:
             lines = (completed.stdout + completed.stderr).splitlines()
-            # A platform build prints its error well before its summary; keep both.
-            errors = [line for line in lines[:-20] if "error:" in line.lower()][-20:]
-            tail = "\n".join(errors + lines[-20:])
+            # A platform build prints its error well before its summary; keep both, and the lines after each error,
+            # where a failed step's own output follows its summary line.
+            head = len(lines) - 20
+            kept = sorted({index for at, line in enumerate(lines[:head]) if "error:" in line.lower()
+                           for index in range(at, min(at + 5, head))})
+            tail = "\n".join([lines[index] for index in kept][-40:] + lines[-20:])
             raise RuntimeError(f"`huxerui package {target}` exited with {completed.returncode}\n{tail}")
         dist = project / "dist" / target
         if not dist.is_dir() or not any(dist.iterdir()):

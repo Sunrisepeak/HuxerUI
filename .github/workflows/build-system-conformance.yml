@@ -403,6 +403,15 @@ jobs:
           path: ${{ runner.temp }}/cts/results
           if-no-files-found: error
 
+      # A failed checkpoint reports only the tail of a platform build; its complete log is kept for that run.
+      - name: Upload the logs of a failed check
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ matrix.integration }}-${{ matrix.row.target }}-on-${{ matrix.row.host }}
+          path: ${{ runner.temp }}/cts/work/**/*.log
+          if-no-files-found: ignore
+
   # One Linux host builds every target it declares in the same checkout, one after another, as a developer does:
   # in-tree outputs of one target must not change what another records. Each target is checked as in its own job,
   # `huxerui build` then builds the desktop and Web targets with one command, and the first target is built again
@@ -771,6 +780,15 @@ jobs:
           name: conformance-${{ matrix.integration }}-${{ matrix.row.target }}-on-${{ matrix.row.host }}
           path: ${{ runner.temp }}/cts/results
           if-no-files-found: error
+
+      # A failed checkpoint reports only the tail of a platform build; its complete log is kept for that run.
+      - name: Upload the logs of a failed check
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ matrix.integration }}-${{ matrix.row.target }}-on-${{ matrix.row.host }}
+          path: ${{ runner.temp }}/cts/work/**/*.log
+          if-no-files-found: ignore
 
   compare:
     name: Integrations agree
