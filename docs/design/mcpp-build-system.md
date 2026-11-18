@@ -244,6 +244,9 @@ An Android package needs the identifier; without one the rule warns and configur
 
 The final resource package is deployed where each format's Runtime reads it: `<program>.resources/` beside the program on the desktop, `HuxerUI/` for the Apple bundles (`Contents/Resources/HuxerUI` on macOS, the bundle root on iOS), and the asset root of an APK.
 The framework states what an Android package carries from it, its Java host and its manifest entries, in `[package.metadata.dist-apk]` of its own manifest; `dist-apk` reads that table from every package in the application's resolved graph and substitutes `${applicationId}`.
+A library contributes its Android platform package without stating anything: for every library in the graph that has a Gradle library module at `platform/android` and no `[package.metadata.dist-apk]`, the rule passes `dist-apk` the module's `src/main/java`, `src/main/kotlin`, `src/main/AndroidManifest.xml`, `src/main/res`, and `src/main/assets`, under the package its `[package.metadata.huxerui] id` names, which is the namespace the CLI gives that module.
+A library that states `[package.metadata.dist-apk]` is not inferred; its table replaces the inference as a whole, and carries what the layout cannot, such as Maven coordinates, archives, or further source roots.
+A library's iOS Swift package reaches the application through the Xcode shell; `rules-swift` compiles only the Swift sources a package names in its own manifest, so packaging for iOS without the shell warns that the package is not included.
 Android applications state `cxx_runtime = "self-contained"` for their Android triples, so the application's shared library links the C++ runtime statically, as the CMake integration's `c++_static`.
 
 `mcpp pack` reports the Web page as the distributable; the CLI publishes the page's directory, which holds the module, its WebAssembly, and the preloaded data.

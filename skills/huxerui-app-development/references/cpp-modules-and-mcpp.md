@@ -28,6 +28,8 @@ resources/              optional resource input
 
 Create a C++ modules application with `huxerui create app <name> --build-system mcpp`; `huxerui create library <name> --build-system mcpp` creates a C++ modules library. mcpp alone selects C++ modules, and a build-system list that names `cmake` selects headers. `--template` selects the application content (`app` or `navigation`), and `--platform` selects the platform shells as for any other project. Inspect the generated manifest rather than copying a fixed dependency version into an existing project.
 
+A C++ modules library exports a module named after its C++ namespace, records its identity in `[package.metadata.huxerui]`, and carries an `examples/preview` application that imports it; `huxerui run <platform>` from the library tree runs that Preview. Its Android platform package under `platform/android` reaches an application's package without further declaration; state `[package.metadata.dist-apk]` only to replace that inference, for example to add Maven coordinates.
+
 The build program imports the HuxerUI rules:
 
 ```cpp

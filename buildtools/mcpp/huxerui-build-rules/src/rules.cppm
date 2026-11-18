@@ -449,6 +449,9 @@ struct library {
     std::string identity;    // the public identity, e.g. CameraKit::CameraKit
     std::string root;        // the library's source root
     std::string resources;   // its absolute resource root; empty when it has none
+    std::string id;          // its reverse-domain identifier, the Android package its Gradle module declares
+    // The package states `[package.metadata.dist-apk]`, which dist-apk reads itself in place of the inference.
+    bool        states_dist_apk = false;
 };
 
 struct project_graph {
@@ -532,6 +535,8 @@ inline project_graph load_graph() {
                 library lib;
                 lib.identity = identity;
                 lib.root = entry.string_at("manifest_dir");
+                lib.id = huxerui->string_at("id");
+                lib.states_dist_apk = metadata->find("dist-apk") != nullptr;
                 const std::string resources = huxerui->string_at("resources");
                 if (!resources.empty())
                     lib.resources = (std::filesystem::path(lib.root) / resources).string();
@@ -737,27 +742,27 @@ inline std::vector<edge> plan_resources(const options& opt, const project_graph&
     if (std::string_view(mcpp::target_os()) == "macos") {
         // A macOS application is a bundle, and the Runtime reads the package
         // from the bundle's resources. The shell owns Info.plist and the icon;
-        // the rule assembles `<program>.app` beside the linked program.
+        // the rule assembles `<program>.app` beside the linked program, one
+        // file per action: the engine copies each (`${mcpp.self} stage`), so no
+        // action is a shell script.
         const std::filesystem::path shell =
             std::filesystem::path(mcpp::manifest_dir()) / "platform" / "macos";
         for (const std::string& program : graph.programs) {
-            const std::string bundle = "${mcpp.bin_dir}/" + program + ".app";
-            const std::string linked = "${mcpp.target_file:" + program + "}";
-            std::string script =
-                "set -e; rm -rf \"" + bundle + "\"; mkdir -p \"" + bundle + "/Contents/MacOS\" \"" +
-                bundle + "/Contents/Resources/HuxerUI\"; cp \"" + linked + "\" \"" + bundle +
-                "/Contents/MacOS/" + program + "\"; cp -R \"" + final_package + "/.\" \"" + bundle +
-                "/Contents/Resources/HuxerUI/\"";
-            edge assemble{
-                .id          = "bundle:" + program,
-                .role        = "artifact",
-                .description = "macOS application bundle " + program + ".app",
-                .command     = {},
-                .inputs      = { linked },
-                .outputs     = { bundle + "/Contents/MacOS/" + program },
+            const std::string bundle = "${mcpp.bin_dir}/" + program + ".app/Contents";
+            const auto copy = [&](const std::string& id, const std::string& from, const std::string& to) {
+                out.push_back(edge{
+                    .id          = "bundle:" + program + ":" + id,
+                    .role        = "artifact",
+                    .description = "macOS application bundle " + program + ".app: " + id,
+                    .command     = { "${mcpp.self}", "stage", "--verify", "content", "--output", to, from },
+                    .inputs      = { from },
+                    .outputs     = { to },
+                });
             };
-            for (const std::string& file : package_files)
-                assemble.inputs.push_back(final_package + "/" + file);
+            copy("program", "${mcpp.target_file:" + program + "}", bundle + "/MacOS/" + program);
+            for (std::size_t index = 0; index < package_files.size(); ++index)
+                copy("package-" + std::to_string(index), final_package + "/" + package_files[index],
+                     bundle + "/Resources/HuxerUI/" + package_files[index]);
 
             const std::filesystem::path plist_template = shell / "Info.plist.in";
             if (std::filesystem::exists(plist_template)) {
@@ -773,20 +778,15 @@ inline std::vector<edge> plan_resources(const options& opt, const project_graph&
                 const std::string rendered = odir + "/bundle/" + program + "/Info.plist";
                 detail::write_if_changed(rendered, plist);
                 mcpp::rerun_if_changed(plist_template.string().c_str());
-                script += "; cp \"" + rendered + "\" \"" + bundle + "/Contents/Info.plist\"";
-                assemble.inputs.push_back(rendered);
+                copy("info-plist", rendered, bundle + "/Info.plist");
             } else {
                 // A bundle without Info.plist has no identifier, and AppKit services refuse to start in it.
                 mcpp::warning(("huxerui.rules: " + plist_template.string() +
                                " is missing; the macOS bundle will have no Info.plist").c_str());
             }
             const std::filesystem::path icon = shell / "AppIcon.icns";
-            if (std::filesystem::exists(icon)) {
-                script += "; cp \"" + icon.string() + "\" \"" + bundle + "/Contents/Resources/AppIcon.icns\"";
-                assemble.inputs.push_back(icon.string());
-            }
-            assemble.command = { "/bin/sh", "-c", script };
-            out.push_back(std::move(assemble));
+            if (std::filesystem::exists(icon))
+                copy("icon", icon.generic_string(), bundle + "/Resources/AppIcon.icns");
         }
         deploy_package(final_package, package_files, "HuxerUI");
         return out;
@@ -993,7 +993,45 @@ inline bool plan_android_shell(const std::string& program, const detail::identit
     return true;
 }
 
-inline bool plan_packages(const options& opt, const std::string& program) {
+// What a library's Android platform package contributes to a package without the Gradle shell, inferred from the
+// standard layout of a Gradle library module at `platform/android`: Java sources, the manifest, resources and
+// assets under `src/main`, under the package its identity names, which is the namespace the CLI gives that module.
+// A library that states `[package.metadata.dist-apk]` is not inferred: dist-apk reads that table from the graph,
+// and it replaces the inference as a whole.
+inline std::vector<mcpp::dist::apk::library> android_library_contributions(const project_graph& graph) {
+    std::vector<mcpp::dist::apk::library> out;
+    for (const library& lib : graph.libraries) {
+        if (lib.states_dist_apk) continue;
+        const std::filesystem::path main = std::filesystem::path(lib.root) / "platform" / "android" / "src" / "main";
+        if (!std::filesystem::is_directory(main)) continue;
+        mcpp::dist::apk::library contribution;
+        const auto existing = [&](const char* name) {
+            const std::filesystem::path path = main / name;
+            return std::filesystem::exists(path) ? path.generic_string() : std::string{};
+        };
+        contribution.resources = existing("res");
+        contribution.manifest  = existing("AndroidManifest.xml");
+        contribution.assets    = existing("assets");
+        if (const std::string java = existing("java"); !java.empty()) contribution.java_sources = {java};
+        if (const std::string kotlin = existing("kotlin"); !kotlin.empty()) contribution.kotlin_sources = {kotlin};
+        if (contribution.resources.empty() && contribution.manifest.empty() && contribution.assets.empty() &&
+            contribution.java_sources.empty() && contribution.kotlin_sources.empty())
+            continue;
+        if (!contribution.resources.empty()) {
+            if (lib.id.empty()) {
+                mcpp::warning(("huxerui.rules: the library " + lib.identity + " has Android resources but no `id` "
+                               "under [package.metadata.huxerui], which names the package they link under; "
+                               "its resources are not packaged").c_str());
+                contribution.resources.clear();
+            }
+        }
+        contribution.package = lib.id;
+        out.push_back(std::move(contribution));
+    }
+    return out;
+}
+
+inline bool plan_packages(const options& opt, const std::string& program, const project_graph& graph) {
     const std::string_view os = mcpp::target_os();
     const bool android = std::string_view(mcpp::target_env()) == "android";
     const detail::identity app = detail::application_identity(opt);
@@ -1043,6 +1081,23 @@ inline bool plan_packages(const options& opt, const std::string& program) {
         bundle.app_name  = app.name;
         bundle.bundle_id = app.id;
         if (os == "macos") bundle.icon = detail::shell_file("macos", "AppIcon.icns");
+        if (os == "ios") {
+            // A library's Swift package reaches the application through the Xcode shell, which adds it as a local
+            // package. Without the shell nothing compiles it: rules-swift compiles only the Swift sources a package
+            // names in its own manifest, and a build program cannot add one.
+            for (const library& lib : graph.libraries) {
+                std::error_code error;
+                const std::filesystem::path platform = std::filesystem::path(lib.root) / "platform" / "ios";
+                for (std::filesystem::recursive_directory_iterator entry(platform, error), end;
+                     !error && entry != end; entry.increment(error)) {
+                    if (entry->path().filename() != "Package.swift") continue;
+                    mcpp::warning(("huxerui.rules: the library " + lib.identity + " has the Swift package " +
+                                   entry->path().parent_path().generic_string() + ", which only the Xcode shell "
+                                   "builds; this package of the application does not include it").c_str());
+                    break;
+                }
+            }
+        }
         ok = mcpp::dist::apple::generate(bundle) && ok;
     } else if (os == "emscripten") {
         // The shell's page, rendered with the values the CMake integration gives
@@ -1085,6 +1140,8 @@ inline bool plan_packages(const options& opt, const std::string& program) {
         apk.target         = program;
         apk.application_id = app.id;
         apk.label          = app.name;
+        // The graph lists requesters before the libraries they depend on, the order of precedence dist-apk takes.
+        apk.libraries      = android_library_contributions(graph);
         // Without an identifier there is no package to configure; the build itself goes on.
         if (plan_android_shell(program, app, apk)) ok = mcpp::dist::apk::generate(apk) && ok;
     }
@@ -1248,7 +1305,7 @@ inline bool configure(options opt = {}) {
     if (!submit(edges)) return false;
     bool packaged = true;
     if (graph.is_root)
-        for (const std::string& program : graph.programs) packaged = plan_packages(opt, program) && packaged;
+        for (const std::string& program : graph.programs) packaged = plan_packages(opt, program, graph) && packaged;
     return packaged;
 }
 
