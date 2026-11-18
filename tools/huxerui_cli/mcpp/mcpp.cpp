@@ -79,7 +79,7 @@ std::string PackageFormat(std::string_view platform, std::string_view requested)
     return requested.empty() ? "appimage" : std::string(requested);
   }
   if (platform == "windows") {
-    return "msi";
+    return "setup";
   }
   if (platform == "macos") {
     return "dmg";

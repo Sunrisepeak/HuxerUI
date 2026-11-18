@@ -470,8 +470,9 @@ PACKAGE_OUTPUTS = ("dist", "build", "target", ".huxerui")
 
 def package_kind(dist: Path) -> str:
     names = [path.name for path in dist.iterdir()]
-    for suffix, kind in ((".AppImage", "appimage"), (".deb", "deb"), (".rpm", "rpm"), (".msi", "msi"), (".dmg", "dmg"),
-                         (".apk", "apk"), (".aab", "aab"), (".app", "app"), (".exe", "setup")):
+    # A setup executable may be published with the MSI it chains; the setup is the distributable.
+    for suffix, kind in ((".AppImage", "appimage"), (".deb", "deb"), (".rpm", "rpm"), (".exe", "setup"), (".msi", "msi"),
+                         (".dmg", "dmg"), (".apk", "apk"), (".aab", "aab"), (".app", "app")):
         if any(name.endswith(suffix) for name in names):
             return kind
     if any(name.endswith(".js") for name in names) and any(name.endswith(".wasm") for name in names):
@@ -509,7 +510,11 @@ def packaged_resources(kind: str, dist: Path, work: Path, timeout: float) -> set
         subprocess.run([str(artifact), "--appimage-extract"], cwd=unpacked, capture_output=True, timeout=timeout, check=True)
     elif kind == "deb":
         subprocess.run(["dpkg-deb", "-x", str(artifact), str(unpacked)], capture_output=True, timeout=timeout, check=True)
-    elif kind == "msi":
+    elif kind in ("msi", "setup"):
+        if kind == "setup":
+            artifact = next(iter(sorted(dist.glob("*.msi"))), None)
+            if artifact is None:
+                raise Unavailable("reading a setup executable without the MSI it chains is not implemented")
         subprocess.run(["msiexec", "/a", str(artifact), "/qn", f"TARGETDIR={unpacked}"], capture_output=True,
                        timeout=timeout, check=True)
     elif kind == "dmg":

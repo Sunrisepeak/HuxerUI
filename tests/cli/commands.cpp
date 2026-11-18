@@ -56,7 +56,7 @@ TEST_CASE("HuxerUICliCreatesMcppPackCommands") {
   using huxerui::cli::mcpp::PackageFormat;
   REQUIRE(PackageFormat("linux", "") == "appimage");
   REQUIRE(PackageFormat("linux", "rpm") == "rpm");
-  REQUIRE(PackageFormat("windows", "") == "msi");
+  REQUIRE(PackageFormat("windows", "") == "setup");
   REQUIRE(PackageFormat("macos", "") == "dmg");
   REQUIRE(PackageFormat("web", "") == "web");
   REQUIRE(PackageFormat("android", "") == "apk");
