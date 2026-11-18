@@ -22,7 +22,7 @@ huxerui-source-select = { path = "../huxerui-source-select" }
 # The official distribution members: `mcpp pack --pkg-format <format>` of an
 # application dispatches to the member its build program configured, and each
 # member's tool is installed only when a pack asks for it.
-mcpp.plugins = { version = "0.23.0", features = ["dist-appimage", "dist-deb", "dist-rpm", "dist-wix",
+mcpp.plugins = { version = "0.23.1", features = ["dist-appimage", "dist-deb", "dist-rpm", "dist-wix",
                                                  "dist-apple", "dist-web", "dist-apk"] }
 
 [lib]
