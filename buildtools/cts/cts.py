@@ -544,6 +544,13 @@ def packaged_resources(kind: str, dist: Path, work: Path, timeout: float) -> set
     return resource_digests(unpacked)
 
 
+def shell_project_exists(target: str, shell: Path) -> bool:
+    """Whether a platform's shell directory holds the platform build project, not only an entry source."""
+    if target == "android":
+        return (shell / "settings.gradle").is_file()
+    return any(shell.glob("*.xcodeproj"))
+
+
 def package_facts(cli: str | None, integration: str, target: str, project: Path, built: dict, work: Path,
                   timeout: float, shellless: bool = False) -> dict:
     """Runs `huxerui package` the way a developer does and reads what it published.
@@ -554,14 +561,24 @@ def package_facts(cli: str | None, integration: str, target: str, project: Path,
         raise Unavailable("no HuxerUI CLI was given; pass --cli")
     created = [project / name for name in PACKAGE_OUTPUTS if not (project / name).exists()]
     shell = project / "platform" / target
-    if target in SHELL_TARGETS and not shellless and not shell.exists():
-        created.append(shell)
-        add = [cli, "platform", "add", target]
-        log("  $ " + " ".join(add))
-        added = subprocess.run(add, cwd=project, capture_output=True, text=True, timeout=timeout)
-        if added.returncode != 0:
-            shutil.rmtree(shell, ignore_errors=True)
-            raise RuntimeError(f"`huxerui platform add {target}` exited with {added.returncode}\n{added.stderr}")
+    # A project may carry only the entry an integration's own path compiles, such as `platform/ios/App/main.mm`;
+    # it is set aside while the CLI writes the complete shell, and restored afterwards.
+    set_aside = work / "shell-set-aside"
+    shutil.rmtree(set_aside, ignore_errors=True)
+    if target in SHELL_TARGETS and not shellless:
+        if shell.exists() and not shell_project_exists(target, shell):
+            set_aside.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(shell), str(set_aside))
+        if not shell.exists():
+            created.append(shell)
+            add = [cli, "platform", "add", target]
+            log("  $ " + " ".join(add))
+            added = subprocess.run(add, cwd=project, capture_output=True, text=True, timeout=timeout)
+            if added.returncode != 0:
+                shutil.rmtree(shell, ignore_errors=True)
+                if set_aside.exists():
+                    shutil.move(str(set_aside), str(shell))
+                raise RuntimeError(f"`huxerui platform add {target}` exited with {added.returncode}\n{added.stderr}")
     command = [cli, "package", target, "--build-system", integration]
     if integration == "cmake":
         command += ["--sdk", str(REPOSITORY)]
@@ -593,6 +610,8 @@ def package_facts(cli: str | None, integration: str, target: str, project: Path,
     finally:
         for directory in created:
             shutil.rmtree(directory, ignore_errors=True)
+        if set_aside.exists():
+            shutil.move(str(set_aside), str(shell))
 
 
 # ----------------------------------------------------------------------- build

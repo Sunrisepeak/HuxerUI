@@ -95,6 +95,7 @@
         "linkage",
         "resources",
         "libraries",
+        "package",
         "package-shellless"
       ],
       "capabilities": [

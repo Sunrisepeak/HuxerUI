@@ -171,9 +171,17 @@ TEST_CASE("HuxerUICliDispatchesToTheProjectsBuildSystem") {
   REQUIRE(desktop_shellless.result == 2);
   REQUIRE(desktop_shellless.error.find("linux has none") != std::string::npos);
 
-  const Invocation open = Invoke(modules, {"open", "ios"});
-  REQUIRE(open.result == 1);
-  REQUIRE(open.error.find("CMake declaration") != std::string::npos);
+  // The Xcode shell builds an mcpp core too, so `open ios` dispatches like `build`: away from macOS it stops at the
+  // host check, and an mcpp project takes no --sdk.
+  if (huxerui::cli::CurrentHostId() != "macos") {
+    const Invocation open = Invoke(modules, {"open", "ios"});
+    INFO(open.error);
+    REQUIRE(open.result == 1);
+    REQUIRE(open.error.find("cannot be built from host") != std::string::npos);
+  }
+  const Invocation open_sdk = Invoke(modules, {"open", "ios", "--sdk", HUXERUI_TEST_SOURCE_DIRECTORY});
+  REQUIRE(open_sdk.result == 2);
+  REQUIRE(open_sdk.error.find("--sdk does not apply to an mcpp project") != std::string::npos);
 }
 
 TEST_CASE("HuxerUICliDiscoversTheNearestDeclaringRoot") {
@@ -282,7 +290,7 @@ TEST_CASE("HuxerUICliShortCommandsShareDispatchAndHelp") {
     REQUIRE(short_form.result == full.result);
     REQUIRE(short_form.error == full.error);
   }
-  REQUIRE(Invoke(temporary.Path(), {"open", "--help"}).output.find("open ios [--sdk <path>]") != std::string::npos);
+  REQUIRE(Invoke(temporary.Path(), {"open", "--help"}).output.find("open ios [--build-system cmake|mcpp] [--sdk <path>]") != std::string::npos);
 }
 
 TEST_CASE("HuxerUICliRestrictsWatchToRun") {

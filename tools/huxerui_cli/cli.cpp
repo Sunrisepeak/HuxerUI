@@ -82,7 +82,7 @@ void PrintPackageOptions(std::ostream& output) {
 void PrintBuildHelp(std::ostream& output, std::string_view command) {
   output << "Usage:\n  huxerui " << command;
   if (command == "open") {
-    output << " ios [--sdk <path>]\n\n" << sdk_option_help;
+    output << " ios [--build-system cmake|mcpp] [--sdk <path>]\n\n" << sdk_option_help;
     return;
   }
   const auto platforms = command == "build" ? "[platform-list]" : command == "run" ? "<platform>" : "<platform-list>";
@@ -117,7 +117,7 @@ void PrintHelp(std::ostream& output) {
          << "  huxerui build [platform-list] " << build_options << '\n'
          << "  huxerui run <platform> " << build_options << " [--watch]\n"
          << "  huxerui package <platform-list> " << build_options << package_format_option << '\n'
-         << "  huxerui open ios [--sdk <path>]\n"
+         << "  huxerui open ios [--build-system cmake|mcpp] [--sdk <path>]\n"
          << "  huxerui --version\n\n";
   output << "Command aliases:\n";
   for (const auto& [alias, command] : command_aliases) {
@@ -1318,7 +1318,7 @@ void ApplyMcppOptionRules(BuildOptions& options, bool through_shell, std::ostrea
 
 /// Whether the mcpp integration builds a platform through its standard shell for this command.
 bool McppUsesShell(const PlatformDriver& platform, const BuildOptions& options) {
-  return !options.no_shell && platform.Id() == "android";
+  return !options.no_shell && HasCoreShell(platform);
 }
 
 /// Resolves the platforms of an mcpp command and applies the option rules; `--no-shell` names only platforms that
@@ -1651,16 +1651,26 @@ int RunOpen(std::span<const std::string_view> arguments, const std::filesystem::
             const std::filesystem::path& sdk_home, std::ostream& output) {
   BuildOptions options = ParseBuildOptions(arguments, "open");
   if (!options.platforms || *options.platforms != "ios") {
-    throw UsageError("open usage: huxerui open ios [--sdk <path>]");
+    throw UsageError("open usage: huxerui open ios [--build-system cmake|mcpp] [--sdk <path>]");
   }
   if (options.profile_explicit || !options.device.empty() || !options.cmake_generator.empty() || options.java_home ||
       options.optimization || options.lto || !options.abis.empty()) {
-    throw UsageError("open accepts only --sdk <path>");
+    throw UsageError("open accepts only --sdk <path> and --build-system");
   }
-  if (const std::optional<Project> found = TryDiscoverProject(working_directory);
-      found && !ResolveApplicationProject(*found).Declares(BuildSystem::CMake)) {
-    throw std::runtime_error("open ios needs the project's CMake declaration: the Xcode shell builds the application "
-                             "core through CMake");
+  if (const std::optional<Project> project = FindMcppProject(working_directory, options)) {
+    // The Xcode shell builds an mcpp core as it builds a CMake one; the framework is the one mcpp resolves.
+    if (options.sdk_override) {
+      throw UsageError("--sdk does not apply to an mcpp project: it takes HuxerUI from the huxerui dependency in "
+                       "mcpp.toml, so change that entry instead");
+    }
+    const std::vector<const PlatformDriver*> platforms = ResolveBuildPlatforms(*project, options, "open");
+    const PlatformDriver& platform = *platforms.front();
+    output << "Opening ios Xcode project\n";
+    const PlatformCommandContext context = McppShellContext(*project, platform, options);
+    ExecuteCommands(platform.LibraryGraphCommands(context), output);
+    platform.UpdateProjectIntegration(context);
+    ExecuteCommands(platform.OpenCommands(context), output);
+    return 0;
   }
   const auto huxerui_home = ResolveAndExportBuildHome(sdk_home, options, working_directory);
   const Project project = ResolveApplicationProject(DiscoverProject(working_directory));
