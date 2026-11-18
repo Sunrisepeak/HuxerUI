@@ -138,14 +138,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends xvfb xauth fonts-dejavu-core
           if [ "${{ matrix.integration }}" = cmake ]; then
-            sudo apt-get install -y --no-install-recommends ninja-build
+            sudo apt-get install -y --no-install-recommends ninja-build ccache
           fi
           if [ "${{ matrix.integration }}" = cmake ] && [ "${{ matrix.row.target }}" = linux ]; then
             sudo apt-get install -y --no-install-recommends \
-              libgtk-4-dev libepoxy-dev libsoup-3.0-dev pkg-config gcc-14 g++-14 ccache
+              libgtk-4-dev libepoxy-dev libsoup-3.0-dev pkg-config gcc-14 g++-14
             echo "CC=gcc-14" >> "$GITHUB_ENV"
             echo "CXX=g++-14" >> "$GITHUB_ENV"
-            echo "CTS_BUILD_ARGUMENTS=--cmake-compiler-launcher ccache" >> "$GITHUB_ENV"
           fi
 
       # CMake's Linux package deploys the runtime with patchelf 0.19 or newer and writes the AppImage with appimagetool.
@@ -190,17 +189,36 @@ jobs:
           if [ -d /Applications/Xcode_26.2.app ]; then
             echo "DEVELOPER_DIR=/Applications/Xcode_26.2.app/Contents/Developer" >> "$GITHUB_ENV"
           fi
-          if [ "${{ matrix.integration }}" = cmake ]; then brew install ninja; fi
+          if [ "${{ matrix.integration }}" = cmake ]; then brew install ninja ccache; fi
+
+      # Every CMake build of a row -- each project's, and each `huxerui package` the CLI starts -- compiles the same
+      # framework; ccache reuses its objects across those build directories and across runs. The Web's compiler
+      # keeps its own cache, and MSVC's default debug information cannot be cached, so those rows compile in full.
+      - name: Use a compiler cache
+        if: matrix.integration == 'cmake' && matrix.row.host != 'windows' && matrix.row.target != 'web'
+        run: |
+          {
+            echo "CMAKE_C_COMPILER_LAUNCHER=ccache"
+            echo "CMAKE_CXX_COMPILER_LAUNCHER=ccache"
+            echo "CCACHE_DIR=$HOME/.cache/ccache"
+            # Builds below the runner's work directory hash their paths relative to it, so the same source compiled
+            # in two build directories of one depth is one cache entry.
+            echo "CCACHE_BASEDIR=$(dirname "$RUNNER_TEMP")"
+            echo "CCACHE_NOHASHDIR=1"
+            echo "CCACHE_MAXSIZE=600M"
+          } >> "$GITHUB_ENV"
 
       - name: Cache compiler output
-        if: matrix.integration == 'cmake' && matrix.row.target == 'linux'
+        if: matrix.integration == 'cmake' && matrix.row.host != 'windows' && matrix.row.target != 'web'
         uses: actions/cache@v4
         with:
           path: ~/.cache/ccache
-          key: conformance-ccache-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          key: conformance-ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.row.target }}-${{ github.sha }}
           restore-keys: |
-            conformance-ccache-${{ runner.os }}-${{ runner.arch }}-
+            conformance-ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.row.target }}-
 
+      # The toolchains change with mcpp and the manifests; the build cache changes with every commit, so it is kept
+      # apart, saved on each run, and trimmed before it is saved.
       - name: Cache xlings and mcpp
         if: matrix.integration == 'mcpp'
         uses: actions/cache@v4
@@ -208,9 +226,19 @@ jobs:
           path: |
             ~/.xlings
             ~/.mcpp
-          key: conformance-mcpp-${{ runner.os }}-${{ runner.arch }}-${{ env.MCPP_VERSION }}-${{ hashFiles('mcpp.toml') }}
+            !~/.mcpp/build-cache
+          key: conformance-mcpp-tools-${{ runner.os }}-${{ runner.arch }}-${{ env.MCPP_VERSION }}-${{ hashFiles('mcpp.toml') }}
           restore-keys: |
-            conformance-mcpp-${{ runner.os }}-${{ runner.arch }}-${{ env.MCPP_VERSION }}-
+            conformance-mcpp-tools-${{ runner.os }}-${{ runner.arch }}-${{ env.MCPP_VERSION }}-
+
+      - name: Cache mcpp build output
+        if: matrix.integration == 'mcpp'
+        uses: actions/cache@v4
+        with:
+          path: ~/.mcpp/build-cache
+          key: conformance-mcpp-build-${{ runner.os }}-${{ runner.arch }}-${{ matrix.row.target }}-${{ github.sha }}
+          restore-keys: |
+            conformance-mcpp-build-${{ runner.os }}-${{ runner.arch }}-${{ matrix.row.target }}-
 
       - name: Install xlings
         if: matrix.integration == 'mcpp' && matrix.row.host != 'windows'
@@ -246,12 +274,13 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # The launch checkpoint starts the packaged APK here, and the package is built for the emulator's ABI. An
-      # emulator that does not boot leaves no device attached, which the checkpoint reports as unavailable.
+      # The launch checkpoint starts the packaged APK here, and the package is built for the emulator's ABI. The
+      # emulator boots while the projects build; an emulator that does not boot leaves no device attached, which
+      # the checkpoint reports as unavailable.
       - name: Start an Android emulator
         if: matrix.row.target == 'android' && matrix.row.host == 'linux'
         continue-on-error: true
-        timeout-minutes: 15
+        timeout-minutes: 10
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
             | sudo tee /etc/udev/rules.d/99-kvm4all.rules > /dev/null
@@ -272,15 +301,7 @@ jobs:
           ls -l /dev/kvm
           nohup "$emulator" -avd cts -no-window -no-audio -no-boot-anim -no-snapshot \
             -gpu swiftshader_indirect > "$RUNNER_TEMP/emulator.log" 2>&1 &
-          emulator_pid=$!
-          adb="$ANDROID_HOME/platform-tools/adb"
-          booted() { [ "$("$adb" shell getprop sys.boot_completed 2> /dev/null | tr -d '\r')" = 1 ]; }
-          for _ in $(seq 120); do booted && break; kill -0 "$emulator_pid" 2> /dev/null || break; sleep 5; done
-          if ! booted; then
-            tail -n 60 "$RUNNER_TEMP/emulator.log"
-            exit 1
-          fi
-          "$adb" shell getprop ro.product.cpu.abi
+          echo $! > "$RUNNER_TEMP/emulator.pid"
 
       # The package checkpoints run `huxerui package` as a developer does, so the suite builds the CLI.
       - name: Build the HuxerUI CLI
@@ -301,7 +322,7 @@ jobs:
       - name: Build the conformance projects
         run: |
           ${{ matrix.row.python }} buildtools/cts/cts.py build --integration ${{ matrix.integration }} \
-            --target ${{ matrix.row.target }} ${CTS_BUILD_ARGUMENTS:-} --out "$RUNNER_TEMP/cts"
+            --target ${{ matrix.row.target }} --out "$RUNNER_TEMP/cts"
 
       - name: "Check: default build"
         if: ${{ !cancelled() }}
@@ -327,6 +348,25 @@ jobs:
           ${{ matrix.row.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
             --target ${{ matrix.row.target }} --check libraries --out "$RUNNER_TEMP/cts"
 
+      - name: Wait for the Android emulator
+        if: ${{ !cancelled() && matrix.row.target == 'android' && matrix.row.host == 'linux' }}
+        continue-on-error: true
+        timeout-minutes: 12
+        run: |
+          adb="$ANDROID_HOME/platform-tools/adb"
+          pid="$(cat "$RUNNER_TEMP/emulator.pid" 2> /dev/null || true)"
+          booted() { [ "$("$adb" shell getprop sys.boot_completed 2> /dev/null | tr -d '\r')" = 1 ]; }
+          for _ in $(seq 120); do
+            booted && break
+            { [ -n "$pid" ] && kill -0 "$pid" 2> /dev/null; } || break
+            sleep 5
+          done
+          if ! booted; then
+            tail -n 60 "$RUNNER_TEMP/emulator.log" || true
+            exit 1
+          fi
+          "$adb" shell getprop ro.product.cpu.abi
+
       - name: "Check: distributable"
         if: ${{ !cancelled() }}
         run: |
@@ -345,6 +385,15 @@ jobs:
         run: |
           ${{ matrix.row.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
             --target ${{ matrix.row.target }} --check package-shellless --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts"
+
+      - name: Trim the build caches
+        if: always()
+        run: |
+          if [ "${{ matrix.integration }}" = mcpp ]; then
+            mcpp cache gc --max-size 1GiB || true
+          elif command -v ccache > /dev/null && [ -n "${CMAKE_CXX_COMPILER_LAUNCHER:-}" ]; then
+            ccache --show-stats || true
+          fi
 
       - name: Upload the results
         if: always()
@@ -379,7 +428,16 @@ jobs:
               libgtk-4-dev libepoxy-dev libsoup-3.0-dev pkg-config gcc-14 g++-14 ccache
             echo "CC=gcc-14" >> "$GITHUB_ENV"
             echo "CXX=g++-14" >> "$GITHUB_ENV"
-            echo "CTS_BUILD_ARGUMENTS=--cmake-compiler-launcher ccache" >> "$GITHUB_ENV"
+            {
+              echo "CMAKE_C_COMPILER_LAUNCHER=ccache"
+              echo "CMAKE_CXX_COMPILER_LAUNCHER=ccache"
+              echo "CCACHE_DIR=$HOME/.cache/ccache"
+              # Builds below the runner's work directory hash their paths relative to it, so the same source compiled
+              # in two build directories of one depth is one cache entry.
+              echo "CCACHE_BASEDIR=$(dirname "$RUNNER_TEMP")"
+              echo "CCACHE_NOHASHDIR=1"
+              echo "CCACHE_MAXSIZE=600M"
+            } >> "$GITHUB_ENV"
           fi
 
       - name: Install Emscripten
@@ -402,6 +460,8 @@ jobs:
           restore-keys: |
             conformance-sequence-ccache-${{ runner.os }}-${{ runner.arch }}-
 
+      # The toolchains change with mcpp and the manifests; the build cache changes with every commit, so it is kept
+      # apart, saved on each run, and trimmed before it is saved.
       - name: Cache xlings and mcpp
         if: matrix.integration == 'mcpp'
         uses: actions/cache@v4
@@ -409,9 +469,19 @@ jobs:
           path: |
             ~/.xlings
             ~/.mcpp
-          key: conformance-mcpp-${{ runner.os }}-${{ runner.arch }}-${{ env.MCPP_VERSION }}-${{ hashFiles('mcpp.toml') }}
+            !~/.mcpp/build-cache
+          key: conformance-mcpp-tools-${{ runner.os }}-${{ runner.arch }}-${{ env.MCPP_VERSION }}-${{ hashFiles('mcpp.toml') }}
           restore-keys: |
-            conformance-mcpp-${{ runner.os }}-${{ runner.arch }}-${{ env.MCPP_VERSION }}-
+            conformance-mcpp-tools-${{ runner.os }}-${{ runner.arch }}-${{ env.MCPP_VERSION }}-
+
+      - name: Cache mcpp build output
+        if: matrix.integration == 'mcpp'
+        uses: actions/cache@v4
+        with:
+          path: ~/.mcpp/build-cache
+          key: conformance-mcpp-build-${{ runner.os }}-${{ runner.arch }}-sequence-${{ github.sha }}
+          restore-keys: |
+            conformance-mcpp-build-${{ runner.os }}-${{ runner.arch }}-sequence-
 
       - name: Install xlings and the pinned mcpp
         if: matrix.integration == 'mcpp'
@@ -435,7 +505,16 @@ jobs:
       - name: Build and check every target in turn
         run: |
           python3 buildtools/cts/cts.py sequence --integration ${{ matrix.integration }} --targets linux,web,android \
-            ${CTS_BUILD_ARGUMENTS:-} --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts"
+            --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts"
+
+      - name: Trim the build caches
+        if: always()
+        run: |
+          if [ "${{ matrix.integration }}" = mcpp ]; then
+            mcpp cache gc --max-size 1GiB || true
+          elif command -v ccache > /dev/null && [ -n "${CMAKE_CXX_COMPILER_LAUNCHER:-}" ]; then
+            ccache --show-stats || true
+          fi
 
       # Named apart from the conformance results, so the comparison jobs do not read a host's builds twice.
       - name: Upload the results
@@ -476,14 +555,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends xvfb xauth fonts-dejavu-core
           if [ "${{ matrix.integration }}" = cmake ]; then
-            sudo apt-get install -y --no-install-recommends ninja-build
+            sudo apt-get install -y --no-install-recommends ninja-build ccache
           fi
           if [ "${{ matrix.integration }}" = cmake ] && [ "${{ matrix.row.target }}" = linux ]; then
             sudo apt-get install -y --no-install-recommends \
-              libgtk-4-dev libepoxy-dev libsoup-3.0-dev pkg-config gcc-14 g++-14 ccache
+              libgtk-4-dev libepoxy-dev libsoup-3.0-dev pkg-config gcc-14 g++-14
             echo "CC=gcc-14" >> "$GITHUB_ENV"
             echo "CXX=g++-14" >> "$GITHUB_ENV"
-            echo "CTS_BUILD_ARGUMENTS=--cmake-compiler-launcher ccache" >> "$GITHUB_ENV"
           fi
 
       # CMake's Linux package deploys the runtime with patchelf 0.19 or newer and writes the AppImage with appimagetool.
@@ -528,17 +606,36 @@ jobs:
           if [ -d /Applications/Xcode_26.2.app ]; then
             echo "DEVELOPER_DIR=/Applications/Xcode_26.2.app/Contents/Developer" >> "$GITHUB_ENV"
           fi
-          if [ "${{ matrix.integration }}" = cmake ]; then brew install ninja; fi
+          if [ "${{ matrix.integration }}" = cmake ]; then brew install ninja ccache; fi
+
+      # Every CMake build of a row -- each project's, and each `huxerui package` the CLI starts -- compiles the same
+      # framework; ccache reuses its objects across those build directories and across runs. The Web's compiler
+      # keeps its own cache, and MSVC's default debug information cannot be cached, so those rows compile in full.
+      - name: Use a compiler cache
+        if: matrix.integration == 'cmake' && matrix.row.host != 'windows' && matrix.row.target != 'web'
+        run: |
+          {
+            echo "CMAKE_C_COMPILER_LAUNCHER=ccache"
+            echo "CMAKE_CXX_COMPILER_LAUNCHER=ccache"
+            echo "CCACHE_DIR=$HOME/.cache/ccache"
+            # Builds below the runner's work directory hash their paths relative to it, so the same source compiled
+            # in two build directories of one depth is one cache entry.
+            echo "CCACHE_BASEDIR=$(dirname "$RUNNER_TEMP")"
+            echo "CCACHE_NOHASHDIR=1"
+            echo "CCACHE_MAXSIZE=600M"
+          } >> "$GITHUB_ENV"
 
       - name: Cache compiler output
-        if: matrix.integration == 'cmake' && matrix.row.target == 'linux'
+        if: matrix.integration == 'cmake' && matrix.row.host != 'windows' && matrix.row.target != 'web'
         uses: actions/cache@v4
         with:
           path: ~/.cache/ccache
-          key: conformance-ccache-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          key: conformance-ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.row.target }}-${{ github.sha }}
           restore-keys: |
-            conformance-ccache-${{ runner.os }}-${{ runner.arch }}-
+            conformance-ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.row.target }}-
 
+      # The toolchains change with mcpp and the manifests; the build cache changes with every commit, so it is kept
+      # apart, saved on each run, and trimmed before it is saved.
       - name: Cache xlings and mcpp
         if: matrix.integration == 'mcpp'
         uses: actions/cache@v4
@@ -546,9 +643,19 @@ jobs:
           path: |
             ~/.xlings
             ~/.mcpp
-          key: conformance-mcpp-${{ runner.os }}-${{ runner.arch }}-${{ env.MCPP_VERSION }}-${{ hashFiles('mcpp.toml') }}
+            !~/.mcpp/build-cache
+          key: conformance-mcpp-tools-${{ runner.os }}-${{ runner.arch }}-${{ env.MCPP_VERSION }}-${{ hashFiles('mcpp.toml') }}
           restore-keys: |
-            conformance-mcpp-${{ runner.os }}-${{ runner.arch }}-${{ env.MCPP_VERSION }}-
+            conformance-mcpp-tools-${{ runner.os }}-${{ runner.arch }}-${{ env.MCPP_VERSION }}-
+
+      - name: Cache mcpp build output
+        if: matrix.integration == 'mcpp'
+        uses: actions/cache@v4
+        with:
+          path: ~/.mcpp/build-cache
+          key: conformance-mcpp-build-${{ runner.os }}-${{ runner.arch }}-${{ matrix.row.target }}-${{ github.sha }}
+          restore-keys: |
+            conformance-mcpp-build-${{ runner.os }}-${{ runner.arch }}-${{ matrix.row.target }}-
 
       - name: Install xlings
         if: matrix.integration == 'mcpp' && matrix.row.host != 'windows'
@@ -603,7 +710,7 @@ jobs:
       - name: Build the conformance projects
         run: |
           ${{ matrix.row.python }} buildtools/cts/cts.py build --integration ${{ matrix.integration }} \
-            --target ${{ matrix.row.target }} ${CTS_BUILD_ARGUMENTS:-} --out "$RUNNER_TEMP/cts"
+            --target ${{ matrix.row.target }} --out "$RUNNER_TEMP/cts"
 
       - name: "Check: default build"
         if: ${{ !cancelled() }}
@@ -647,6 +754,15 @@ jobs:
         run: |
           ${{ matrix.row.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
             --target ${{ matrix.row.target }} --check package-shellless --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts"
+
+      - name: Trim the build caches
+        if: always()
+        run: |
+          if [ "${{ matrix.integration }}" = mcpp ]; then
+            mcpp cache gc --max-size 1GiB || true
+          elif command -v ccache > /dev/null && [ -n "${CMAKE_CXX_COMPILER_LAUNCHER:-}" ]; then
+            ccache --show-stats || true
+          fi
 
       - name: Upload the results
         if: always()
