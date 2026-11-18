@@ -31,7 +31,7 @@ The CLI reports exit code `0` for success, `2` for invalid command usage, and `1
 
 A project has one build system, identified by the native build file at its root.
 The CLI offers one set of verbs and dispatches each to the project's integration; it exposes no command named after a build system.
-An application root that declares more than one build system requires an explicit selection, and the CLI diagnoses the ambiguity instead of choosing.
+An application root that declares more than one build system builds with CMake, the first integration, unless an explicit selection names another; the platform shells apply the same default.
 A library is built by the build system of the application that consumes it, so a library root may carry several native declarations without ambiguity.
 An option that does not apply to the project's build system is never silent.
 An option that would change the product, such as an ABI, optimization, LTO, or package-format choice, is rejected as invalid usage with the reason.
@@ -51,7 +51,7 @@ Declaring a library dependency is one statement in the native build file.
 The CLI may delegate that edit to a build system's own dependency command where one exists; it never rewrites a native build script as text.
 A capability that only one build system offers is used through that build system's native configuration or commands and is not wrapped by the CLI.
 
-The CLI dispatches `build`, `run`, and `package` to the CMake and mcpp integrations; running an mcpp project on a platform other than the host's desktop is refused until it is mapped.
+The CLI dispatches `build`, `run`, and `package` to the CMake and mcpp integrations.
 
 The shared request carries the following information where applicable:
 
@@ -245,7 +245,7 @@ The conformance suite names the clauses each of its checks covers, and its [cove
 | `EXIT-CODES` | The CLI exits with `0` for success, `2` for invalid usage, and `1` for an operation failure. | [CLI build intent](#cli-build-intent) |
 | `ABI-SELECT` | An explicit ABI selection is satisfied in full or rejected, and the ABIs of each produced artifact are reported. | [CLI build intent](#cli-build-intent) |
 | `DISPATCH-ROOT` | The native build file at the project root identifies its build system, and the CLI dispatches one set of verbs to it. | [Build-system selection and dispatch](#build-system-selection-and-dispatch) |
-| `DISPATCH-AMBIGUOUS` | An application root that declares several build systems requires an explicit selection. | [Build-system selection and dispatch](#build-system-selection-and-dispatch) |
+| `DISPATCH-DEFAULT` | An application root that declares several build systems builds with CMake unless an explicit selection names another. | [Build-system selection and dispatch](#build-system-selection-and-dispatch) |
 | `OPTION-INAPPLICABLE` | An inapplicable option is never silent: a product option is invalid usage, a driver option is reported and not applied. | [Build-system selection and dispatch](#build-system-selection-and-dispatch) |
 | `CREATE-SELECT` | `huxerui create` generates the native declaration of each selected build system around the common layout. | [Build-system selection and dispatch](#build-system-selection-and-dispatch) |
 | `LAYOUT-COMMON` | Common sources, `resources/`, and the `platform/<platform-id>` shells have the same layout and meaning under every integration. | [Build-system selection and dispatch](#build-system-selection-and-dispatch) |

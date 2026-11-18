@@ -17,6 +17,8 @@ ctskit_widgets = { path = "libraries/widgets" }
 # toolchain's libc++ headers, and the libc++ in the iOS SDK does not carry every symbol those headers name.
 [target.'cfg(os = "ios")'.dependencies]
 llvm.libcxx = "22.1.8.3"
+# Below the toolchain's own iOS floor, the core needs the compiler's runtime builtins built for it.
+llvm.compiler-rt-builtins = "22.1.8.6"
 
 # `app` is a program on the desktop and the Web and the application's shared library on Android.
 # The platform shell owns the process entry, so each platform names its own.
@@ -36,6 +38,8 @@ main = "platform/ios/App/main.mm"
 
 [build]
 sources = []
+# The iOS deployment minimum, as the Xcode shell's IPHONEOS_DEPLOYMENT_TARGET and the CMake integration state it.
+ios_deployment_target = "15.0"
 
 # The Web build's exception model; HuxerUI requires it, and only the root package can grant it.
 [target.'cfg(os = "emscripten")'.abi]

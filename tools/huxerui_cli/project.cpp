@@ -532,10 +532,16 @@ std::vector<GeneratedFile> ModulesPreviewProjectFiles(const LibraryTemplateConte
   std::vector<GeneratedFile> declaration =
       McppApplicationDeclaration(context, huxerui_home, library.project.project_name + " = { path = \"../..\" }\n");
   // `import std;` on iOS needs a C++ standard library built for the application, as in `templates/app`.
-  FindGeneratedFile(declaration, "mcpp.toml", "project/mcpp_app").content +=
-      "\n# `import std;` on iOS needs a C++ standard library built for this application: the module is made from "
-      "the\n# toolchain's libc++ headers, and the libc++ in the iOS SDK does not carry every symbol those headers "
-      "name.\n[target.'cfg(os = \"ios\")'.dependencies]\nllvm.libcxx = \"22.1.8.3\"\n";
+  std::string& manifest = FindGeneratedFile(declaration, "mcpp.toml", "project/mcpp_app").content;
+  const std::string ios_dependencies = "[target.'cfg(os = \"ios\")'.dependencies]\n";
+  const std::size_t table = manifest.find(ios_dependencies);
+  if (table == std::string::npos) {
+    throw std::logic_error("project/mcpp_app declares no iOS dependency table");
+  }
+  manifest.insert(table + ios_dependencies.size(),
+                  "# `import std;` on iOS needs a C++ standard library built for this application: the module is "
+                  "made from the\n# toolchain's libc++ headers, and the libc++ in the iOS SDK does not carry every "
+                  "symbol those headers name.\nllvm.libcxx = \"22.1.8.3\"\n");
   files.insert(files.end(), std::make_move_iterator(declaration.begin()),
                std::make_move_iterator(declaration.end()));
   FindGeneratedFile(files, ".gitignore", "project/modules_library_preview").content += "\n/target/\n/.mcpp/\n";
@@ -1054,10 +1060,16 @@ void CreateProject(const std::filesystem::path& destination, const ProjectTempla
         return platform->Id() == id;
       });
     });
-    // `mcpp new` cannot know the identity, so the CLI records it where `platform add` reads it.
-    FindGeneratedFile(files, "mcpp.toml", "templates/" + std::string(selected)).content +=
-        "\n# The project's identity, which `huxerui platform add` gives to the platform shells it writes.\n"
-        "[package.metadata.huxerui]\nname = \"" + context.project_name + "\"\nid   = \"" + context.project_id + "\"\n";
+    // `mcpp new` cannot know the identifier, so the template leaves it commented out in its identity table; the CLI
+    // states it there, where `platform add` and the package formats read it.
+    std::string& manifest = FindGeneratedFile(files, "mcpp.toml", "templates/" + std::string(selected)).content;
+    const std::size_t table = manifest.find("[package.metadata.huxerui]\n");
+    const std::size_t placeholder = table == std::string::npos ? table : manifest.find("\n# id = ", table);
+    if (placeholder == std::string::npos) {
+      throw std::logic_error("templates/" + std::string(selected) + " has no identity table with an id placeholder");
+    }
+    const std::size_t end = manifest.find('\n', placeholder + 1);
+    manifest.replace(placeholder + 1, end - placeholder - 1, "id   = \"" + context.project_id + "\"");
     WriteFiles(temporary, files);
     for (const PlatformDriver* platform : application_platforms) {
       WriteFiles(temporary / "platform" / platform->Id(), platform->CreateShell(context));

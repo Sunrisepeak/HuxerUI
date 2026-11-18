@@ -13,6 +13,7 @@
 #include <string_view>
 #include <utility>
 
+#include "mcpp/mcpp.h"
 #include "project.h"
 #include "template.h"
 
@@ -325,6 +326,12 @@ void UpdateIosLibraryIntegration(const std::filesystem::path& project_root) {
   }
 }
 
+/// The profile and features the mcpp integration builds the core with, resolved from the CLI's options.
+mcpp::CommandOptions IosMcppOptions(const PlatformCommandContext& context) {
+  return mcpp::ResolveOptions(context.project_root, "ios", context.profile, context.optimization, context.lto,
+                              context.profiling);
+}
+
 /// The framework the shell compiles its entry against: the SDK for CMake, or for mcpp the framework the build
 /// resolved, which its build program records.
 std::filesystem::path IosFrameworkHome(const PlatformCommandContext& context) {
@@ -482,9 +489,8 @@ public:
       // core is built before Xcode runs; the shell's own build then finds it current.
       std::vector<std::string> arguments{"build", "--target",
                                          IsIosPhysicalDevice(context) ? "aarch64-ios" : "aarch64-ios-sim"};
-      if (context.profile == "release") {
-        arguments.emplace_back("--release");
-      }
+      const std::vector<std::string> profile = mcpp::ProfileArguments(IosMcppOptions(context));
+      arguments.insert(arguments.end(), profile.begin(), profile.end());
       return {{"mcpp", std::move(arguments), context.project_root}};
     }
     return detail::LibraryGraphConfigureCommands(context);
@@ -538,6 +544,18 @@ public:
     } else if (context.build_system == BuildSystem::Mcpp) {
       // A generic Simulator destination builds every standard architecture; the mcpp core is arm64.
       build_arguments.push_back("ARCHS=arm64");
+    }
+    if (context.build_system == BuildSystem::Mcpp) {
+      // The shell's build phase builds the core with the profile and features the CLI resolved.
+      const mcpp::CommandOptions options = IosMcppOptions(context);
+      build_arguments.push_back("HUXERUI_MCPP_PROFILE=" + options.profile_name);
+      std::string features;
+      for (const std::string& feature : options.features) {
+        features += (features.empty() ? "" : ",") + feature;
+      }
+      if (!features.empty()) {
+        build_arguments.push_back("HUXERUI_MCPP_FEATURES=" + features);
+      }
     }
     if (context.optimization) {
       build_arguments.push_back("HUXERUI_OPTIMIZATION=" + *context.optimization);

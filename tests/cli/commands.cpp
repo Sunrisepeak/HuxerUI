@@ -110,11 +110,9 @@ TEST_CASE("HuxerUICliDispatchesToTheProjectsBuildSystem") {
 
   // An option that would change the product is invalid usage for an integration that cannot honor it.
   for (const std::initializer_list<std::string_view> arguments : {
-           std::initializer_list<std::string_view>{"build", "linux", "--abi", "x86_64"},
-           std::initializer_list<std::string_view>{"build", "linux", "--lto", "on"},
-           std::initializer_list<std::string_view>{"build", "linux", "--optimization", "size"},
+           std::initializer_list<std::string_view>{"build", "linux", "--abi", "aarch64"},
            std::initializer_list<std::string_view>{"build", "linux", "--sdk", "."},
-           std::initializer_list<std::string_view>{"run", "linux", "--watch"},
+           std::initializer_list<std::string_view>{"run", "web", "--watch"},
        }) {
     const Invocation invocation = Invoke(modules / "src", arguments);
     INFO(invocation.error);
@@ -122,10 +120,26 @@ TEST_CASE("HuxerUICliDispatchesToTheProjectsBuildSystem") {
     REQUIRE(invocation.error.find("mcpp project") != std::string::npos);
   }
 
-  // A root declaring both build systems needs a selection, and the selection must name a declared one.
-  const Invocation ambiguous = Invoke(both, {"build", "linux"});
-  REQUIRE(ambiguous.result == 2);
-  REQUIRE(ambiguous.error.find("select one with --build-system") != std::string::npos);
+  // --optimization and --lto select a release profile the manifest declares; one it lacks is invalid usage.
+  const std::filesystem::path bare = temporary.Path() / "bare";
+  std::filesystem::create_directories(bare / "platform/linux");
+  std::ofstream(bare / "mcpp.toml") << "[package]\nname = \"bare\"\nversion = \"0.1.0\"\n\n[dependencies]\n"
+                                       "huxerui = { path = \"/nowhere\" }\n";
+  std::ofstream(bare / "build.mcpp") << "int main() { return 0; }\n";
+  const Invocation undeclared_profile =
+      Invoke(bare, {"build", "linux", "--config", "release", "--optimization", "size", "--lto", "on"});
+  REQUIRE(undeclared_profile.result == 2);
+  REQUIRE(undeclared_profile.error.find("profile release-size-lto, which mcpp.toml does not declare") !=
+          std::string::npos);
+
+  // A root declaring both build systems builds with CMake unless --build-system selects mcpp, and a selection must
+  // name a declared one. `--no-shell` tells the two paths apart without building: only the CMake path refuses it.
+  const Invocation defaulted = Invoke(both, {"build", "linux", "--no-shell"});
+  REQUIRE(defaulted.result == 2);
+  REQUIRE(defaulted.error.find("not available for a CMake project") != std::string::npos);
+  const Invocation selected = Invoke(both, {"build", "linux", "--no-shell", "--build-system", "mcpp"});
+  REQUIRE(selected.result == 2);
+  REQUIRE(selected.error.find("linux has none") != std::string::npos);
   REQUIRE(Invoke(both, {"build", "linux", "--build-system", "meson"}).result == 2);
   const Invocation undeclared = Invoke(modules, {"build", "linux", "--build-system", "cmake"});
   REQUIRE(undeclared.result == 2);

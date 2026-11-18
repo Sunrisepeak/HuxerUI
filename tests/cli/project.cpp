@@ -1,8 +1,26 @@
 #include "support.h"
 
+#include <set>
+
 #include "prompt.h"
 
 using namespace huxerui::cli::test;
+
+namespace {
+
+/// Every table header of a manifest, once each: TOML refuses a table declared twice.
+void RequireUniqueTables(const std::string& manifest) {
+  std::set<std::string> tables;
+  std::istringstream lines(manifest);
+  for (std::string line; std::getline(lines, line);) {
+    if (line.starts_with('[') && !line.starts_with("[[")) {
+      INFO(line);
+      REQUIRE(tables.insert(line).second);
+    }
+  }
+}
+
+} // namespace
 
 TEST_CASE("HuxerUICliRendersEmbeddedTemplatePathsAndContents") {
   const auto context = huxerui::cli::MakeProjectTemplateContext("Sample-App", "dev.example.sample");
@@ -87,6 +105,13 @@ TEST_CASE("HuxerUICliCreatesModulesApplications") {
   REQUIRE(manifest.find(HUXERUI_TEST_SOURCE_DIRECTORY) != std::string::npos);
   REQUIRE(manifest.find("#   huxerui.huxerui = ") != std::string::npos);
   REQUIRE(manifest.find("\nhuxerui.huxerui = ") == std::string::npos);
+  // The identity goes into the template's own table, whose identifier `mcpp new` leaves commented out.
+  RequireUniqueTables(manifest);
+  REQUIRE(manifest.find("id   = \"com.example.sampleapp\"") != std::string::npos);
+  REQUIRE(manifest.find("# id = ") == std::string::npos);
+  // The release profiles and the iOS deployment minimum the CLI's options and the Xcode shell rely on.
+  REQUIRE(manifest.find("release-minsize-lto = {") != std::string::npos);
+  REQUIRE(manifest.find("ios_deployment_target = \"15.0\"") != std::string::npos);
 }
 
 TEST_CASE("HuxerUICliKeepsOnlySelectedPlatformEntries") {
@@ -125,6 +150,7 @@ TEST_CASE("HuxerUICliCreatesApplicationsWithBothDeclarations") {
   REQUIRE(Read(project / "src/app.cpp").find("#include <huxerui/huxerui.h>") != std::string::npos);
   REQUIRE(Read(project / "platform/linux/main.cpp").find("#include <huxerui/app.h>") != std::string::npos);
   const std::string manifest = Read(project / "mcpp.toml");
+  RequireUniqueTables(manifest);
   // Both declarations name the same application target, which is the artifact's basename.
   REQUIRE(manifest.find("name     = \"dual_app\"") != std::string::npos);
   REQUIRE(manifest.find("[targets.dual_app]") != std::string::npos);
@@ -175,6 +201,8 @@ TEST_CASE("HuxerUICliCreatesModulesLibraries") {
   REQUIRE(page.find("#include") == std::string::npos);
   REQUIRE(page.find("@") == std::string::npos);
   const std::string preview_manifest = Read(preview / "mcpp.toml");
+  RequireUniqueTables(manifest);
+  RequireUniqueTables(preview_manifest);
   REQUIRE(preview_manifest.find("my-widgets = { path = \"../..\" }") != std::string::npos);
   REQUIRE(preview_manifest.find("[targets.example_my_widgets]") != std::string::npos);
   REQUIRE(Read(preview / "platform/linux/main.cpp").find("import huxerui;") != std::string::npos);

@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <utility>
 
+#include "mcpp/mcpp.h"
 #include "template.h"
 
 namespace huxerui::cli {
@@ -363,18 +364,18 @@ public:
   }
 };
 
+/// The profile and features the mcpp integration builds the core with, resolved from the CLI's options.
+mcpp::CommandOptions AndroidMcppOptions(const PlatformCommandContext& context) {
+  return mcpp::ResolveOptions(context.project_root, "android", context.profile, context.optimization, context.lto,
+                              context.profiling);
+}
+
 } // namespace
 
 namespace detail {
 
 std::string AndroidMcppTriple(std::string_view abi) {
-  if (abi == "arm64-v8a") {
-    return "aarch64-linux-android";
-  }
-  if (abi == "x86_64") {
-    return "x86_64-linux-android";
-  }
-  throw std::invalid_argument("the mcpp integration builds no Android ABI " + std::string(abi));
+  return mcpp::AbiTriple("android", abi);
 }
 
 std::vector<ProcessCommand>
@@ -384,9 +385,8 @@ AndroidLibraryGraphCommands(const PlatformCommandContext& context, std::string_v
     // ABI is built before Gradle runs; the shell's own build of that ABI then finds it current.
     const std::string abi = context.abis.empty() ? std::string("arm64-v8a") : context.abis.front();
     std::vector<std::string> arguments{"build", "--target", AndroidMcppTriple(abi)};
-    if (context.profile == "release") {
-      arguments.emplace_back("--release");
-    }
+    const std::vector<std::string> profile = mcpp::ProfileArguments(AndroidMcppOptions(context));
+    arguments.insert(arguments.end(), profile.begin(), profile.end());
     return {{"mcpp", std::move(arguments), context.project_root}};
   }
   std::vector<ProcessCommand> commands = LibraryGraphConfigureCommands(context);
@@ -416,6 +416,18 @@ AndroidBuildCommands(const PlatformCommandContext& context, std::string_view hos
   }
   arguments.push_back(std::string("-PhuxeruiBuildSystem=") +
                       (context.build_system == BuildSystem::Mcpp ? "mcpp" : "cmake"));
+  if (context.build_system == BuildSystem::Mcpp) {
+    // The Gradle task builds the core with the profile and features the CLI resolved from the same options.
+    const mcpp::CommandOptions options = AndroidMcppOptions(context);
+    arguments.push_back("-PhuxeruiMcppProfile=" + options.profile_name);
+    std::string features;
+    for (const std::string& feature : options.features) {
+      features += (features.empty() ? "" : ",") + feature;
+    }
+    if (!features.empty()) {
+      arguments.push_back("-PhuxeruiMcppFeatures=" + features);
+    }
+  }
   arguments.push_back(":app:assemble" + configuration);
   if (context.optimization) {
     arguments.push_back("-PhuxeruiOptimization=" + *context.optimization);

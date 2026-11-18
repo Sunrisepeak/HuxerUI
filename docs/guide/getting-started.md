@@ -31,6 +31,7 @@ huxerui create app hello_both --build-system cmake,mcpp
 
 `--template` selects a C++ modules application's content, `app` (the default) or `navigation`.
 `build`, `run`, and `package` are the same commands for every style and build system.
+A project with both declarations builds with CMake; add `--build-system mcpp` to a command to build it with mcpp instead.
 
 Use `--agent` to select a different Agent Skill directory:
 

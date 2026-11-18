@@ -8,8 +8,8 @@ pluginManagement {
     }
 }
 
-// The integration that builds the application core: the project's only declaration, or the one
-// -PhuxeruiBuildSystem names when the project declares both. Everything else in this shell is shared.
+// The integration that builds the application core: the one -PhuxeruiBuildSystem names, the project's only
+// declaration, or CMake when the project declares both. Everything else in this shell is shared.
 def huxeruiProjectRoot = file("../..")
 def huxeruiDeclarations = [
         cmake: new File(huxeruiProjectRoot, "CMakeLists.txt").isFile(),
@@ -18,9 +18,8 @@ def huxeruiDeclarations = [
 def huxeruiBuildSystem = providers.gradleProperty("huxeruiBuildSystem").orNull
 if (huxeruiBuildSystem == null) {
     def declared = huxeruiDeclarations.findAll { it.value }.keySet().toList()
-    if (declared.size() != 1) {
-        throw new GradleException("The project declares ${declared.isEmpty() ? 'no build system' : declared.join(' and ')}; " +
-                "select one with -PhuxeruiBuildSystem=cmake or -PhuxeruiBuildSystem=mcpp")
+    if (declared.isEmpty()) {
+        throw new GradleException("The project declares no build system: ${huxeruiProjectRoot}")
     }
     huxeruiBuildSystem = declared.first()
 } else if (!huxeruiDeclarations[huxeruiBuildSystem]) {

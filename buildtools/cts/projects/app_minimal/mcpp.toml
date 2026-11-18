@@ -30,6 +30,12 @@ main = "platform/ios/App/main.mm"
 
 [build]
 sources = []
+# The iOS deployment minimum, as the Xcode shell's IPHONEOS_DEPLOYMENT_TARGET and the CMake integration state it.
+ios_deployment_target = "15.0"
+
+[target.'cfg(os = "ios")'.dependencies]
+# Below the toolchain's own iOS floor, the core needs the compiler's runtime builtins built for it.
+llvm.compiler-rt-builtins = "22.1.8.6"
 
 # The Web build's exception model; HuxerUI requires it, and only the root package can grant it.
 [target.'cfg(os = "emscripten")'.abi]

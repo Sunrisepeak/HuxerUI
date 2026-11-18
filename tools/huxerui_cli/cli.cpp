@@ -4,6 +4,7 @@
 #include <array>
 #include <exception>
 #include <filesystem>
+#include <fstream>
 #include <istream>
 #include <iterator>
 #include <optional>
@@ -65,7 +66,7 @@ constexpr std::string_view sdk_commands =
     "  huxerui sdk update [--check] [--yes]\n";
 
 void PrintBuildOptions(std::ostream& output) {
-  output << "--build-system selects the integration when the project declares more than one.\n"
+  output << "A project that declares both build systems builds with cmake; --build-system mcpp selects mcpp.\n"
          << "Android and iOS build through their standard shells, Gradle and Xcode; --no-shell builds and packages\n"
          << "them with the mcpp integration alone.\n"
          << sdk_option_help
@@ -1249,7 +1250,8 @@ std::optional<PlatformDevice> SelectDevice(const PlatformDriver& platform, std::
   return ready.front();
 }
 
-/// The integration a command dispatches to: the project's only one, or the one `--build-system` selects.
+/// The integration a command dispatches to: the one `--build-system` selects, the project's only one, or CMake for a
+/// project that declares both.
 BuildSystem SelectBuildSystem(const Project& project, const BuildOptions& options) {
   if (options.build_system) {
     if (!project.Declares(*options.build_system)) {
@@ -1258,10 +1260,7 @@ BuildSystem SelectBuildSystem(const Project& project, const BuildOptions& option
     }
     return *options.build_system;
   }
-  if (project.build_systems.size() > 1) {
-    throw UsageError("this project declares more than one build system (" +
-                     JoinBuildSystems(project.build_systems, ", ") + "); select one with --build-system");
-  }
+  // `project.build_systems` is in `BuildSystem` order, so a project that declares both starts with CMake.
   return project.build_systems.front();
 }
 
@@ -1291,28 +1290,34 @@ void ApplyMcppOptionRules(BuildOptions& options, bool through_shell, std::ostrea
     throw UsageError("--sdk does not apply to an mcpp project: it takes HuxerUI from the huxerui dependency in "
                      "mcpp.toml, so change that entry instead");
   }
-  if (!options.abis.empty() && !through_shell) {
-    refuse("--abi", "is not available");
+  // adb-run, the runner of an Android package without the shell, takes its device from ANDROID_SERIAL.
+  if (!options.device.empty() && !through_shell && !(options.no_shell && options.platforms == "android")) {
+    refuse("--device", "is not available without the standard shell");
   }
-  if (options.optimization) {
-    refuse("--optimization", "is not available");
+  // The watcher stages the Web page the CMake build writes beside the module; `mcpp build` writes the module only.
+  if (options.watch && options.platforms == "web") {
+    refuse("--watch", "is not available for the Web yet");
   }
-  if (options.lto) {
-    refuse("--lto", "is not available");
-  }
-  if (options.profiling) {
-    refuse("--profile", "is not available");
-  }
-  if (!options.device.empty() && !through_shell) {
-    refuse("--device", "is not available yet");
-  }
-  if (options.watch) {
-    refuse("--watch", "is not available yet");
+  if (options.watch && options.no_shell) {
+    refuse("--watch", "is not available without the standard shell");
   }
   if (options.java_home && !through_shell) {
     error << "huxerui: warning: --java-home selects the JDK of the Gradle shell, which this command does not run; "
              "it is not applied\n";
     options.java_home.reset();
+  }
+}
+
+/// The mcpp profile and features a command selects: `--optimization` and `--lto` select a release profile the
+/// manifest declares, and `--profile` opens the framework's profiling feature.
+mcpp::CommandOptions McppOptions(const Project& project, std::string_view platform, const BuildOptions& options) {
+  try {
+    mcpp::CommandOptions result = mcpp::ResolveOptions(project.root, platform, options.profile, options.optimization,
+                                                       options.lto, options.profiling);
+    result.abis = options.abis;
+    return result;
+  } catch (const std::invalid_argument& error) {
+    throw UsageError(error.what());
   }
 }
 
@@ -1333,6 +1338,8 @@ std::vector<const PlatformDriver*> ResolveMcppPlatforms(const Project& project, 
              "it is not applied\n";
     options.cmake_generator.clear();
   }
+  // The profile the release overrides select is a usage question, answered before the platforms are checked.
+  static_cast<void>(McppOptions(project, {}, options));
   if (!project.unknown_platforms.empty()) {
     throw std::runtime_error("unknown platform directory: " + project.unknown_platforms.front());
   }
@@ -1349,6 +1356,16 @@ std::vector<const PlatformDriver*> ResolveMcppPlatforms(const Project& project, 
   const bool through_shell = std::ranges::all_of(platforms, [&options](const PlatformDriver* platform) {
     return McppUsesShell(*platform, options);
   });
+  // A standard shell builds every ABI it is given; mcpp's own path builds the ABIs it has a target for.
+  if (!through_shell) {
+    for (const std::string& abi : options.abis) {
+      try {
+        static_cast<void>(mcpp::AbiTriple(platforms.front()->Id(), abi));
+      } catch (const std::invalid_argument& error) {
+        throw UsageError("--abi " + abi + " is not available for an mcpp project: " + error.what());
+      }
+    }
+  }
   ApplyMcppOptionRules(options, through_shell, error);
   ResolveJavaHome(options, working_directory);
   return platforms;
@@ -1364,10 +1381,64 @@ PlatformCommandContext McppShellContext(const Project& project, const PlatformDr
   return context;
 }
 
+/// A JSON string literal of `value`.
+std::string JsonQuote(std::string_view value) {
+  std::string quoted = "\"";
+  for (const char character : value) {
+    if (character == '"' || character == '\\') {
+      quoted += '\\';
+    }
+    quoted += character;
+  }
+  return quoted + '"';
+}
+
+/// Builds a host program with mcpp and writes the application-integration record the CMake build writes, which the
+/// watcher stages the program from: the program, or on macOS the bundle the rules assemble beside it.
+void BuildMcppProgram(const PlatformCommandContext& context, const mcpp::CommandOptions& options,
+                      std::ostream& output) {
+  ProcessCommand command = mcpp::BuildCommand(options);
+  command.arguments.insert(command.arguments.end(), {"--message-format", "json"});
+  output << "> " << DescribeProcess(command) << '\n';
+  output.flush();
+  const ProcessResult result = RunProcessCapture(command);
+  if (result.exit_code != 0) {
+    throw std::runtime_error("command failed with exit code " + std::to_string(result.exit_code) + ": " +
+                             DescribeProcess(command));
+  }
+  std::string name;
+  std::filesystem::path artifact = mcpp::ParseBuiltProgram(result.output, name).path;
+  const std::filesystem::path bundle = artifact.parent_path() / (name + ".app");
+  const bool bundled = std::filesystem::is_directory(bundle);
+  if (bundled) {
+    artifact = bundle / "Contents/MacOS" / name;
+  }
+  const std::filesystem::path plan = context.build_directory / "huxerui-integration/app.json";
+  std::filesystem::create_directories(plan.parent_path());
+  std::ofstream(plan, std::ios::binary | std::ios::trunc)
+      << "{\n  \"schema\": 1,\n  \"target\": " << JsonQuote(name) << ",\n  \"artifact\": "
+      << JsonQuote(artifact.generic_string()) << ",\n  \"bundle\": "
+      << JsonQuote(bundled ? bundle.generic_string() : std::string{}) << "\n}\n";
+}
+
 int RunMcppCommand(const Project& project, BuildOptions& options, std::string_view command,
                    const std::filesystem::path& working_directory, std::ostream& output, std::ostream& error) {
   const std::vector<const PlatformDriver*> platforms = ResolveMcppPlatforms(
       project, options, command == "build" ? std::string_view{} : command, working_directory, error);
+  if (options.watch) {
+    const PlatformDriver& platform = *platforms.front();
+    if (McppUsesShell(platform, options)) {
+      options.selected_device = SelectDevice(platform, options.device);
+      const PlatformCommandContext context = McppShellContext(project, platform, options);
+      return WatchApplication(platform, context, [&] { BuildPlatform(platform, context, options, output); }, output,
+                              error);
+    }
+    PlatformCommandContext context = MakeCommandContext(project, platform, project.root, options);
+    context.build_system = BuildSystem::Mcpp;
+    const mcpp::CommandOptions mcpp_options = McppOptions(project, platform.Id(), options);
+    return WatchApplication(platform, context, [&] { BuildMcppProgram(context, mcpp_options, output); }, output,
+                            error);
+  }
   for (const PlatformDriver* platform : platforms) {
     if (McppUsesShell(*platform, options)) {
       if (command == "run") {
@@ -1381,11 +1452,11 @@ int RunMcppCommand(const Project& project, BuildOptions& options, std::string_vi
       }
       continue;
     }
-    const mcpp::CommandOptions mcpp_options{project.root, std::string(platform->Id()), options.profile};
+    const mcpp::CommandOptions mcpp_options = McppOptions(project, platform->Id(), options);
     if (command == "run") {
-      if (!mcpp::TargetTriple(platform->Id()).empty()) {
-        throw std::runtime_error("run " + std::string(platform->Id()) + " is not available for an mcpp project yet; "
-                                 "build it with huxerui build " + std::string(platform->Id()));
+      if (!options.device.empty()) {
+        output << "Device: " << options.device << '\n';
+        SetProcessEnvironmentVariable("ANDROID_SERIAL", options.device);
       }
       output << "Running " << platform->Id() << " (" << options.profile << ") with mcpp\n";
       const ProcessCommand run = mcpp::RunCommand(mcpp_options);
@@ -1422,7 +1493,7 @@ int RunMcppPackage(const Project& project, BuildOptions& options, const std::fil
       continue;
     }
     const std::string format = mcpp::PackageFormat(platform->Id(), options.package_format.value_or(""));
-    const mcpp::CommandOptions mcpp_options{project.root, std::string(platform->Id()), options.profile};
+    const mcpp::CommandOptions mcpp_options = McppOptions(project, platform->Id(), options);
     const ProcessCommand command = mcpp::PackCommand(mcpp_options, format);
     output << "Packaging " << platform->Id() << " (" << options.profile << ", " << format << ") with mcpp\n"
            << "> " << DescribeProcess(command) << '\n';

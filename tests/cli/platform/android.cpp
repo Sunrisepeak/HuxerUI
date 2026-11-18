@@ -226,7 +226,7 @@ TEST_CASE("HuxerUICliBuildsTheMcppCoreThroughTheGradleShell") {
   const auto build = huxerui::cli::detail::AndroidBuildCommands(context, "linux", {});
   REQUIRE(build[0].arguments ==
           std::vector<std::string>{"-PhuxeruiAbis=x86_64,arm64-v8a", "-PhuxeruiBuildSystem=mcpp",
-                                   ":app:assembleRelease"});
+                                   "-PhuxeruiMcppProfile=release", ":app:assembleRelease"});
   REQUIRE_THROWS_AS(huxerui::cli::detail::AndroidMcppTriple("armeabi-v7a"), std::invalid_argument);
 }
 

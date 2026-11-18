@@ -50,7 +50,7 @@ A clause is `checked` when some project's `expected.json`, or the contract itsel
 | `EXIT-CODES` | not covered |  |
 | `ABI-SELECT` | not covered |  |
 | `DISPATCH-ROOT` | not covered |  |
-| `DISPATCH-AMBIGUOUS` | not covered |  |
+| `DISPATCH-DEFAULT` | not covered |  |
 | `OPTION-INAPPLICABLE` | not covered |  |
 | `CREATE-SELECT` | not covered |  |
 | `LAYOUT-COMMON` | not covered |  |
