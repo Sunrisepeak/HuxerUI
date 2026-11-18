@@ -23,8 +23,9 @@ A project lists the capabilities it needs in `requires`.
 The suite also checks the projects `huxerui create` writes, so a change to the CLI or the templates that breaks a new project fails here.
 [`created-projects.json`](created-projects.json) declares each one by kind and build systems: an application with CMake, one with mcpp, one with both, and a library with mcpp and its Preview.
 A project is created for every integration whose declaration it carries, and the library's Preview is the application that is built.
+`platforms` states whether a project is created with only the checked target's platform or with every platform the CLI offers, so a project missing another platform's shell and one carrying all of them are both checked.
 Expected facts are keyed by kind, source style, and template, never by build system, so the application that declares both build systems expects what each single-system application does, and names `created_cmake_app` in `sameModelAs`.
-The file also declares the targets and hosts where the projects are created; they start with Linux and the Web on Linux hosts.
+The file also declares the targets and hosts where the projects are created; they start with Linux, the Web, and Android on Linux hosts.
 Created projects carry no probe, so their `launch` checkpoint has no facts to read.
 
 ## Checkpoints
@@ -102,11 +103,13 @@ python3 buildtools/cts/cts.py create --integration cmake --target linux --cli bu
 python3 buildtools/cts/cts.py build --integration cmake --target linux --out /tmp/cts
 python3 buildtools/cts/cts.py build --integration mcpp --target linux --mcpp-toolchain llvm@22.1.8 --out /tmp/cts
 python3 buildtools/cts/cts.py check --integration mcpp --target linux --check resources libraries --out /tmp/cts
+python3 buildtools/cts/cts.py sequence --integration mcpp --targets linux,web,android --cli build/cli/huxerui --out /tmp/cts-sequence
 python3 buildtools/cts/cts.py compare --check resources /tmp/cts/results
 python3 buildtools/cts/cts.py matrix /tmp/cts/results
 ```
 
 `create` writes the created projects declared for an integration and target below `--out` with the CLI `--cli` names, and later commands with the same `--out` include them.
+`sequence` builds the suite's projects for several targets in the same project trees, one after another, as a developer on one host does: it runs the `build`, `linkage`, `resources`, and `libraries` checkpoints for each target, builds the targets without a standard shell with one `huxerui build <list>` when `--cli` is given, and finally builds the first target again, which must record the facts it recorded first.
 `build` builds the projects and records their facts; `check` evaluates the named checkpoints, or all of them when none is named; `run` does both.
 `--project` limits any of them to the named projects.
 `compare` checks the facts integrations must agree on, and `matrix` prints the build status of every project and integration.
@@ -136,4 +139,5 @@ The workflow boots an Android emulator on Linux hosts and runs `launch` after `p
 
 `.github/workflows/build-system-conformance.yml` runs every checkpoint as its own step for each integration, then compares the integrations, on pull requests that touch a build system, the framework sources, the CLI, the templates, or the suite; Markdown changes start nothing.
 Its plan job first runs the suite's own tests (`tests/scripts/cts_test.py`) and then selects the integrations from the changed paths: a path only one integration consumes, such as `cmake/**` or `buildtools/mcpp/**`, runs that integration's rows, and any other path runs both.
+A `sequence` job per selected integration builds Linux, the Web, and Android in turn on one Linux host.
 Selection never narrows the targets of a selected integration, and the comparison runs only when both integrations ran. A push to `main` and a manual dispatch run every row.

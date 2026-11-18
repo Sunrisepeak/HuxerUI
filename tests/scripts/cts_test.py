@@ -139,6 +139,33 @@ class CreatedProjectTests(unittest.TestCase):
             self.assertEqual(cts.selected_projects(None, Path(out), "cmake", "web"), cts.selected_projects(None))
 
 
+class SequenceTests(unittest.TestCase):
+    def run_sequence(self, facts):
+        """Runs `sequence` over linux,web for app_minimal with an adapter whose builds record `facts` in turn."""
+        adapter = mock.Mock()
+        adapter.build.return_value = record(target="cts_app_minimal")
+        module = mock.Mock()
+        module.Adapter.return_value = adapter
+        with tempfile.TemporaryDirectory() as out, \
+                mock.patch.dict(cts.ADAPTERS, {"x": module}), \
+                mock.patch.object(cts, "collect_facts", side_effect=facts), \
+                mock.patch.object(cts, "target_support", return_value=({"capabilities": []}, "")), \
+                mock.patch.object(cts, "check_project", return_value=("pass", "")):
+            arguments = argparse.Namespace(integration="x", targets="linux,web", host="linux", out=out,
+                                           project=["app_minimal"], cli=None)
+            return cts.command_sequence(arguments), adapter.build.call_args_list
+
+    def test_every_target_and_the_rebuild_of_the_first_are_built(self):
+        status, calls = self.run_sequence([{"a": 1}, {"a": 2}, {"a": 1}])
+        self.assertEqual(status, 0)
+        # Each build_project builds twice: linux, web, then linux again.
+        self.assertEqual([call.args[2] for call in calls], ["linux", "linux", "web", "web", "linux", "linux"])
+
+    def test_a_rebuild_that_records_other_facts_fails(self):
+        status, _ = self.run_sequence([{"a": 1}, {"a": 2}, {"a": 3}])
+        self.assertEqual(status, 1)
+
+
 class DeviceLaunchTests(unittest.TestCase):
     def test_probe_lines_are_read_with_and_without_the_prefix(self):
         text = "HUXERUI_CTS_PROBE app.title=CTS app\napp.greeting=Hello = there\nsome other line\n"

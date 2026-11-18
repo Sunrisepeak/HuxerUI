@@ -867,9 +867,14 @@ def command_create(arguments) -> int:
             continue
         if arguments.integration not in project["build-systems"]:
             continue
-        log(f"== create  {name}: {project['kind']} with {','.join(project['build-systems'])}")
+        log(f"== create  {name}: {project['kind']} with {','.join(project['build-systems'])}, {project['platforms']} platforms")
         command = [arguments.cli, "create", project["kind"], name, "--build-system", ",".join(project["build-systems"]),
-                   "--platform", arguments.target, "--agent", "none", "--yes"]
+                   "--agent", "none", "--yes"]
+        # `all` is the CLI's own default: every platform it offers.
+        if project["platforms"] == "target":
+            command += ["--platform", arguments.target]
+        elif project["platforms"] != "all":
+            raise SystemExit(f"{CREATED_PROJECTS.name}: {name} has platforms {project['platforms']!r}; use target or all")
         if project.get("template"):
             command += ["--template", project["template"]]
         log("  $ " + " ".join(command))
@@ -1062,6 +1067,86 @@ def command_run(arguments) -> int:
     arguments.check = ["all"] if arguments.check is None else arguments.check
     checked = command_check(arguments)
     return 1 if built or checked else 0
+
+
+# The checkpoints that read only what a build recorded, which a sequence of targets can disturb.
+SEQUENCE_CHECKS = ("build", "linkage", "resources", "libraries")
+
+
+def cli_build_list(cli: str, integration: str, targets: list[str], project: Path) -> tuple[str, str]:
+    """`huxerui build <list>`: one command that builds several targets of one project."""
+    command = [cli, "build", ",".join(targets), "--build-system", integration]
+    if integration == "cmake":
+        command += ["--sdk", str(REPOSITORY)]
+    log("  $ " + " ".join(command))
+    completed = subprocess.run(command, cwd=project, capture_output=True, text=True)
+    if completed.returncode != 0:
+        return "fail", f"exited with {completed.returncode}\n" + "\n".join(
+            (completed.stdout + completed.stderr).splitlines()[-20:])
+    return "pass", ""
+
+
+def command_sequence(arguments) -> int:
+    """Builds every target of one host in the same project trees, one after another, as a developer does.
+
+    Each target is checked as in its own job; a `huxerui build` naming the targets the CLI builds without a shell
+    follows, and the first target is built again last and must record the facts it recorded first."""
+    targets = [target for target in arguments.targets.split(",") if target]
+    adapter = ADAPTERS[arguments.integration].Adapter(arguments, REPOSITORY)
+    out = Path(arguments.out).resolve()
+    projects = selected_projects(arguments.project)
+    failed = False
+    first: dict[str, dict] = {}
+    for target in targets:
+        for project in projects:
+            log(f"== sequence  build {arguments.integration} / {target} / {project_name(project)}")
+            result = build_project(arguments.integration, adapter, target, arguments.host, project, out)
+            write_json(result_path(out, arguments.integration, target, project_name(project)), result)
+            log(f"   {result['status'].upper()}" + (f": {result['reason']}" if result["reason"] else ""))
+            failed = failed or result["status"] == "failed"
+            if target == targets[0]:
+                first[project_name(project)] = result
+        for check in SEQUENCE_CHECKS:
+            rows = []
+            for project in projects:
+                status, detail = check_project(check, arguments.integration, target, arguments.host, project, out,
+                                               arguments)
+                rows.append((project_name(project), status, detail))
+                log(f"   {status.upper():<12}{check} {project_name(project)}" + (f"\n                {detail}" if detail else ""))
+                failed = failed or status == "fail"
+            summarize(f"sequence {check} ({arguments.integration}, {target} after {', '.join(targets[:targets.index(target)]) or 'nothing'})",
+                      rows)
+
+    rows = []
+    if arguments.cli:
+        listed = [target for target in targets if target not in SHELL_TARGETS]
+        project = PROJECTS / "app_minimal"
+        if len(listed) >= 2:
+            status, detail = cli_build_list(arguments.cli, arguments.integration, listed, project)
+            rows.append((f"huxerui build {','.join(listed)}", status, detail))
+            log(f"   {status.upper():<12}huxerui build {','.join(listed)}" + (f"\n                {detail}" if detail else ""))
+            failed = failed or status == "fail"
+
+    for project in projects:
+        name = project_name(project)
+        before = first.get(name)
+        if before is None or before["status"] != "built":
+            continue
+        log(f"== sequence  rebuild {arguments.integration} / {targets[0]} / {name} after {', '.join(targets[1:])}")
+        # The same work directory, so a build directory outside the project is reused as well.
+        again = build_project(arguments.integration, adapter, targets[0], arguments.host, project, out)
+        if again["status"] != "built":
+            status, detail = "fail", f"the rebuild failed: {again['reason']}"
+        else:
+            differing = [f"{fact}: first {json.dumps(before['facts'].get(fact))}, again {json.dumps(again['facts'].get(fact))}"
+                         for fact in sorted(set(before["facts"]) | set(again["facts"]))
+                         if before["facts"].get(fact) != again["facts"].get(fact)]
+            status, detail = ("fail", "; ".join(differing)) if differing else ("pass", "")
+        rows.append((f"{name} rebuilt for {targets[0]}", status, detail))
+        log(f"   {status.upper():<12}{name}" + (f"\n                {detail}" if detail else ""))
+        failed = failed or status == "fail"
+    summarize(f"sequence: after every target ({arguments.integration})", rows)
+    return 1 if failed else 0
 
 
 # --------------------------------------------------------------------- compare
@@ -1292,6 +1377,17 @@ def main() -> int:
     check = commands.add_parser("check", help="evaluate checkpoints for projects that were built")
     add_selection(check, with_checks=True)
     check.set_defaults(handler=command_check)
+
+    sequence = commands.add_parser("sequence", help="build every target of one host in the same project trees in turn")
+    sequence.add_argument("--integration", required=True, choices=sorted(ADAPTERS))
+    sequence.add_argument("--targets", required=True, help="comma-separated targets in build order, for example linux,web")
+    sequence.add_argument("--host", default=current_host(), help="host platform; defaults to this machine")
+    sequence.add_argument("--out", required=True, help="directory for build output and result files")
+    sequence.add_argument("--project", action="append", help="limit to the named project; repeatable")
+    sequence.add_argument("--cli", help="the HuxerUI CLI that builds several targets with one command")
+    for name, module in sorted(ADAPTERS.items()):
+        module.add_arguments(PrefixedOptions(sequence.add_argument_group(f"{name} integration"), name))
+    sequence.set_defaults(handler=command_sequence)
 
     run = commands.add_parser("run", help="build, then evaluate the selected checkpoints (all by default)")
     add_selection(run, with_checks=True)

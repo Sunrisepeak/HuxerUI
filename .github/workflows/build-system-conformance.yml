@@ -7,7 +7,8 @@ name: Build System Conformance
 # integration is checked only for what its support declaration states. The
 # expected facts belong to each project, so no integration is the reference;
 # the last job checks that the integrations agree on what has no fixed value,
-# such as the content of the final resource package.
+# such as the content of the final resource package. The sequence job builds
+# several targets in one checkout in turn, as a developer on one host does.
 #
 # A pull request runs the integrations its changes can affect: the plan job
 # reads the changed paths, and a path one integration owns selects only that
@@ -342,6 +343,98 @@ jobs:
           name: conformance-${{ matrix.integration }}-${{ matrix.row.target }}-on-${{ matrix.row.host }}
           path: ${{ runner.temp }}/cts/results
           if-no-files-found: error
+
+  # One Linux host builds every target it declares in the same checkout, one after another, as a developer does:
+  # in-tree outputs of one target must not change what another records. Each target is checked as in its own job,
+  # `huxerui build` then builds the desktop and Web targets with one command, and the first target is built again
+  # last and must record what it recorded first.
+  sequence:
+    name: ${{ matrix.integration }} (linux, web, android in turn on linux)
+    needs: [plan]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        integration: ${{ fromJSON(needs.plan.outputs.integrations) }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Linux prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fonts-dejavu-core
+          if [ "${{ matrix.integration }}" = cmake ]; then
+            sudo apt-get install -y --no-install-recommends ninja-build \
+              libgtk-4-dev libepoxy-dev libsoup-3.0-dev pkg-config gcc-14 g++-14 ccache
+            echo "CC=gcc-14" >> "$GITHUB_ENV"
+            echo "CXX=g++-14" >> "$GITHUB_ENV"
+            echo "CTS_BUILD_ARGUMENTS=--cmake-compiler-launcher ccache" >> "$GITHUB_ENV"
+          fi
+
+      - name: Install Emscripten
+        if: matrix.integration == 'cmake'
+        uses: mymindstorm/setup-emsdk@v14
+
+      - name: Install the Android NDK
+        if: matrix.integration == 'cmake'
+        run: |
+          (yes || true) | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;29.0.14206865" > /dev/null
+          test -f "$ANDROID_HOME/ndk/29.0.14206865/build/cmake/android.toolchain.cmake"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/29.0.14206865" >> "$GITHUB_ENV"
+
+      - name: Cache compiler output
+        if: matrix.integration == 'cmake'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: conformance-sequence-ccache-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          restore-keys: |
+            conformance-sequence-ccache-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Cache xlings and mcpp
+        if: matrix.integration == 'mcpp'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.xlings
+            ~/.mcpp
+          key: conformance-mcpp-${{ runner.os }}-${{ runner.arch }}-${{ env.MCPP_VERSION }}-${{ hashFiles('mcpp.toml') }}
+          restore-keys: |
+            conformance-mcpp-${{ runner.os }}-${{ runner.arch }}-${{ env.MCPP_VERSION }}-
+
+      - name: Install xlings and the pinned mcpp
+        if: matrix.integration == 'mcpp'
+        run: |
+          if [ ! -x "$HOME/.xlings/bin/xlings" ]; then
+            curl -fsSL https://d2learn.org/xlings-install.sh | bash
+          fi
+          export PATH="$HOME/.xlings/bin:$HOME/.xlings/subos/current/bin:$PATH"
+          echo "$HOME/.xlings/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
+          xlings install "mcpp@${MCPP_VERSION}" -y
+          xlings use mcpp "${MCPP_VERSION}" || true
+          mcpp --version
+
+      - name: Build the HuxerUI CLI
+        run: |
+          cmake -S tools/huxerui_cli -B "$RUNNER_TEMP/cli" -DCMAKE_BUILD_TYPE=Release
+          cmake --build "$RUNNER_TEMP/cli" --config Release --target huxerui_cli --parallel
+          echo "CTS_CLI=$(find "$RUNNER_TEMP/cli" -type f -name huxerui | head -n 1)" >> "$GITHUB_ENV"
+
+      - name: Build and check every target in turn
+        run: |
+          python3 buildtools/cts/cts.py sequence --integration ${{ matrix.integration }} --targets linux,web,android \
+            ${CTS_BUILD_ARGUMENTS:-} --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts"
+
+      # Named apart from the conformance results, so the comparison jobs do not read a host's builds twice.
+      - name: Upload the results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sequence-${{ matrix.integration }}-on-linux
+          path: ${{ runner.temp }}/cts/results
+          if-no-files-found: warn
 
   # CMake rows use Intel runners because GitHub's macOS arm64 runners are capacity constrained and can leave
   # jobs unassigned. mcpp's toolchain supports arm64 macOS only, so its rows stay on arm64 runners.
