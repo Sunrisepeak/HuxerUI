@@ -42,9 +42,17 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(plan.select(["", "  "]), ["cmake", "mcpp"])
 
 
-def rows(paths, key="rows"):
-    """The selected (target, host) rows of one conformance job."""
-    return sorted((row["target"], row["host"]) for row in plan.json.loads(plan.outputs(paths)[key]))
+def rows(paths, key="rows", only=None):
+    """The selected (target, host) rows of one conformance job, whichever integrations run them."""
+    key = {"rows": "jobs", "macos_rows": "macos_jobs"}[key]
+    jobs = plan.json.loads(plan.outputs(paths, only)[key])["include"]
+    return sorted({(job["row"]["target"], job["row"]["host"]) for job in jobs})
+
+
+def jobs(paths, key="jobs", only=None):
+    """The selected `<integration>/<target>@<host>` names of one conformance job."""
+    return sorted(plan.job_name(job["integration"], job["row"])
+                  for job in plan.json.loads(plan.outputs(paths, only)[key])["include"])
 
 
 class RowTests(unittest.TestCase):
@@ -88,15 +96,43 @@ class RowTests(unittest.TestCase):
 
     def test_jobs_without_rows_do_not_run(self):
         outputs = plan.outputs(["platform/ios/huxerui/app_delegate.mm"])
-        self.assertEqual(outputs["rows"], "[]")
+        self.assertEqual(outputs["run_jobs"], "false")
+        self.assertEqual(outputs["run_macos_jobs"], "true")
         self.assertEqual(outputs["compare"], "false")
         self.assertEqual(outputs["compare_macos"], "true")
-        self.assertEqual(outputs["sequence"], "false")
+        self.assertEqual(outputs["run_sequence"], "false")
 
     def test_one_integration_compares_nothing(self):
         outputs = plan.outputs(["mcpp.toml"])
         self.assertEqual(outputs["compare"], "false")
         self.assertEqual(outputs["compare_macos"], "false")
+
+
+class OnlyTests(unittest.TestCase):
+    def test_only_runs_the_named_jobs_whatever_changed(self):
+        self.assertEqual(jobs(["src/io/file.cpp"], "macos_jobs", "mcpp/ios@macos"), ["mcpp/ios@macos"])
+        self.assertEqual(jobs(["src/io/file.cpp"], "jobs", "mcpp/ios@macos"), [])
+        outputs = plan.outputs(["src/io/file.cpp"], "mcpp/ios@macos")
+        self.assertEqual(outputs["run_jobs"], "false")
+        self.assertEqual(outputs["run_sequence"], "false")
+        self.assertEqual(outputs["compare_macos"], "false")
+
+    def test_only_reaches_rows_the_paths_would_not_select(self):
+        self.assertEqual(jobs(["mcpp.toml"], "jobs", "cmake/web@windows"), ["cmake/web@windows"])
+
+    def test_patterns_take_wildcards_and_lists(self):
+        self.assertEqual(jobs([], "jobs", "*/android@windows, mcpp/linux@*"),
+                         ["cmake/android@windows", "mcpp/android@windows", "mcpp/linux@linux"])
+        self.assertEqual(jobs([], "macos_jobs", "*/ios@macos"), ["cmake/ios@macos", "mcpp/ios@macos"])
+        self.assertEqual(plan.outputs([], "*/ios@macos")["compare_macos"], "true")
+
+    def test_the_sequence_job_is_named_like_a_row(self):
+        self.assertEqual(plan.json.loads(plan.outputs([], "cmake/sequence@linux")["sequence"]),
+                         {"integration": ["cmake"]})
+        self.assertEqual(plan.outputs([], "cmake/sequence@linux")["run_jobs"], "false")
+
+    def test_an_empty_selection_is_no_selection(self):
+        self.assertEqual(plan.outputs(["src/io/file.cpp"], " , "), plan.outputs(["src/io/file.cpp"]))
 
 
 if __name__ == "__main__":

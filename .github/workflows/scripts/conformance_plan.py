@@ -1,8 +1,9 @@
 """Selects the conformance jobs a change can affect, for build-system-conformance.yml.
 
-Reads changed paths, one per line, from standard input and writes GitHub step outputs: `integrations`, a JSON list of
-integration names; `rows` and `macos_rows`, the JSON matrix rows of the conformance jobs; and `compare`,
-`compare_macos` and `sequence`, whether those jobs run.
+Reads changed paths, one per line, from standard input and writes GitHub step outputs: `jobs` and `macos_jobs`, the
+matrices of the conformance jobs as `{"include": [{"integration", "row"}, ...]}`; `sequence`, the matrix of the sequence
+job; `run_jobs`, `run_macos_jobs` and `run_sequence`, whether those jobs have entries; and `compare` and
+`compare_macos`, whether the comparison jobs run.
 
 Two independent selections narrow a pull request's run.
 
@@ -13,7 +14,14 @@ Two independent selections narrow a pull request's run.
   host. The remaining hosts run on `main` and on a manual dispatch.
 
 Standard input closed without a path, as for a push or a dispatch, selects everything.
+
+`--only` replaces both selections with the jobs it names, so a change can be verified on a few rows before the whole
+matrix runs. It takes comma-separated patterns over `<integration>/<target>@<host>` names, such as `mcpp/ios@macos`
+or `*/android@*`; the sequence job of an integration is `<integration>/sequence@linux`. A pull request states it in
+its head commit's message as a `CTS-Only:` line; a manual dispatch takes it as an input; a push to `main` ignores it.
 """
+
+import argparse
 
 import json
 import sys
@@ -149,24 +157,54 @@ def selected_rows(rows, targets):
             and (targets[row["target"]] == ALL_HOSTS or row["host"] == primary_host(row["target"]))]
 
 
-def outputs(paths):
-    integrations = select(paths)
-    targets = select_targets(paths)
-    rows = selected_rows(ROWS, targets)
-    macos_rows = selected_rows(MACOS_ROWS, targets)
-    both = len(integrations) > 1
+def job_name(integration, row):
+    return f"{integration}/{row['target']}@{row['host']}"
+
+
+def only_patterns(only):
+    return [pattern.strip() for pattern in (only or "").split(",") if pattern.strip()]
+
+
+def outputs(paths, only=None):
+    patterns = only_patterns(only)
+    if patterns:
+        integrations, targets = list(INTEGRATIONS), dict.fromkeys(TARGETS, ALL_HOSTS)
+    else:
+        integrations, targets = select(paths), select_targets(paths)
+
+    def wanted(name):
+        return not patterns or any(fnmatch(name, pattern) for pattern in patterns)
+
+    def jobs(rows):
+        return [{"integration": integration, "row": row} for integration in integrations
+                for row in selected_rows(rows, targets) if wanted(job_name(integration, row))]
+
+    linux_jobs, macos_jobs = jobs(ROWS), jobs(MACOS_ROWS)
+    sequence = [integration for integration in integrations
+                if any(target in targets for target in SEQUENCE_TARGETS)
+                and wanted(f"{integration}/sequence@linux")]
+
+    def compared(selected):
+        return len({job["integration"] for job in selected}) > 1
+
     return {
-        "integrations": json.dumps(integrations),
-        "rows": json.dumps(rows),
-        "macos_rows": json.dumps(macos_rows),
-        "compare": "true" if both and rows else "false",
-        "compare_macos": "true" if both and macos_rows else "false",
-        "sequence": "true" if any(target in targets for target in SEQUENCE_TARGETS) else "false",
+        "jobs": json.dumps({"include": linux_jobs}),
+        "macos_jobs": json.dumps({"include": macos_jobs}),
+        "sequence": json.dumps({"integration": sequence}),
+        # A matrix with nothing in it is an error, so a job without entries is not started.
+        "run_jobs": "true" if linux_jobs else "false",
+        "run_macos_jobs": "true" if macos_jobs else "false",
+        "run_sequence": "true" if sequence else "false",
+        "compare": "true" if compared(linux_jobs) else "false",
+        "compare_macos": "true" if compared(macos_jobs) else "false",
     }
 
 
 def main():
-    for name, value in outputs(sys.stdin.read().splitlines()).items():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--only", default="", help="comma-separated <integration>/<target>@<host> patterns")
+    arguments = parser.parse_args()
+    for name, value in outputs(sys.stdin.read().splitlines(), arguments.only).items():
         print(f"{name}={value}")
 
 
