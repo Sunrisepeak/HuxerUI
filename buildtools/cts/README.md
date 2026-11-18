@@ -139,5 +139,7 @@ The workflow boots an Android emulator on Linux hosts and runs `launch` after `p
 
 `.github/workflows/build-system-conformance.yml` runs every checkpoint as its own step for each integration, then compares the integrations, on pull requests that touch a build system, the framework sources, the CLI, the templates, or the suite; Markdown changes start nothing.
 Its plan job first runs the suite's own tests (`tests/scripts/cts_test.py`) and then selects the integrations from the changed paths: a path only one integration consumes, such as `cmake/**` or `buildtools/mcpp/**`, runs that integration's rows, and any other path runs both.
-A `sequence` job per selected integration builds Linux, the Web, and Android in turn on one Linux host.
-Selection never narrows the targets of a selected integration, and the comparison runs only when both integrations ran. A push to `main` and a manual dispatch run every row.
+It then selects the rows: a path one target owns, such as `platform/android/**`, `cmake/platform/IOS.cmake`, or the target's CLI driver and shell templates, runs that target on every host that builds it; build tooling, which runs on the host (`cmake/**`, `tools/**`, `buildtools/**` apart from the projects, the root declarations, and the workflows), runs every row; any other path is source compiled for the target and runs each target on its primary host only, the target's own host or a Linux host for the Web and Android.
+A `sequence` job per selected integration builds Linux, the Web, and Android in turn on one Linux host when one of those targets is selected.
+The comparison runs only when both integrations ran. A push to `main` and a manual dispatch run every row.
+`.github/workflows/rerun-unassigned.yml` starts a run's failed jobs again when every job that did not pass is one no hosted runner took, as happens when GitHub's macOS arm64 capacity runs out; a run with a job that ran and failed is left alone.

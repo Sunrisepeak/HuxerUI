@@ -10,11 +10,12 @@ name: Build System Conformance
 # such as the content of the final resource package. The sequence job builds
 # several targets in one checkout in turn, as a developer on one host does.
 #
-# A pull request runs the integrations its changes can affect: the plan job
-# reads the changed paths, and a path one integration owns selects only that
-# integration (.github/workflows/scripts/conformance_plan.py). The comparison
-# runs when both integrations ran. A push to main and a manual dispatch run
-# everything.
+# A pull request runs the jobs its changes can affect: the plan job reads the
+# changed paths (.github/workflows/scripts/conformance_plan.py). A path one
+# integration owns selects only that integration. A path one target owns runs
+# that target on every host; build tooling runs every row; any other source
+# runs each target on its primary host only. The comparison runs when both
+# integrations ran. A push to main and a manual dispatch run everything.
 
 on:
   push:
@@ -84,7 +85,11 @@ jobs:
     timeout-minutes: 10
     outputs:
       integrations: ${{ steps.select.outputs.integrations }}
+      rows: ${{ steps.select.outputs.rows }}
+      macos_rows: ${{ steps.select.outputs.macos_rows }}
       compare: ${{ steps.select.outputs.compare }}
+      compare_macos: ${{ steps.select.outputs.compare_macos }}
+      sequence: ${{ steps.select.outputs.sequence }}
     steps:
       # The pull request's merge commit and its first parent, the base it is compared with.
       - uses: actions/checkout@v5
@@ -96,7 +101,7 @@ jobs:
           python3 -I tests/scripts/cts_test.py
           python3 -I tests/scripts/conformance_plan_test.py
 
-      - name: Select the integrations
+      - name: Select the integrations and rows
         id: select
         run: |
           if [ "${{ github.event_name }}" = pull_request ]; then
@@ -107,23 +112,19 @@ jobs:
           fi
           cat "$GITHUB_OUTPUT"
 
-  # Hosts are split so the comparison of one group does not wait for runners of the other.
+  # Hosts are split so the comparison of one group does not wait for runners of the other. The rows are the
+  # plan's (ROWS in conformance_plan.py).
   conformance:
     name: ${{ matrix.integration }} (${{ matrix.row.target }} on ${{ matrix.row.host }})
     needs: [plan]
+    if: needs.plan.outputs.rows != '[]'
     runs-on: ${{ matrix.row.os }}
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         integration: ${{ fromJSON(needs.plan.outputs.integrations) }}
-        row:
-          - { target: linux,   host: linux,   os: ubuntu-24.04, python: python3 }
-          - { target: windows, host: windows, os: windows-2022, python: python }
-          - { target: web,     host: linux,   os: ubuntu-24.04, python: python3 }
-          - { target: android, host: linux,   os: ubuntu-24.04, python: python3 }
-          - { target: web,     host: windows, os: windows-2022, python: python }
-          - { target: android, host: windows, os: windows-2022, python: python }
+        row: ${{ fromJSON(needs.plan.outputs.rows) }}
     steps:
       - uses: actions/checkout@v5
 
@@ -419,6 +420,7 @@ jobs:
   sequence:
     name: ${{ matrix.integration }} (linux, web, android in turn on linux)
     needs: [plan]
+    if: needs.plan.outputs.sequence == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     strategy:
@@ -535,21 +537,19 @@ jobs:
           if-no-files-found: warn
 
   # CMake rows use Intel runners because GitHub's macOS arm64 runners are capacity constrained and can leave
-  # jobs unassigned. mcpp's toolchain supports arm64 macOS only, so its rows stay on arm64 runners.
+  # jobs unassigned. mcpp's toolchain supports arm64 macOS only, so its rows stay on arm64 runners. The rows are the
+  # plan's (MACOS_ROWS in conformance_plan.py); rerun-unassigned.yml starts the jobs no runner took again.
   conformance-macos:
     name: ${{ matrix.integration }} (${{ matrix.row.target }} on ${{ matrix.row.host }})
     needs: [plan]
+    if: needs.plan.outputs.macos_rows != '[]'
     runs-on: ${{ matrix.row.os[matrix.integration] }}
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         integration: ${{ fromJSON(needs.plan.outputs.integrations) }}
-        row:
-          - { target: macos,   host: macos, os: { cmake: macos-15-intel, mcpp: macos-15 }, python: python3 }
-          - { target: ios,     host: macos, os: { cmake: macos-15-intel, mcpp: macos-15 }, python: python3 }
-          - { target: web,     host: macos, os: { cmake: macos-15-intel, mcpp: macos-15 }, python: python3 }
-          - { target: android, host: macos, os: { cmake: macos-15-intel, mcpp: macos-15 }, python: python3 }
+        row: ${{ fromJSON(needs.plan.outputs.macos_rows) }}
     steps:
       - uses: actions/checkout@v5
 
@@ -824,7 +824,7 @@ jobs:
     name: Integrations agree (macOS hosts)
     runs-on: ubuntu-24.04
     needs: [plan, conformance-macos]
-    if: always() && needs.plan.outputs.compare == 'true'
+    if: always() && needs.plan.outputs.compare_macos == 'true'
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5

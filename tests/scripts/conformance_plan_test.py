@@ -42,5 +42,62 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(plan.select(["", "  "]), ["cmake", "mcpp"])
 
 
+def rows(paths, key="rows"):
+    """The selected (target, host) rows of one conformance job."""
+    return sorted((row["target"], row["host"]) for row in plan.json.loads(plan.outputs(paths)[key]))
+
+
+class RowTests(unittest.TestCase):
+    def test_nothing_selected_runs_every_row(self):
+        self.assertEqual(len(rows([])), len(plan.ROWS))
+        self.assertEqual(len(rows([], "macos_rows")), len(plan.MACOS_ROWS))
+
+    def test_source_runs_each_target_on_its_primary_host(self):
+        for path in ("src/runtime/ui_window.cpp", "include/huxerui/view.h", "templates/app/src/app.cppm.in",
+                     "buildtools/cts/projects/app_minimal/expected.json"):
+            with self.subTest(path=path):
+                self.assertEqual(rows([path]), [("android", "linux"), ("linux", "linux"), ("web", "linux"),
+                                                ("windows", "windows")])
+                self.assertEqual(rows([path], "macos_rows"), [("ios", "macos"), ("macos", "macos")])
+
+    def test_a_target_path_runs_that_target_on_every_host(self):
+        for path in ("platform/android/huxerui/src/main/cpp/jni.cpp", "tools/huxerui_cli/platform/android.cpp",
+                     "tools/huxerui_cli/templates/platform/android/app/build.gradle",
+                     "buildtools/cts/projects/app_minimal/platform/android/AndroidManifest.xml",
+                     "cmake/platform/Android.cmake"):
+            with self.subTest(path=path):
+                self.assertEqual(rows([path]), [("android", "linux"), ("android", "windows")])
+                self.assertEqual(rows([path], "macos_rows"), [("android", "macos")])
+
+    def test_ios_owns_its_cmake_platform_file(self):
+        self.assertEqual(rows(["cmake/platform/IOS.cmake"]), [])
+        self.assertEqual(rows(["cmake/platform/IOS.cmake"], "macos_rows"), [("ios", "macos")])
+
+    def test_tooling_runs_every_row(self):
+        for path in ("tools/huxerui_cli/cli.cpp", "buildtools/cts/cts.py", "buildtools/mcpp/support.json",
+                     "cmake/HuxerUIApp.cmake", "mcpp.toml", "CMakeLists.txt",
+                     ".github/workflows/build-system-conformance.yml"):
+            with self.subTest(path=path):
+                self.assertEqual(len(rows([path])), len(plan.ROWS))
+                self.assertEqual(len(rows([path], "macos_rows")), len(plan.MACOS_ROWS))
+
+    def test_a_target_path_beside_source_adds_its_other_hosts(self):
+        self.assertIn(("android", "windows"), rows(["src/io/file.cpp", "platform/android/build.gradle"]))
+        self.assertIn(("web", "linux"), rows(["src/io/file.cpp", "platform/android/build.gradle"]))
+        self.assertNotIn(("web", "windows"), rows(["src/io/file.cpp", "platform/android/build.gradle"]))
+
+    def test_jobs_without_rows_do_not_run(self):
+        outputs = plan.outputs(["platform/ios/huxerui/app_delegate.mm"])
+        self.assertEqual(outputs["rows"], "[]")
+        self.assertEqual(outputs["compare"], "false")
+        self.assertEqual(outputs["compare_macos"], "true")
+        self.assertEqual(outputs["sequence"], "false")
+
+    def test_one_integration_compares_nothing(self):
+        outputs = plan.outputs(["mcpp.toml"])
+        self.assertEqual(outputs["compare"], "false")
+        self.assertEqual(outputs["compare_macos"], "false")
+
+
 if __name__ == "__main__":
     unittest.main()
