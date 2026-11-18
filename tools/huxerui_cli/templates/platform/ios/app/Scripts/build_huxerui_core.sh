@@ -44,8 +44,13 @@ if [ "$HUXERUI_BUILD_SYSTEM" = mcpp ]; then
   mkdir -p "$HUXERUI_CORE_BUILD_DIR/huxerui-ios"
   HUXERUI_MCPP_REPORT="$HUXERUI_CORE_BUILD_DIR/mcpp-build.json"
   (cd "$HUXERUI_PROJECT_ROOT" && "${HUXERUI_MCPP:-mcpp}" "$@") > "$HUXERUI_MCPP_REPORT"
+  # The application's own artifact; dependencies such as the compiler runtime report library artifacts too.
   HUXERUI_MCPP_PROGRAM=$(grep '"event":"artifact"' "$HUXERUI_MCPP_REPORT" |
-    sed -n 's/.*"path":"\([^"]*\)".*/\1/p' | head -n 1)
+    grep -E '"kind":"(bin|app|shared)"' | sed -n 's/.*"path":"\([^"]*\)".*/\1/p' | head -n 1)
+  if [ -z "$HUXERUI_MCPP_PROGRAM" ]; then
+    echo "error: mcpp reported no application artifact; see $HUXERUI_MCPP_REPORT" >&2
+    exit 1
+  fi
   HUXERUI_MCPP_CORE=$(dirname "$HUXERUI_MCPP_PROGRAM")/huxerui-ios
   set -- "$HUXERUI_MCPP_CORE"/*/
   if [ "$#" -ne 1 ] || [ ! -f "$1/link.rsp" ]; then
