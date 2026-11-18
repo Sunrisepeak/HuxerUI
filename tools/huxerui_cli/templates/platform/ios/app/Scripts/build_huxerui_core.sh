@@ -43,7 +43,11 @@ if [ "$HUXERUI_BUILD_SYSTEM" = mcpp ]; then
   fi
   mkdir -p "$HUXERUI_CORE_BUILD_DIR/huxerui-ios"
   HUXERUI_MCPP_REPORT="$HUXERUI_CORE_BUILD_DIR/mcpp-build.json"
-  (cd "$HUXERUI_PROJECT_ROOT" && "${HUXERUI_MCPP:-mcpp}" "$@") > "$HUXERUI_MCPP_REPORT"
+  # Xcode exports the iOS SDK and deployment target. clang reads both from the environment when a command names
+  # neither, and so compiled the build programs mcpp runs on this Mac for iOS, where they cannot start. mcpp finds
+  # the SDK for its iOS target itself.
+  (cd "$HUXERUI_PROJECT_ROOT" && env -u SDKROOT -u IPHONEOS_DEPLOYMENT_TARGET -u TVOS_DEPLOYMENT_TARGET \
+    -u WATCHOS_DEPLOYMENT_TARGET -u XROS_DEPLOYMENT_TARGET "${HUXERUI_MCPP:-mcpp}" "$@") > "$HUXERUI_MCPP_REPORT"
   # The application's own artifact; dependencies such as the compiler runtime report library artifacts too.
   HUXERUI_MCPP_PROGRAM=$(grep '"event":"artifact"' "$HUXERUI_MCPP_REPORT" |
     grep -E '"kind":"(bin|app|shared)"' | sed -n 's/.*"path":"\([^"]*\)".*/\1/p' | head -n 1)
