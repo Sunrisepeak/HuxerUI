@@ -88,6 +88,26 @@ jobs:
             echo "CTS_BUILD_ARGUMENTS=--cmake-compiler-launcher ccache" >> "$GITHUB_ENV"
           fi
 
+      # CMake's Linux package deploys the runtime with patchelf 0.19 or newer and writes the AppImage with appimagetool.
+      - name: Install Linux packaging tools
+        if: matrix.integration == 'cmake' && matrix.target == 'linux'
+        run: |
+          tools="$RUNNER_TEMP/packaging-tools"
+          mkdir -p "$tools/bin"
+          curl --fail --location --silent --show-error --retry 3 --output "$RUNNER_TEMP/patchelf.tar.gz" \
+            https://github.com/NixOS/patchelf/releases/download/0.19.2/patchelf-0.19.2-x86_64.tar.gz
+          printf '%s  %s\n' 2abdc34fbe949c995a1baa4ec310896a085588a45a99cd0d726851bdfac2a4bb "$RUNNER_TEMP/patchelf.tar.gz" \
+            | sha256sum --check --status
+          tar -xzf "$RUNNER_TEMP/patchelf.tar.gz" -C "$tools"
+          curl --fail --location --silent --show-error --retry 3 --output "$tools/bin/appimagetool" \
+            https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+          printf '%s  %s\n' ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0 "$tools/bin/appimagetool" \
+            | sha256sum --check --status
+          chmod +x "$tools/bin/appimagetool"
+          echo "$tools/bin" >> "$GITHUB_PATH"
+          # The runner has no FUSE; an AppImage then unpacks itself to run.
+          echo "APPIMAGE_EXTRACT_AND_RUN=1" >> "$GITHUB_ENV"
+
       - name: Install Emscripten
         if: matrix.target == 'web' && matrix.integration == 'cmake'
         uses: mymindstorm/setup-emsdk@v14
@@ -158,6 +178,18 @@ jobs:
           xlings use mcpp "${MCPP_VERSION}" || true
           mcpp --version
 
+      # The package checkpoint runs `huxerui package` as a developer does, so the suite builds the CLI on rows
+      # that declare the checkpoint.
+      - name: Build the HuxerUI CLI
+        if: matrix.integration == 'mcpp' || matrix.target == 'linux' || matrix.target == 'web'
+        run: |
+          cmake -S tools/huxerui_cli -B "$RUNNER_TEMP/cli" -DCMAKE_BUILD_TYPE=Release
+          cmake --build "$RUNNER_TEMP/cli" --config Release --target huxerui_cli --parallel
+          cli="$(find "$RUNNER_TEMP/cli" -type f \( -name huxerui -o -name huxerui.exe \) | head -n 1)"
+          test -n "$cli"
+          if [ "${{ matrix.host }}" = windows ]; then cli="$(cygpath -w "$cli")"; fi
+          echo "CTS_CLI=$cli" >> "$GITHUB_ENV"
+
       - name: Build the conformance projects
         run: |
           ${{ matrix.python }} buildtools/cts/cts.py build --integration ${{ matrix.integration }} \
@@ -192,6 +224,12 @@ jobs:
         run: |
           ${{ matrix.target == 'linux' && 'xvfb-run -a ' || '' }}${{ matrix.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
             --target ${{ matrix.target }} --check launch --out "$RUNNER_TEMP/cts"
+
+      - name: "Check: distributable"
+        if: env.CTS_CLI != ''
+        run: |
+          ${{ matrix.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
+            --target ${{ matrix.target }} --check package --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts"
 
       - name: Upload the results
         if: always()
@@ -243,6 +281,26 @@ jobs:
             echo "CTS_BUILD_ARGUMENTS=--cmake-compiler-launcher ccache" >> "$GITHUB_ENV"
           fi
 
+      # CMake's Linux package deploys the runtime with patchelf 0.19 or newer and writes the AppImage with appimagetool.
+      - name: Install Linux packaging tools
+        if: matrix.integration == 'cmake' && matrix.target == 'linux'
+        run: |
+          tools="$RUNNER_TEMP/packaging-tools"
+          mkdir -p "$tools/bin"
+          curl --fail --location --silent --show-error --retry 3 --output "$RUNNER_TEMP/patchelf.tar.gz" \
+            https://github.com/NixOS/patchelf/releases/download/0.19.2/patchelf-0.19.2-x86_64.tar.gz
+          printf '%s  %s\n' 2abdc34fbe949c995a1baa4ec310896a085588a45a99cd0d726851bdfac2a4bb "$RUNNER_TEMP/patchelf.tar.gz" \
+            | sha256sum --check --status
+          tar -xzf "$RUNNER_TEMP/patchelf.tar.gz" -C "$tools"
+          curl --fail --location --silent --show-error --retry 3 --output "$tools/bin/appimagetool" \
+            https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+          printf '%s  %s\n' ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0 "$tools/bin/appimagetool" \
+            | sha256sum --check --status
+          chmod +x "$tools/bin/appimagetool"
+          echo "$tools/bin" >> "$GITHUB_PATH"
+          # The runner has no FUSE; an AppImage then unpacks itself to run.
+          echo "APPIMAGE_EXTRACT_AND_RUN=1" >> "$GITHUB_ENV"
+
       - name: Install Emscripten
         if: matrix.target == 'web' && matrix.integration == 'cmake'
         uses: mymindstorm/setup-emsdk@v14
@@ -313,6 +371,18 @@ jobs:
           xlings use mcpp "${MCPP_VERSION}" || true
           mcpp --version
 
+      # The package checkpoint runs `huxerui package` as a developer does, so the suite builds the CLI on rows
+      # that declare the checkpoint.
+      - name: Build the HuxerUI CLI
+        if: matrix.integration == 'mcpp' || matrix.target == 'linux' || matrix.target == 'web'
+        run: |
+          cmake -S tools/huxerui_cli -B "$RUNNER_TEMP/cli" -DCMAKE_BUILD_TYPE=Release
+          cmake --build "$RUNNER_TEMP/cli" --config Release --target huxerui_cli --parallel
+          cli="$(find "$RUNNER_TEMP/cli" -type f \( -name huxerui -o -name huxerui.exe \) | head -n 1)"
+          test -n "$cli"
+          if [ "${{ matrix.host }}" = windows ]; then cli="$(cygpath -w "$cli")"; fi
+          echo "CTS_CLI=$cli" >> "$GITHUB_ENV"
+
       - name: Build the conformance projects
         run: |
           ${{ matrix.python }} buildtools/cts/cts.py build --integration ${{ matrix.integration }} \
@@ -347,6 +417,12 @@ jobs:
         run: |
           ${{ matrix.target == 'linux' && 'xvfb-run -a ' || '' }}${{ matrix.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
             --target ${{ matrix.target }} --check launch --out "$RUNNER_TEMP/cts"
+
+      - name: "Check: distributable"
+        if: env.CTS_CLI != ''
+        run: |
+          ${{ matrix.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
+            --target ${{ matrix.target }} --check package --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts"
 
       - name: Upload the results
         if: always()

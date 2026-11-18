@@ -69,8 +69,8 @@ A clause is `checked` when some project's `expected.json`, or the contract itsel
 | `INCREMENTAL` | checked | `build` |
 | `RECORD-SCHEMA` | not covered |  |
 | `RECORD-EQUIVALENCE` | compared only | `libraries` |
-| `PKG-KIND` | not covered |  |
-| `PKG-PUBLISH` | not covered |  |
+| `PKG-KIND` | checked | `package` |
+| `PKG-PUBLISH` | checked | `package` |
 | `LAUNCH` | checked | `launch` |
 
 <!-- coverage:end -->

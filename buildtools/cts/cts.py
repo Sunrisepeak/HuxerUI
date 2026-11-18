@@ -72,6 +72,13 @@ CHECKS: dict[str, dict] = {
         "facts": {"launch.*": ["LAUNCH"]},
         "equivalent": {},
     },
+    "package": {
+        "title": "Distributable kind, publication, and the resource package it carries",
+        "facts": {"package.kind": ["PKG-KIND"], "package.location": ["PKG-KIND", "PKG-PUBLISH"],
+                  "package.resources": ["PKG-KIND"]},
+        "fixed": {"package.location": "dist/<platform>", "package.resources": "the built package"},
+        "equivalent": {},
+    },
 }
 
 
@@ -369,6 +376,104 @@ def launch_facts(record: dict, expected: dict, work: Path, timeout: float) -> di
     return {f"launch.{key}": observed.get(key, "<missing>") for key in expected}
 
 
+# --------------------------------------------------------------------- package
+
+# What `huxerui package` may create inside a project; each one it creates is removed afterwards.
+PACKAGE_OUTPUTS = ("dist", "build", "target", ".huxerui")
+
+
+def package_kind(dist: Path) -> str:
+    names = [path.name for path in dist.iterdir()]
+    for suffix, kind in ((".AppImage", "appimage"), (".deb", "deb"), (".rpm", "rpm"), (".msi", "msi"), (".dmg", "dmg"),
+                         (".apk", "apk"), (".aab", "aab"), (".app", "app"), (".exe", "setup")):
+        if any(name.endswith(suffix) for name in names):
+            return kind
+    if any(name.endswith(".js") for name in names) and any(name.endswith(".wasm") for name in names):
+        return "web"
+    return "<unknown>"
+
+
+def resource_digests(root: Path) -> set[str]:
+    return {hashlib.sha256(path.read_bytes()).hexdigest() for path in root.rglob("resources.bin")
+            if path.is_file() and path.parent.name == "huxerui"}
+
+
+def packaged_resources(kind: str, dist: Path, work: Path, timeout: float) -> set[str]:
+    """The digests of every final resource package the distributable carries."""
+    unpacked = work / "unpacked"
+    shutil.rmtree(unpacked, ignore_errors=True)
+    unpacked.mkdir(parents=True)
+    artifact = next((path for path in sorted(dist.iterdir()) if kind == "web" or path.name.lower().endswith(
+        {"appimage": ".appimage", "deb": ".deb", "rpm": ".rpm", "msi": ".msi", "dmg": ".dmg", "apk": ".apk",
+         "aab": ".aab", "app": ".app", "setup": ".exe"}[kind])), None)
+    if artifact is None:
+        return set()
+    if kind == "web":
+        digest = web_facts(next(dist.glob("*.js"))).get("resources.sha256")
+        return {digest} if digest else set()
+    if kind in ("apk", "aab"):
+        import zipfile
+        with zipfile.ZipFile(artifact) as archive:
+            return {hashlib.sha256(archive.read(name)).hexdigest() for name in archive.namelist()
+                    if name.endswith("assets/huxerui/resources.bin")}
+    if kind == "app":
+        return resource_digests(artifact)
+    if kind == "appimage":
+        artifact.chmod(0o755)
+        subprocess.run([str(artifact), "--appimage-extract"], cwd=unpacked, capture_output=True, timeout=timeout, check=True)
+    elif kind == "deb":
+        subprocess.run(["dpkg-deb", "-x", str(artifact), str(unpacked)], capture_output=True, timeout=timeout, check=True)
+    elif kind == "msi":
+        subprocess.run(["msiexec", "/a", str(artifact), "/qn", f"TARGETDIR={unpacked}"], capture_output=True,
+                       timeout=timeout, check=True)
+    elif kind == "dmg":
+        mount = work / "mount"
+        mount.mkdir(exist_ok=True)
+        subprocess.run(["hdiutil", "attach", "-nobrowse", "-readonly", "-mountpoint", str(mount), str(artifact)],
+                       capture_output=True, timeout=timeout, check=True)
+        try:
+            return resource_digests(mount)
+        finally:
+            subprocess.run(["hdiutil", "detach", str(mount)], capture_output=True, timeout=timeout)
+    else:
+        raise Unavailable(f"reading a {kind} package is not implemented")
+    return resource_digests(unpacked)
+
+
+def package_facts(cli: str | None, integration: str, target: str, project: Path, built: dict, work: Path,
+                  timeout: float) -> dict:
+    """Runs `huxerui package` the way a developer does and reads what it published."""
+    if not cli:
+        raise Unavailable("no HuxerUI CLI was given; pass --cli")
+    created = [project / name for name in PACKAGE_OUTPUTS if not (project / name).exists()]
+    command = [cli, "package", target, "--build-system", integration]
+    if integration == "cmake":
+        command += ["--sdk", str(REPOSITORY)]
+    log("  $ " + " ".join(command))
+    try:
+        completed = subprocess.run(command, cwd=project, capture_output=True, text=True, timeout=timeout)
+        (work / "package.log").write_text(completed.stdout + completed.stderr, encoding="utf-8")
+        if completed.returncode != 0:
+            tail = "\n".join((completed.stdout + completed.stderr).splitlines()[-20:])
+            raise RuntimeError(f"`huxerui package {target}` exited with {completed.returncode}\n{tail}")
+        dist = project / "dist" / target
+        if not dist.is_dir() or not any(dist.iterdir()):
+            return {"package.kind": "<none>", "package.location": "<missing>", "package.resources": "<missing>"}
+        kind = package_kind(dist)
+        digests = packaged_resources(kind, dist, work, timeout) if kind != "<unknown>" else set()
+        wanted = built.get("resources.sha256")
+        resources = "the built package" if wanted in digests else ("another package" if digests else "<missing>")
+        published = work / "dist"
+        shutil.rmtree(published, ignore_errors=True)
+        shutil.copytree(dist, published, symlinks=True)
+        return {"package.kind": kind, "package.location": "dist/<platform>", "package.resources": resources}
+    except subprocess.CalledProcessError as failure:
+        raise RuntimeError(f"reading the package failed: {' '.join(failure.cmd)} exited with {failure.returncode}")
+    finally:
+        for directory in created:
+            shutil.rmtree(directory, ignore_errors=True)
+
+
 # ----------------------------------------------------------------------- build
 
 
@@ -470,6 +575,18 @@ def check_project(check: str, integration: str, target: str, host: str, project:
             return "fail", str(failure)
         write_json(path, result)
         wanted = {f"launch.{key}": value for key, value in launch.items()}
+    if check == "package":
+        if "package.kind" not in expected["facts"]:
+            return "pass", "the project defines no package facts"
+        work = out / "work" / f"{integration}-{target}" / project.name
+        try:
+            result["facts"].update(package_facts(arguments.cli, integration, target, project, result["facts"], work,
+                                                 arguments.package_timeout))
+        except Unavailable as unavailable:
+            return "unavailable", str(unavailable)
+        except RuntimeError as failure:
+            return "fail", str(failure)
+        write_json(path, result)
 
     problems, notes = [], []
     for fact, value in wanted.items():
@@ -715,6 +832,8 @@ def main() -> int:
         if with_checks:
             command.add_argument("--check", nargs="+", choices=[*CHECKS, "all"], help="checkpoints to evaluate")
             command.add_argument("--launch-timeout", type=float, default=30.0)
+            command.add_argument("--cli", help="the HuxerUI CLI the package checkpoint runs")
+            command.add_argument("--package-timeout", type=float, default=3600.0)
 
     build = commands.add_parser("build", help="build the conformance projects and record their facts")
     add_selection(build, with_checks=False)
