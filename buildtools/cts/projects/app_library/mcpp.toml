@@ -28,6 +28,13 @@ main = "platform/macos/main.cpp"
 [target.'cfg(os = "ios")'.targets.cts_app_library]
 main = "platform/ios/App/main.mm"
 
+# On the Web and Android the platform layer starts the application, so the entry is the framework's.
+[target.'cfg(os = "emscripten")'.targets.cts_app_library]
+main = { from = "huxerui/platform-entry" }
+
+[target.'cfg(env = "android")'.targets.cts_app_library]
+main = { from = "huxerui/platform-entry" }
+
 [build]
 sources = []
 # The iOS deployment minimum, as the Xcode shell's IPHONEOS_DEPLOYMENT_TARGET and the CMake integration state it.

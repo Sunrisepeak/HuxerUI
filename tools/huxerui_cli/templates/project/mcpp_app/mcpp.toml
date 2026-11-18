@@ -11,8 +11,9 @@ id   = "@PROJECT_ID@"
 @MCPP_DEPENDENCIES@
 
 # `app` is a program on the desktop and the Web and the application's shared library on Android.
-# The platform shell owns the process entry, so each platform names its own; the Web and Android
-# builds use the Linux entry.
+# The platform shell owns the process entry, so each desktop and Apple platform names its own. On
+# the Web and Android the platform layer starts the application, so the entry is the framework's,
+# which runs nothing.
 [targets.@TARGET_NAME@]
 kind = "app"
 main = "platform/linux/main.cpp"
@@ -26,6 +27,12 @@ main = "platform/macos/main.cpp"
 
 [target.'cfg(os = "ios")'.targets.@TARGET_NAME@]
 main = "platform/ios/App/main.mm"
+
+[target.'cfg(os = "emscripten")'.targets.@TARGET_NAME@]
+main = { from = "@MCPP_HUXERUI@/platform-entry" }
+
+[target.'cfg(env = "android")'.targets.@TARGET_NAME@]
+main = { from = "@MCPP_HUXERUI@/platform-entry" }
 
 [build]
 # huxerui.rules selects the sources: a build program can add a source but cannot replace one, so a package that

@@ -126,6 +126,27 @@ TEST_CASE("HuxerUICliKeepsOnlySelectedPlatformEntries") {
   REQUIRE_FALSE(std::filesystem::exists(project / "platform/ios"));
 }
 
+TEST_CASE("HuxerUICliSelectsTheFrameworkEntryOnTheWebAndAndroid") {
+  // The platform layer starts the application on the Web and Android, so a project without the Linux shell still
+  // builds there: those rows select the framework's entry through the key the dependency table gives HuxerUI.
+  TemporaryDirectory temporary;
+  REQUIRE(Invoke(temporary.Path(), {"create", "app", "Web-Only", "--build-system", "mcpp", "--platform", "web,android",
+                                    "--agent", "none"})
+              .result == 0);
+  REQUIRE(Invoke(temporary.Path(), {"create", "app", "Dual-Web", "--build-system", "cmake,mcpp", "--platform", "web",
+                                    "--agent", "none"})
+              .result == 0);
+  for (const std::string_view name : {"Web-Only", "Dual-Web"}) {
+    const std::filesystem::path project = temporary.Path() / name;
+    REQUIRE_FALSE(std::filesystem::exists(project / "platform/linux"));
+    const std::string manifest = Read(project / "mcpp.toml");
+    REQUIRE(manifest.find("[target.'cfg(os = \"emscripten\")'.targets.") != std::string::npos);
+    REQUIRE(manifest.find("[target.'cfg(env = \"android\")'.targets.") != std::string::npos);
+    REQUIRE(manifest.find("main = { from = \"huxerui/platform-entry\" }") != std::string::npos);
+    REQUIRE(manifest.find("huxerui.huxerui/") == std::string::npos);
+  }
+}
+
 TEST_CASE("HuxerUICliInfersModulesFromAnMcppOnlyList") {
   TemporaryDirectory temporary;
   const Invocation invocation =

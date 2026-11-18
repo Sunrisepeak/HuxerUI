@@ -264,6 +264,13 @@ std::string NormalizeLibraryIdentifier(std::string_view name) {
   return identifier;
 }
 
+void ReplaceAll(std::string& text, std::string_view from, std::string_view to) {
+  for (std::size_t position = text.find(from); position != std::string::npos;
+       position = text.find(from, position + to.size())) {
+    text.replace(position, from.size(), to);
+  }
+}
+
 // The mcpp project comes from the repository's own `templates/app`, which is an
 // mcpp PACKAGE template: `mcpp new --template huxerui.huxerui:app` renders the
 // same files once HuxerUI is published. One tree, two renderers -- a copy under
@@ -279,6 +286,8 @@ std::string NormalizeLibraryIdentifier(std::string_view name) {
 ///
 /// The comment above the dependency is replaced along with it, or the manifest
 /// would explain a namespace rule that no longer applies to the line below it.
+/// An entry the manifest selects from HuxerUI names the dependency's key, so it
+/// follows the key to `huxerui`.
 std::string McppPathDependency(std::string_view manifest, const std::filesystem::path& huxerui_home) {
   std::vector<std::string> lines;
   for (std::size_t start = 0; start <= manifest.size();) {
@@ -329,6 +338,7 @@ std::string McppPathDependency(std::string_view manifest, const std::filesystem:
       out += '\n';
     }
   }
+  ReplaceAll(out, "\"huxerui.huxerui/", "\"huxerui/");
   return out;
 }
 
@@ -399,7 +409,10 @@ std::vector<GeneratedFile> McppApplicationDeclaration(const ProjectTemplateConte
                                                       const std::filesystem::path& huxerui_home,
                                                       std::string_view extra_dependencies = {}) {
   const std::string dependencies = McppDependencies(huxerui_home, extra_dependencies);
-  const std::array replacements{TemplateReplacement{"@MCPP_DEPENDENCIES@", dependencies}};
+  // The key the dependency table gives HuxerUI, which an entry selected from it names.
+  const std::string key = IsMcppSourcePackage(huxerui_home) ? "huxerui" : "huxerui.huxerui";
+  const std::array replacements{TemplateReplacement{"@MCPP_DEPENDENCIES@", dependencies},
+                                TemplateReplacement{"@MCPP_HUXERUI@", key}};
   return RenderTemplateTree("project/mcpp_app", context, replacements);
 }
 
@@ -486,13 +499,6 @@ GeneratedFile& FindGeneratedFile(std::vector<GeneratedFile>& files, std::string_
     throw std::logic_error(std::string(origin) + " renders no " + std::string(path));
   }
   return *file;
-}
-
-void ReplaceAll(std::string& text, std::string_view from, std::string_view to) {
-  for (std::size_t position = text.find(from); position != std::string::npos;
-       position = text.find(from, position + to.size())) {
-    text.replace(position, from.size(), to);
-  }
 }
 
 /// A C++ modules library: `templates/library`, which `mcpp new --template library` also renders, with the

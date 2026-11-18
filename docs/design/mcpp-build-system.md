@@ -88,6 +88,11 @@ the manifest stays out of it.
 The target's entry is the one file the rule never transforms, for the same
 reason: a transformed copy of `main.cpp` would link beside the original.
 
+On the Web and Android the platform layer starts the application: the page mounts the module through its exports, and the Java host loads the shared library.
+No `main` runs application code there, and the CMake declaration compiles no entry for them, but mcpp links one translation unit as every program's entry.
+The framework therefore declares an entry target, `[targets.platform-entry] kind = "entry"`, whose translation unit defines nothing, and an application's Web and Android rows select it with `main = { from = "huxerui/platform-entry" }`, naming the key its dependency table gives HuxerUI.
+The file is outside `src/*/*.cpp`, so neither integration compiles it as a framework source.
+
 ### Resources and libraries
 
 `configure()` produces the one final resource package the [Build System Integration Contract](../../buildtools/specs/build-system-integration.md) requires and deploys it to `<program>.resources/` beside the program, where the Runtime looks for it.
