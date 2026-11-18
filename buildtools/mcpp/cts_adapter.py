@@ -109,10 +109,18 @@ class Adapter:
                 "profile": profile,
                 "libraries": libraries,
             }
+        resources = artifact.parent / f"{name}.resources"
+        if target == "android":
+            # The package is deployed at the asset root of the APK, `huxerui/` beside the library; the copy holds
+            # the package alone, as the record's resource directory does elsewhere.
+            resources = work / "android-resources"
+            shutil.rmtree(resources, ignore_errors=True)
+            if (artifact.parent / "huxerui").is_dir():
+                shutil.copytree(artifact.parent / "huxerui", resources / "huxerui")
         return {
             "target": name,
             "artifact": str(artifact),
-            "resources": str(artifact.parent / f"{name}.resources"),
+            "resources": str(resources),
             "profile": profile,
             "libraries": libraries,
             "launch_environment": launch,

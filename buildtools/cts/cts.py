@@ -326,7 +326,8 @@ def web_facts(artifact: Path) -> dict:
     import re
     loader = artifact.read_text(encoding="utf-8", errors="replace")
     ranges = {}
-    for match in re.finditer(r'\{"filename":\s*"([^"]+)",\s*"start":\s*(\d+),\s*"end":\s*(\d+)', loader):
+    # A release build minifies the loader, which drops the quotes around the keys.
+    for match in re.finditer(r'\{"?filename"?:\s*"([^"]+)",\s*"?start"?:\s*(\d+),\s*"?end"?:\s*(\d+)', loader):
         ranges[match.group(1)] = (int(match.group(2)), int(match.group(3)))
     index = ranges.get("/huxerui/resources.bin")
     if index is None:
