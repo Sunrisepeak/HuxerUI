@@ -1,6 +1,7 @@
 {
   "schema": 1,
   "integration": "cmake",
+  "declaration": "CMakeLists.txt",
   "targets": {
     "linux": {
       "hosts": [

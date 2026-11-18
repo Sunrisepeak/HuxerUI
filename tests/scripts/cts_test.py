@@ -138,6 +138,47 @@ class CreatedProjectTests(unittest.TestCase):
             self.assertEqual(cts.selected_projects(None, Path(out), "cmake", "web"), cts.selected_projects(None))
 
 
+class DispatchTests(unittest.TestCase):
+    def selection(self, files, integration):
+        with tempfile.TemporaryDirectory() as root:
+            for name in files:
+                (Path(root) / name).write_text("", encoding="utf-8")
+            return cts.dispatch_selection(integration, Path(root))
+
+    def test_a_root_declaring_one_build_system_is_dispatched_by_its_file(self):
+        self.assertEqual(self.selection(["CMakeLists.txt"], "cmake"), [])
+        self.assertEqual(self.selection(["mcpp.toml"], "mcpp"), [])
+
+    def test_a_root_declaring_several_takes_the_default_unless_another_is_selected(self):
+        self.assertEqual(self.selection(["CMakeLists.txt", "mcpp.toml"], "cmake"), [])
+        self.assertEqual(self.selection(["CMakeLists.txt", "mcpp.toml"], "mcpp"), ["--build-system", "mcpp"])
+
+    def test_every_integration_names_its_declaration(self):
+        for name, directory in cts.discover_integrations().items():
+            with self.subTest(integration=name):
+                self.assertTrue(cts.load_json(directory / "support.json")["declaration"])
+
+    def test_the_stated_integration_is_read_from_the_cli_output(self):
+        self.assertEqual(cts.dispatched_integration("Building android (release, x86_64) with cmake\n> gradle"), "cmake")
+        self.assertEqual(cts.dispatched_integration("Packaging linux (release, appimage) with mcpp\n"), "mcpp")
+        self.assertIsNone(cts.dispatched_integration("Packaged dist/linux/app.AppImage\n"))
+
+
+class CreatedFactTests(unittest.TestCase):
+    def test_facts_observed_at_creation_join_the_build(self):
+        adapter = mock.Mock()
+        adapter.build.return_value = record(target="cts_app_minimal")
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory) / "created_x"
+            project.mkdir()
+            cts.write_json(project / "expected.json", {"project": "created_x", "facts": {}})
+            cts.write_json(project / "created.json", {"facts": {"create.declarations": cts.CREATED_DECLARATIONS}})
+            with mock.patch.object(cts, "collect_facts", return_value={"profile": "debug"}), \
+                    mock.patch.object(cts, "target_support", return_value=({"capabilities": []}, "")):
+                result = cts.build_project("x", adapter, "linux", "linux", project, Path(directory) / "out")
+        self.assertEqual(result["facts"]["create.declarations"], cts.CREATED_DECLARATIONS)
+
+
 class SequenceTests(unittest.TestCase):
     def run_sequence(self, facts):
         """Runs `sequence` over linux,web for app_minimal with an adapter whose builds record `facts` in turn."""

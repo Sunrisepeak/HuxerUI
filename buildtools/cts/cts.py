@@ -28,6 +28,7 @@ import importlib.util
 import json
 import os
 import platform as host_platform
+import re
 import shutil
 import subprocess
 import sys
@@ -43,6 +44,13 @@ ALLOWED_DIFFERENCES = CTS_ROOT / "allowed-differences.json"
 CONTRACT = BUILDTOOLS / "specs" / "build-system-integration.md"
 README = CTS_ROOT / "README.md"
 
+# The integration an application root declaring several builds with when no selection names one (DISPATCH-DEFAULT).
+DEFAULT_INTEGRATION = "cmake"
+
+# What `create.declarations` and `package.dispatch` read when the CLI did what the contract states.
+CREATED_DECLARATIONS = "each selected build system"
+DISPATCHED = "the selected build system"
+
 # Each checkpoint maps the facts it checks to the contract clauses they cover:
 # - `facts` are checked against a project's expected.json;
 # - `fixed` facts have one value the contract fixes for every project;
@@ -51,7 +59,7 @@ CHECKS: dict[str, dict] = {
     "build": {
         "title": "Default build: profile, artifact name, and unchanged rebuild",
         "facts": {"profile": ["DEFAULT-PROFILE"], "artifact.name": ["NAME-ARTIFACT"], "artifact.bundle": ["NAME-ARTIFACT"],
-                  "rebuild": ["INCREMENTAL"]},
+                  "rebuild": ["INCREMENTAL"], "create.declarations": ["CREATE-SELECT"]},
         "fixed": {"rebuild": "succeeded"},
         "equivalent": {},
     },
@@ -78,8 +86,9 @@ CHECKS: dict[str, dict] = {
     "package": {
         "title": "Distributable kind, publication, and the resource package it carries",
         "facts": {"package.kind": ["PKG-KIND"], "package.location": ["PKG-KIND", "PKG-PUBLISH"],
-                  "package.resources": ["PKG-KIND"]},
-        "fixed": {"package.location": "dist/<platform>", "package.resources": "the built package"},
+                  "package.resources": ["PKG-KIND"], "package.dispatch": ["DISPATCH-ROOT", "DISPATCH-DEFAULT"]},
+        "fixed": {"package.location": "dist/<platform>", "package.resources": "the built package",
+                  "package.dispatch": DISPATCHED},
         "equivalent": {},
     },
     # The same distributable, packaged by an integration without the standard shell; an integration offers this
@@ -87,8 +96,9 @@ CHECKS: dict[str, dict] = {
     "package-shellless": {
         "title": "Distributable without the standard shell",
         "facts": {"package.kind": ["PKG-KIND", "SHELL-EXPLICIT"], "package.location": ["PKG-KIND", "PKG-PUBLISH"],
-                  "package.resources": ["PKG-KIND"]},
-        "fixed": {"package.location": "dist/<platform>", "package.resources": "the built package"},
+                  "package.resources": ["PKG-KIND"], "package.dispatch": ["DISPATCH-ROOT", "DISPATCH-DEFAULT"]},
+        "fixed": {"package.location": "dist/<platform>", "package.resources": "the built package",
+                  "package.dispatch": DISPATCHED},
         "equivalent": {},
     },
 }
@@ -118,6 +128,30 @@ def target_support(integration: str, target: str, host: str) -> tuple[dict | Non
     if host not in support["hosts"]:
         return None, f"host {host} is not declared for target {target}"
     return support, ""
+
+
+def declared_integrations(root: Path) -> list[str]:
+    """The integrations whose native declaration, named in their support.json, is at a project root."""
+    return [name for name, directory in discover_integrations().items()
+            if (root / load_json(directory / "support.json")["declaration"]).is_file()]
+
+
+def dispatch_selection(integration: str, project: Path) -> list[str]:
+    """The `--build-system` arguments a developer gives to reach `integration`: none when the root declares only it,
+    none when it is the default of a root declaring several, and an explicit selection otherwise."""
+    declared = declared_integrations(project)
+    if declared == [integration] or (len(declared) > 1 and integration == DEFAULT_INTEGRATION):
+        return []
+    return ["--build-system", integration]
+
+
+def dispatched_integration(output: str) -> str | None:
+    """The integration the CLI states it built or packaged with."""
+    for line in output.splitlines():
+        match = re.match(r"(?:Building|Packaging) \S+ \(.*\) with (\S+)$", line.strip())
+        if match:
+            return match.group(1)
+    return None
 
 
 def expected_for(project: Path, target: str) -> dict:
@@ -780,7 +814,8 @@ def package_facts(cli: str | None, integration: str, target: str, project: Path,
                 if set_aside.exists():
                     shutil.move(str(set_aside), str(shell))
                 raise RuntimeError(f"`huxerui platform add {target}` exited with {added.returncode}\n{added.stderr}")
-    command = [cli, "package", target, "--build-system", integration]
+    # The integration is reached the way a developer reaches it, so the dispatch is checked with the package.
+    command = [cli, "package", target, *dispatch_selection(integration, project)]
     if integration == "cmake":
         command += ["--sdk", str(REPOSITORY)]
     if shellless:
@@ -806,9 +841,12 @@ def package_facts(cli: str | None, integration: str, target: str, project: Path,
                            for index in range(at, min(at + 5, head))})
             tail = "\n".join([lines[index] for index in kept][-40:] + lines[-20:])
             raise RuntimeError(f"`huxerui package {target}` exited with {completed.returncode}\n{tail}")
+        dispatched = dispatched_integration(completed.stdout)
+        dispatch = DISPATCHED if dispatched == integration else f"<{dispatched or 'not stated'}>"
         dist = project / "dist" / target
         if not dist.is_dir() or not any(dist.iterdir()):
-            return {"package.kind": "<none>", "package.location": "<missing>", "package.resources": "<missing>"}
+            return {"package.kind": "<none>", "package.location": "<missing>", "package.resources": "<missing>",
+                    "package.dispatch": dispatch}
         kind = package_kind(dist)
         digests = packaged_resources(kind, dist, project, work, timeout) if kind != "<unknown>" else set()
         wanted = built.get("resources.sha256")
@@ -816,7 +854,8 @@ def package_facts(cli: str | None, integration: str, target: str, project: Path,
         published = work / "dist"
         shutil.rmtree(published, ignore_errors=True)
         shutil.copytree(dist, published, symlinks=True)
-        return {"package.kind": kind, "package.location": "dist/<platform>", "package.resources": resources}
+        return {"package.kind": kind, "package.location": "dist/<platform>", "package.resources": resources,
+                "package.dispatch": dispatch}
     except subprocess.CalledProcessError as failure:
         raise RuntimeError(f"reading the package failed: {' '.join(failure.cmd)} exited with {failure.returncode}")
     finally:
@@ -893,6 +932,12 @@ def command_create(arguments) -> int:
         expected = created_expected(name, project, suite)
         application = root / name / expected.pop("application", ".")
         write_json(application / "expected.json", expected)
+        # Observed now, before a build adds files: the native declarations `create` wrote at the project root.
+        declared = set(declared_integrations(root / name))
+        selected = set(project["build-systems"])
+        observed = CREATED_DECLARATIONS if declared == selected else \
+            f"<declared {','.join(sorted(declared)) or 'none'} for {','.join(sorted(selected))}>"
+        write_json(application / "created.json", {"facts": {"create.declarations": observed}})
         listing.append(str(application.resolve()))
     write_json(root / "projects.json", {"projects": listing})
     return 1 if failed else 0
@@ -934,6 +979,9 @@ def build_project(name: str, adapter, target: str, host: str, project: Path, out
         except RuntimeError as failure:
             raise RuntimeError(f"the second build of unchanged inputs failed: {failure}") from failure
         result["facts"] = {**collect_facts(target, project, result["record"]), "rebuild": "succeeded"}
+        # What `cts.py create` observed when it created the project.
+        if (project / "created.json").is_file():
+            result["facts"].update(load_json(project / "created.json")["facts"])
     except Unavailable as unavailable:
         result.update(status="unavailable", reason=str(unavailable))
     except RuntimeError as failure:

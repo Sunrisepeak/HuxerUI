@@ -49,6 +49,7 @@
       "requires": [],
       "facts": {
         "profile": "debug",
+        "create.declarations": "each selected build system",
         "artifact.name": "{name}",
         "artifact.bundle": "<none>",
         "framework.linkage": "static",
@@ -80,6 +81,7 @@
       ],
       "facts": {
         "profile": "debug",
+        "create.declarations": "each selected build system",
         "artifact.name": "{name}",
         "artifact.bundle": "<none>",
         "framework.linkage": "static",
@@ -112,6 +114,7 @@
       ],
       "facts": {
         "profile": "debug",
+        "create.declarations": "each selected build system",
         "artifact.name": "example_{name}",
         "artifact.bundle": "<none>",
         "framework.linkage": "static",

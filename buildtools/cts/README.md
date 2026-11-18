@@ -59,10 +59,10 @@ A clause is `checked` when some project's `expected.json`, or the contract itsel
 | `DEFAULT-PROFILE` | checked | `build` |
 | `EXIT-CODES` | not covered |  |
 | `ABI-SELECT` | not covered |  |
-| `DISPATCH-ROOT` | not covered |  |
-| `DISPATCH-DEFAULT` | not covered |  |
+| `DISPATCH-ROOT` | checked | `package`, `package-shellless` |
+| `DISPATCH-DEFAULT` | checked | `package`, `package-shellless` |
 | `OPTION-INAPPLICABLE` | not covered |  |
-| `CREATE-SELECT` | not covered |  |
+| `CREATE-SELECT` | checked | `build` |
 | `LAYOUT-COMMON` | not covered |  |
 | `SETTINGS-PRECEDENCE` | not covered |  |
 | `SETTINGS-DIAGNOSE` | not covered |  |

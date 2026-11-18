@@ -1,6 +1,7 @@
 {
   "schema": 1,
   "integration": "mcpp",
+  "declaration": "mcpp.toml",
   "targets": {
     "linux": {
       "hosts": [
