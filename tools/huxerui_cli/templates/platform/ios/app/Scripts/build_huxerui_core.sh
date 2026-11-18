@@ -43,11 +43,22 @@ if [ "$HUXERUI_BUILD_SYSTEM" = mcpp ]; then
   fi
   mkdir -p "$HUXERUI_CORE_BUILD_DIR/huxerui-ios"
   HUXERUI_MCPP_REPORT="$HUXERUI_CORE_BUILD_DIR/mcpp-build.json"
-  # Xcode exports the iOS SDK and deployment target. clang reads both from the environment when a command names
-  # neither, and so compiled the build programs mcpp runs on this Mac for iOS, where they cannot start. mcpp finds
-  # the SDK for its iOS target itself.
-  (cd "$HUXERUI_PROJECT_ROOT" && env -u SDKROOT -u IPHONEOS_DEPLOYMENT_TARGET -u TVOS_DEPLOYMENT_TARGET \
-    -u WATCHOS_DEPLOYMENT_TARGET -u XROS_DEPLOYMENT_TARGET "${HUXERUI_MCPP:-mcpp}" "$@") > "$HUXERUI_MCPP_REPORT"
+  HUXERUI_MCPP_COMMAND=${HUXERUI_MCPP:-mcpp}
+  # Xcode exports every build setting to this script, over 500 variables, and mcpp cannot start a program whose
+  # environment holds more than 512 entries; it reports that as running out of memory. The settings describe this
+  # shell's build, not the core's, and the iOS SDK and deployment target among them would also reach the compiler of
+  # the build programs mcpp runs on this Mac. mcpp therefore gets the user's environment without them.
+  (
+    cd "$HUXERUI_PROJECT_ROOT"
+    for HUXERUI_NAME in $(env | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p'); do
+      case "$HUXERUI_NAME" in
+        HOME | USER | LOGNAME | PATH | SHELL | TMPDIR | TERM | LANG | LC_* | DEVELOPER_DIR | MCPP_* | XLINGS_* | \
+          *_proxy | *_PROXY | SSL_CERT_*) ;;
+        *) unset "$HUXERUI_NAME" 2> /dev/null || true ;;
+      esac
+    done
+    exec "$HUXERUI_MCPP_COMMAND" "$@"
+  ) > "$HUXERUI_MCPP_REPORT"
   # The application's own artifact; dependencies such as the compiler runtime report library artifacts too.
   HUXERUI_MCPP_PROGRAM=$(grep '"event":"artifact"' "$HUXERUI_MCPP_REPORT" |
     grep -E '"kind":"(bin|app|shared)"' | sed -n 's/.*"path":"\([^"]*\)".*/\1/p' | head -n 1)
