@@ -1,10 +1,6 @@
 # Developing HuxerUI and its applications with mcpp
 
-HuxerUI has two build systems. **CMake is the full-platform one and the only
-path for Android, iOS and Web**; mcpp builds the framework and applications on
-Linux, Windows and macOS. Neither reads the other's files, and deleting this
-directory plus `mcpp.toml` and `build.mcpp` returns the repository to a
-CMake-only project.
+HuxerUI has two build systems. Both build the framework and applications for Linux, Windows, macOS, the Web, Android and iOS, and both package applications; CMake also builds the release SDK and drives the Gradle and Xcode shells. Neither reads the other's files, and deleting this directory plus `mcpp.toml` and `build.mcpp` returns the repository to a CMake-only project.
 
 The design and the open gaps are in
 [`docs/design/mcpp-build-system.md`](../../docs/design/mcpp-build-system.md);
@@ -93,6 +89,10 @@ one would mean writing into a package root that may be read-only. 44 files /
 
 ## Packaging
 
+An application is packaged with `mcpp pack --pkg-format <format>`, or `huxerui package <platform>`, which picks the platform's default format; the formats and what `huxerui.rules` supplies to each are in [§7 of the design](../../docs/design/mcpp-build-system.md#7-packaging-an-application).
+
+The framework itself:
+
 ```bash
 mcpp pack
 ```
@@ -105,10 +105,9 @@ platform's runner, and `mcpp pack` says so when `[package] platforms` claims one
 that was not packed.
 
 **This is not the release SDK.** That one covers six platforms and ships a CMake
-package config for CMake consumers; `mcpp pack` produces the three legs mcpp
-builds, for mcpp consumers. `cmake/HuxerUISdk.cmake` and `scripts/package_sdk.sh`
-keep owning the release -- the script also *builds* the Android, Web and iOS
-artifacts, which mcpp cannot.
+package config for CMake consumers; `mcpp pack` produces the legs `[package] platforms`
+names, for mcpp consumers. `cmake/HuxerUISdk.cmake` and `scripts/package_sdk.sh`
+keep owning the release.
 
 ## Parity
 

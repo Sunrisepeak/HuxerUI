@@ -29,6 +29,7 @@ The suite is divided into checkpoints so a run shows which part of the contract 
 | `resources` | `resources.location`: the final package where the Runtime looks for it | `resources.sha256`, `resources.files` |
 | `libraries` | `libraries`: the ordered library-graph record | `libraries.roots` |
 | `launch` | `launch.*`: what the started application resolved | |
+| `package` | `package.kind`: the distributable `huxerui package` published; `package.location` and `package.resources`, which the contract fixes: it is below `dist/<platform>` and carries the resource package the build produced | |
 
 The compared facts are also checked between a project and the project it names in `sameModelAs`.
 A difference is accepted only when [`allowed-differences.json`](allowed-differences.json) lists it with its reason.
@@ -97,7 +98,9 @@ python3 buildtools/cts/cts.py matrix /tmp/cts/results
 `--project` limits any of them to the named projects.
 `compare` checks the facts integrations must agree on, and `matrix` prints the build status of every project and integration.
 Every command exits non-zero when something it checked failed.
-The `launch` checkpoint starts each application with `HUXERUI_CTS_PROBE` set and reads what it recorded.
+The `launch` checkpoint starts each application with `HUXERUI_CTS_PROBE` set and reads what it recorded; on the Web it serves the build with the project's own page and reads the facts the application prints to the console of a headless Chrome or Chromium, which `HUXERUI_CTS_BROWSER` names when it is not on `PATH`.
+The `package` checkpoint runs `huxerui package <platform> --build-system <integration>` in the project, as a developer does, with the CLI `--cli` names, reads the published distributable, and removes what the command created in the project.
+A project without `package.kind` in `expected.json` is not packaged.
 
 ## Targets
 
@@ -105,13 +108,13 @@ The `launch` checkpoint starts each application with `HUXERUI_CTS_PROBE` set and
 | --- | --- |
 | `linux`, `windows` | The program, its dynamic dependencies, and the package in `<program>.resources/`; the application is started. |
 | `macos` | The application bundle, the program inside it, and the package in the bundle's resources; the application is started. |
-| `web` | The ES module and WebAssembly module, and the package preloaded into the module's data file. |
+| `web` | The ES module and WebAssembly module, and the package preloaded into the module's data file; the application is started in a headless browser. |
 | `android` | The application core the platform shell consumes: `lib<target>.so` for `arm64-v8a`, its exported JNI entries, and the final resource package. |
 | `ios` | The application core the Xcode shell links: `lib<target>_huxerui.a` for the Simulator with the framework inside it, its link inputs, and the final resource package. |
 
 Which hosts build each target is stated per integration in its `support.json`, and the workflow has one job for every declared combination.
 mcpp does not declare Android on Windows hosts: its Android NDK package cannot be installed there.
 
-The Android and iOS checks stop at the application core; building the APK or the application bundle through the platform shell is not yet a checkpoint.
+The `build`, `linkage`, and `resources` checks of Android and iOS stop at the application core; the `package` checkpoint reads the APK or the application bundle where an integration declares it.
 
 `.github/workflows/build-system-conformance.yml` runs every checkpoint as its own step for each integration, then compares the integrations, on pull requests that touch a build system, the framework sources, or the suite.

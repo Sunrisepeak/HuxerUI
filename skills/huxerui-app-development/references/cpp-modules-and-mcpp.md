@@ -2,7 +2,7 @@
 
 Use this reference for a project whose `mcpp.toml` depends on `huxerui.huxerui` and whose `build.mcpp` imports `huxerui.rules`. Generated projects use `import huxerui;` for the same public entities exposed by the umbrella header. Preserve the dependency version and build setup selected by the project.
 
-The HuxerUI mcpp path supports Linux, Windows, and macOS. Android, iOS, and Web use CMake. Generated mcpp projects have no CMake platform shells; use `mcpp build` and `mcpp run` rather than `huxerui build`, `run`, or `package`.
+The HuxerUI mcpp path builds for Linux, Windows, macOS, the Web, Android, and iOS. `huxerui build`, `run`, and `package` dispatch to mcpp for an mcpp project; `run` starts the host's own desktop platform. `huxerui package <platform>`, or `mcpp pack --pkg-format <format>`, writes the platform's package through the official `mcpp:plugins` members, and Android, iOS, and macOS packages need the `id` in `[package.metadata.huxerui]`.
 
 For an existing project that manually links prebuilt SDK binaries instead of using the package rules, read [mcpp-build.md](mcpp-build.md).
 
@@ -55,7 +55,7 @@ View Counter() {
 
 Use module imports rather than `#include` in the generated module application. Import `std` in units that instantiate HuxerUI templates or use standard-library entities; importing HuxerUI does not make all standard-library declarations reachable to the caller.
 
-The current templates select C++23 for standard-library module/toolchain compatibility. Keep that generated selection unless the resolved toolchain supports a verified alternative; it does not change the framework's C++20 API baseline. A newer language mode alone does not solve binary compatibility with a prebuilt SDK.
+mcpp projects use C++23, mcpp's default: `huxerui.rules` runs in the build program and imports `mcpp:plugins` members that need it. The CMake path keeps its C++20 floor. A newer language mode alone does not solve binary compatibility with a prebuilt SDK.
 
 Define annotated composables in source or module units processed by `huxerui.rules`. The application root already owns a scope. Keep `src/main.cpp` focused on required entry setup and `RunApplication()`; the rules exclude that entry file from transformation. Platform registration required before startup can still live in explicit entry code.
 

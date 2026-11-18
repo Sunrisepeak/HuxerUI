@@ -85,7 +85,7 @@ Direct CMake builds of generated projects use `-DHUXERUI_HOME=<path>`. CMake loa
 A project's build system is identified by its native declaration: `CMakeLists.txt`, or `mcpp.toml` with `build.mcpp`.
 `build`, `run`, and `package` dispatch to that integration, so the same commands drive a CMake project and an mcpp project.
 A project that declares both needs `--build-system cmake` or `--build-system mcpp`.
-For an mcpp project, `build` runs `mcpp build` for the platform's target and `run` runs `mcpp run` on the host's own desktop platform; running on Web, Android, and iOS and packaging an mcpp project are not available yet.
+For an mcpp project, `build` runs `mcpp build` for the platform's target, `run` runs `mcpp run` on the host's own desktop platform, and `package` runs `mcpp pack` with the platform's format and publishes the result below `dist/<platform>`; running on Web, Android, and iOS is not available yet.
 An mcpp project takes HuxerUI from the `huxerui` dependency in `mcpp.toml`, so `--sdk` is a usage error there, as are `--abi`, `--optimization`, `--lto`, and `--profile`, which the mcpp integration cannot honor through the CLI.
 `--generator` and `--java-home` steer only the CMake driver; for an mcpp project the CLI reports them with a warning and does not apply them.
 Capabilities that only mcpp offers are used through `mcpp` directly.

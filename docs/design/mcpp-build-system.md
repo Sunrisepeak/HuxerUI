@@ -224,73 +224,29 @@ so `platform/macos/*.mm` is listed explicitly. `frameworks` is a **top-level**
 `[target.macos.runtime] frameworks` entry is ignored, failing at link on macOS
 alone. Unconditional is correct: the engine renders it only for Mach-O.
 
-## 7. The Windows installer
+## 7. Packaging an application
 
-An application asks for an MSI in its build program, and gets one:
+`mcpp pack --pkg-format <format>` packages an application through the official `mcpp:plugins` distribution members, and `huxerui package <platform>` runs it for an mcpp project.
+`huxerui-build-rules` depends on `mcpp:plugins` with the `dist-appimage`, `dist-deb`, `dist-rpm`, `dist-wix`, `dist-apple`, `dist-web`, and `dist-apk` features, and `configure()` configures each member from the application's identity and its platform shell; a member declares its format in every pass and acts only in the pass that asked for it, and its tool is installed only when a pack asks for it.
 
-```cpp
-huxerui::rules::configure({
-    .resources = "resources",
-    .installer = {
-        .target       = "myapp",
-        .version      = "1.2.3",
-        .upgrade_code = "27B7A054-FFE4-48A5-92E3-5D90C0507EEB",
-    },
-});
-```
+| Platform | Formats | What the rule supplies |
+| --- | --- | --- |
+| Linux | `appimage` (the CLI's default), `deb`, `rpm` | name, categories, `platform/linux/package/<target>.svg`; for deb and rpm the maintainer, by default the first `[package] authors` entry |
+| Windows | `setup` (the CLI's default, as CMake's), `msi` | product name, manufacturer, and the upgrade code derived from the identifier as `string(UUID ... TYPE SHA1)` derives it in CMake |
+| macOS | `dmg`, `app` | name, identifier, `platform/macos/AppIcon.icns` |
+| iOS | `app` | name and identifier |
+| Web | `web` | `platform/web/index.html.in` rendered with the CMake integration's values, and its icons |
+| Android | `apk`, `aab` | identifier, label, and a generated application shell: an Application that loads the program's library and an Activity on `org.huxerui.HuxerUIActivity` |
 
-…and one line in its manifest:
+The identity is `[package.metadata.huxerui] name` and `id` in the application's manifest, or `bundle_name` and `bundle_identifier` in `configure()`.
+Packaging options beyond it are `configure({.package = {...}})`: categories, maintainer, depends, manufacturer, and upgrade code.
+An Android package needs the identifier; without one the rule warns and configures no package, and the build goes on.
 
-```toml
-[xlings.workspace]
-"xim:wix" = { windows = "5.0.2" }
-```
+The final resource package is deployed where each format's Runtime reads it: `<program>.resources/` beside the program on the desktop, `HuxerUI/` for the Apple bundles (`Contents/Resources/HuxerUI` on macOS, the bundle root on iOS), and the asset root of an APK.
+The framework states what an Android package carries from it, its Java host and its manifest entries, in `[package.metadata.dist-apk]` of its own manifest; `dist-apk` reads that table from every package in the application's resolved graph and substitutes `${applicationId}`.
+Android applications state `cxx_runtime = "self-contained"` for their Android triples, so the application's shared library links the C++ runtime statically, as the CMake integration's `c++_static`.
 
-That line is not redundant with the framework's. `xpkg_dir` answers from
-`MCPP_XPKG_*_DIR`, which mcpp sets for what the **building** package declared;
-a dependency's declaration provisions the payload — the log says
-`Provisioning [xlings.workspace] entries (xim:wix@5.0.2)` — without making it
-visible to the consumer's build program. The rule says exactly this, and prints
-the two lines to add, when the lookup comes back empty.
-
-It is on the **host** axis because `wix.exe` runs on the build machine, which
-is mcpp's own rule for which table a tool belongs in; the GTK payloads in §5
-are the other case.
-
-The rule renders the MSI definition it ships
-(`buildtools/mcpp/huxerui-build-rules/wix/Package.wxs.in`) into the build directory and
-submits **one** action, `role = "artifact"` — whose inputs are link outputs, so
-ninja sequences it after the link with no phase machinery.
-
-Three things make it one action rather than several:
-
-- **No staging.** The program is passed to WiX as a preprocessor variable,
-  `-d Executable=${mcpp.target_file:<target>}`, and the definition names it with
-  `<File Source="$(Executable)" />`. An earlier version harvested a directory
-  bindpath instead and produced a valid, empty, 52 KB installer when the path
-  resolved to nothing — with no diagnostic. A `<File Source>` whose path is
-  wrong is an error before anything is written.
-- **No resource copying.** HuxerUI's compiled resources are linked into the
-  executable; moving the whole `out/hrc` tree away and running the program
-  confirms it. The install set is the executable and the DLLs beside it.
-- **No path arithmetic.** `${mcpp.target_file:<target>}` is what mcpp expands
-  to the link output. A build program is told neither the target triple nor the
-  fingerprint, so the placeholder is the only way to name it — and an unknown
-  target is refused rather than expanded to an empty path.
-
-CI reads the MSI's `File` table rather than judging the installer by its size:
-an installer that carries nothing and one that carries the wrong file are both
-plausible sizes, and only the table says which file is in it.
-
-Silent on Linux and macOS: the rule returns before it reads anything when the
-target is not Windows.
-
-**The branded bundle is not built.** `Bundle.wxs` in the CMake path wraps the
-MSI in a WiX **bootstrapper application**, which is a second HuxerUI program —
-`platform/windows/windows_installer.cpp` (896 lines) plus a per-application UI
-and ten locales, linking `balutil.lib` and `dutil.lib` from the same payload.
-`wix_paths()` already resolves those, so nothing structural is missing; it is
-unbuilt, not blocked.
+`mcpp pack` reports the Web page as the distributable; the CLI publishes the page's directory, which holds the module, its WebAssembly, and the preloaded data.
 
 ## 8. Verification
 
@@ -301,6 +257,7 @@ unbuilt, not blocked.
 | `mcpp test` in `huxerui-source-select` | the scanning the rules and the tools share |
 | `mcpp test` in `huxerui-tests` | 209 cases and 11,521 assertions against the mcpp-built framework |
 | `mcpp pack` shape | headers, module interface and library all present |
+| Build System Conformance | each integration's build, resources, launch, and distributable against the projects' expected facts (`buildtools/cts/README.md`) |
 
 Both tools are C++ programs built by mcpp: a repository that offers mcpp as a
 first-class build system should not need a second language to check its own
@@ -312,13 +269,6 @@ consumer in the same job with the same flags, so a dialect divergence like §5's
 shows only where GCC is the default and clang is the exception.
 
 ## 9. Known gaps
-
-**Android, iOS and Web** are outside mcpp's target language today, and CMake
-remains the only path to them. Web is the one that has been taken up with
-upstream —
-[mcpp#597](https://github.com/mcpp-community/mcpp/issues/597) sets out what an
-Emscripten target needs and why a rule package cannot supply it. Android and
-iOS have not been raised.
 
 **A published package carries no consumer dependencies.** `mcpp emit xpkg`
 derives a descriptor's `xpm.<platform>.deps` from the top-level
