@@ -52,6 +52,45 @@ TEST_CASE("HuxerUICliCreatesMcppDispatchCommands") {
   REQUIRE(run.arguments == std::vector<std::string>{"run"});
 }
 
+TEST_CASE("HuxerUICliCreatesMcppPackCommands") {
+  using huxerui::cli::mcpp::PackageFormat;
+  REQUIRE(PackageFormat("linux", "") == "appimage");
+  REQUIRE(PackageFormat("linux", "rpm") == "rpm");
+  REQUIRE(PackageFormat("windows", "") == "msi");
+  REQUIRE(PackageFormat("macos", "") == "dmg");
+  REQUIRE(PackageFormat("web", "") == "web");
+  REQUIRE_THROWS_WITH(PackageFormat("ios", ""), Catch::Matchers::ContainsSubstring("not available yet"));
+
+  const auto release = huxerui::cli::mcpp::PackCommand({"/project", "web", "release"}, "web");
+  REQUIRE(release.arguments == std::vector<std::string>{"pack", "--pkg-format", "web", "--message-format", "json",
+                                                        "--target", "wasm32-emscripten"});
+  const auto debug = huxerui::cli::mcpp::PackCommand({"/project", "linux", "debug"}, "deb");
+  REQUIRE(debug.arguments == std::vector<std::string>{"pack", "--pkg-format", "deb", "--message-format", "json",
+                                                      "--dev"});
+}
+
+TEST_CASE("HuxerUICliReadsMcppPackResults") {
+  const std::string envelope = R"({
+ "data": {
+  "artifacts": [
+   {"format": "deb", "path": "/out/app_0.1.0_amd64.deb", "sha256": "00", "targets": ["x86_64-linux-gnu"],
+    "type": "file"},
+   {"format": "web", "path": "C:\\out\\web", "type": "dir"}
+  ],
+  "stage": {"dir": "/out/stage"}
+ },
+ "kind": "mcpp.pack"
+})";
+  const auto artifacts = huxerui::cli::mcpp::ParsePackArtifacts(envelope);
+  REQUIRE(artifacts.size() == 2);
+  REQUIRE(artifacts[0].path == std::filesystem::path("/out/app_0.1.0_amd64.deb"));
+  REQUIRE(artifacts[0].type == "file");
+  REQUIRE(artifacts[1].path == std::filesystem::path("C:\\out\\web"));
+  REQUIRE(artifacts[1].type == "dir");
+  REQUIRE_THROWS(huxerui::cli::mcpp::ParsePackArtifacts(R"({"kind": "mcpp.pack", "data": {"artifacts": []}})"));
+  REQUIRE_THROWS(huxerui::cli::mcpp::ParsePackArtifacts("not json"));
+}
+
 TEST_CASE("HuxerUICliHasNoCommandNamedAfterABuildSystem") {
   TemporaryDirectory temporary;
   const Invocation invocation = Invoke(temporary.Path(), {"mcpp", "build"});
@@ -97,9 +136,9 @@ TEST_CASE("HuxerUICliDispatchesToTheProjectsBuildSystem") {
   REQUIRE(steered.error.find("warning: --generator") != std::string::npos);
   REQUIRE(steered.error.find("unknown platform: plan9") != std::string::npos);
 
-  const Invocation package = Invoke(modules, {"package", "linux"});
+  const Invocation package = Invoke(modules, {"package", "android"});
   REQUIRE(package.result == 1);
-  REQUIRE(package.error.find("packaging an mcpp project is not available yet") != std::string::npos);
+  REQUIRE(package.error.find("packaging an mcpp project for android is not available yet") != std::string::npos);
   const Invocation open = Invoke(modules, {"open", "ios"});
   REQUIRE(open.result == 1);
   REQUIRE(open.error.find("CMake declaration") != std::string::npos);

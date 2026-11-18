@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "process_runner.h"
 
@@ -27,5 +28,27 @@ struct CommandOptions {
 
 /// The `mcpp run` command, which builds and starts the application on the host.
 [[nodiscard]] ProcessCommand RunCommand(const CommandOptions& options);
+
+/// The mcpp package format a platform's distributable is written in.
+/// @param platform HuxerUI platform identifier.
+/// @param requested The `--format` the caller selected, or empty for the platform's default.
+/// @return The format: `appimage`, `deb`, or `rpm` on Linux, `msi` on Windows, `dmg` on macOS, `web` on the Web.
+/// @throws std::runtime_error for a platform whose packaging the mcpp integration does not map yet.
+[[nodiscard]] std::string PackageFormat(std::string_view platform, std::string_view requested);
+
+/// The `mcpp pack` command that writes a platform's distributable and reports it as JSON on standard output.
+[[nodiscard]] ProcessCommand PackCommand(const CommandOptions& options, std::string_view format);
+
+/// One distributable `mcpp pack` reported.
+struct PackedArtifact {
+  /// Absolute path of the file or directory.
+  std::filesystem::path path;
+  /// `file` or `dir`.
+  std::string type;
+};
+
+/// Reads the artifacts from the `mcpp.pack` envelope `mcpp pack --message-format json` writes.
+/// @throws std::runtime_error when the envelope reports no artifact.
+[[nodiscard]] std::vector<PackedArtifact> ParsePackArtifacts(std::string_view envelope);
 
 } // namespace huxerui::cli::mcpp

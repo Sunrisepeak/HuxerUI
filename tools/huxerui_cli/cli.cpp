@@ -1341,6 +1341,41 @@ int RunMcppCommand(const Project& project, BuildOptions& options, std::string_vi
   return 0;
 }
 
+void PublishPackageArtifacts(std::span<const PackageArtifact> artifacts, const std::filesystem::path& destination,
+                             std::ostream& output);
+
+/// Packs each platform with `mcpp pack` in the format the platform's distributable uses, and publishes what mcpp
+/// reports below `dist/<platform>` through the same validated publication as the CMake path.
+int RunMcppPackage(const Project& project, BuildOptions& options, std::ostream& output, std::ostream& error) {
+  if (!options.profile_explicit) {
+    options.profile = "release";
+  }
+  ApplyMcppOptionRules(options, error);
+  if (!project.unknown_platforms.empty()) {
+    throw std::runtime_error("unknown platform directory: " + project.unknown_platforms.front());
+  }
+  const std::vector<const PlatformDriver*> platforms = ResolveBuildPlatforms(project, options, {});
+  for (const PlatformDriver* platform : platforms) {
+    const std::string format = mcpp::PackageFormat(platform->Id(), options.package_format.value_or(""));
+    const mcpp::CommandOptions mcpp_options{project.root, std::string(platform->Id()), options.profile};
+    const ProcessCommand command = mcpp::PackCommand(mcpp_options, format);
+    output << "Packaging " << platform->Id() << " (" << options.profile << ", " << format << ") with mcpp\n"
+           << "> " << DescribeProcess(command) << '\n';
+    output.flush();
+    const ProcessResult result = RunProcessCapture(command);
+    if (result.exit_code != 0) {
+      throw std::runtime_error("command failed with exit code " + std::to_string(result.exit_code) + ": " +
+                               DescribeProcess(command));
+    }
+    std::vector<PackageArtifact> artifacts;
+    for (const mcpp::PackedArtifact& packed : mcpp::ParsePackArtifacts(result.output)) {
+      artifacts.push_back({packed.path, packed.path.filename()});
+    }
+    PublishPackageArtifacts(artifacts, project.root / "dist" / platform->Id(), output);
+  }
+  return 0;
+}
+
 int RunBuild(std::span<const std::string_view> arguments, const std::filesystem::path& working_directory,
              const std::filesystem::path& sdk_home, std::ostream& output, std::ostream& error) {
   BuildOptions options = ParseBuildOptions(arguments, {});
@@ -1484,11 +1519,10 @@ void PublishPackageArtifacts(std::span<const PackageArtifact> artifacts, const s
 }
 
 int RunPackage(std::span<const std::string_view> arguments, const std::filesystem::path& working_directory,
-               const std::filesystem::path& sdk_home, std::ostream& output) {
+               const std::filesystem::path& sdk_home, std::ostream& output, std::ostream& error) {
   BuildOptions options = ParseBuildOptions(arguments, "package");
-  if (FindMcppProject(working_directory, options)) {
-    throw std::runtime_error("packaging an mcpp project is not available yet; no package format is mapped to the "
-                             "mcpp integration, so none is produced in place of the requested one");
+  if (const std::optional<Project> project = FindMcppProject(working_directory, options)) {
+    return RunMcppPackage(*project, options, output, error);
   }
   const auto huxerui_home = ResolveAndExportBuildHome(sdk_home, options, working_directory);
   if (!options.profile_explicit) {
@@ -1652,7 +1686,7 @@ int Run(std::span<const std::string_view> arguments, const std::filesystem::path
       return RunApplication(arguments, working_directory, sdk.home, output, error);
     }
     if (command == "package") {
-      return RunPackage(arguments, working_directory, sdk.home, output);
+      return RunPackage(arguments, working_directory, sdk.home, output, error);
     }
     if (command == "open") {
       return RunOpen(arguments, working_directory, sdk.home, output);
