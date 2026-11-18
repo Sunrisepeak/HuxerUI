@@ -789,6 +789,10 @@ def package_facts(cli: str | None, integration: str, target: str, project: Path,
         # One ABI bounds the run; the shell's handling of several is the same for every integration. It is the
         # attached device's, so the launch checkpoint can start the published APK.
         command += ["--abi", android_device_abi() or "arm64-v8a"]
+    elif target == "ios":
+        # A generic Simulator build compiles the core for every architecture; the launch checkpoint needs only the
+        # Simulator's, which is the host's.
+        command += ["--abi", "arm64" if host_platform.machine() == "arm64" else "x86_64"]
     log("  $ " + " ".join(command))
     try:
         completed = subprocess.run(command, cwd=project, capture_output=True, text=True, timeout=timeout)
