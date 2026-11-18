@@ -79,6 +79,7 @@
         "linkage",
         "resources",
         "libraries",
+        "launch",
         "package",
         "package-shellless"
       ],
@@ -95,6 +96,7 @@
         "linkage",
         "resources",
         "libraries",
+        "launch",
         "package",
         "package-shellless"
       ],

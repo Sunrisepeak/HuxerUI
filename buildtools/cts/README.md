@@ -18,6 +18,15 @@ Each project has one set of sources, resources, and platform shells, plus one na
 
 A project lists the capabilities it needs in `requires`.
 
+### Created projects
+
+The suite also checks the projects `huxerui create` writes, so a change to the CLI or the templates that breaks a new project fails here.
+[`created-projects.json`](created-projects.json) declares each one by kind and build systems: an application with CMake, one with mcpp, one with both, and a library with mcpp and its Preview.
+A project is created for every integration whose declaration it carries, and the library's Preview is the application that is built.
+Expected facts are keyed by kind, source style, and template, never by build system, so the application that declares both build systems expects what each single-system application does, and names `created_cmake_app` in `sameModelAs`.
+The file also declares the targets and hosts where the projects are created; they start with Linux and the Web on Linux hosts.
+Created projects carry no probe, so their `launch` checkpoint has no facts to read.
+
 ## Checkpoints
 
 The suite is divided into checkpoints so a run shows which part of the contract an integration meets.
@@ -89,6 +98,7 @@ Neither is a pass or a failure.
 
 ```bash
 python3 buildtools/cts/cts.py list
+python3 buildtools/cts/cts.py create --integration cmake --target linux --cli build/cli/huxerui --out /tmp/cts
 python3 buildtools/cts/cts.py build --integration cmake --target linux --out /tmp/cts
 python3 buildtools/cts/cts.py build --integration mcpp --target linux --mcpp-toolchain llvm@22.1.8 --out /tmp/cts
 python3 buildtools/cts/cts.py check --integration mcpp --target linux --check resources libraries --out /tmp/cts
@@ -96,12 +106,15 @@ python3 buildtools/cts/cts.py compare --check resources /tmp/cts/results
 python3 buildtools/cts/cts.py matrix /tmp/cts/results
 ```
 
+`create` writes the created projects declared for an integration and target below `--out` with the CLI `--cli` names, and later commands with the same `--out` include them.
 `build` builds the projects and records their facts; `check` evaluates the named checkpoints, or all of them when none is named; `run` does both.
 `--project` limits any of them to the named projects.
 `compare` checks the facts integrations must agree on, and `matrix` prints the build status of every project and integration.
 Every command exits non-zero when something it checked failed.
 The `launch` checkpoint starts each application with `HUXERUI_CTS_PROBE` set and reads what it recorded; on the Web it serves the build with the project's own page and reads the facts the application prints to the console of a headless Chrome or Chromium, which `HUXERUI_CTS_BROWSER` names when it is not on `PATH`.
-The `package` checkpoint runs `huxerui package <platform> --build-system <integration>` in the project, as a developer does, with the CLI `--cli` names, reads the published distributable, and removes what the command created in the project.
+On Android and iOS it starts the distributable the `package` checkpoint published: the APK on the one attached device or emulator, whose ABI the package is then built for, reading the `HUXERUI_CTS_PROBE` log tag; and the application bundle on a booted iOS Simulator, or the first available iPhone Simulator it boots, reading the application's standard output.
+A device launch that records nothing before the timeout, or a host with no device, is reported as `unavailable`, with the device log kept in the work directory.
+The `package` checkpoint runs `huxerui package <platform> --build-system <integration>` in the project, as a developer does, with the CLI `--cli` names, reads the published distributable, including the MSI a WiX setup executable carries, and removes what the command created in the project.
 On Android and iOS the package comes from the standard shell: a project without one gets it from `huxerui platform add <platform>` first, which is removed afterwards, and Android is packaged for `arm64-v8a`.
 The `package-shellless` checkpoint adds `--no-shell` and is declared only by an integration that offers it.
 A project without `package.kind` in `expected.json` is not packaged.
@@ -118,7 +131,8 @@ A project without `package.kind` in `expected.json` is not packaged.
 
 Which hosts build each target is stated per integration in its `support.json`, and the workflow has one job for every declared combination.
 
-The `build`, `linkage`, and `resources` checks of Android and iOS stop at the application core; the `package` checkpoint reads the APK or the application bundle where an integration declares it.
+The `build`, `linkage`, and `resources` checks of Android and iOS stop at the application core; the `package` checkpoint reads the APK or the application bundle where an integration declares it, and the `launch` checkpoint starts it.
+The workflow boots an Android emulator on Linux hosts and runs `launch` after `package` on every row.
 
 `.github/workflows/build-system-conformance.yml` runs every checkpoint as its own step for each integration, then compares the integrations, on pull requests that touch a build system, the framework sources, the CLI, the templates, or the suite; Markdown changes start nothing.
 Its plan job first runs the suite's own tests (`tests/scripts/cts_test.py`) and then selects the integrations from the changed paths: a path only one integration consumes, such as `cmake/**` or `buildtools/mcpp/**`, runs that integration's rows, and any other path runs both.

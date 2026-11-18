@@ -91,6 +91,76 @@ class RebuildTests(unittest.TestCase):
         self.assertIn("second build of unchanged inputs", result["reason"])
 
 
+class CreatedProjectTests(unittest.TestCase):
+    def setUp(self):
+        self.suite = cts.load_json(cts.CREATED_PROJECTS)
+
+    def test_every_created_project_has_expected_facts(self):
+        for name, project in self.suite["projects"].items():
+            expected = cts.created_expected(name, project, self.suite)
+            self.assertEqual(expected["project"], name)
+            self.assertNotRegex(cts.json.dumps(expected), r"\{(name|product)\}", name)
+
+    def test_style_follows_the_build_systems(self):
+        self.assertEqual(cts.created_style(["mcpp"]), "modules")
+        self.assertEqual(cts.created_style(["cmake"]), "headers")
+        self.assertEqual(cts.created_style(["cmake", "mcpp"]), "headers")
+
+    def test_a_second_declaration_does_not_change_the_expected_facts(self):
+        projects = self.suite["projects"]
+        single = cts.created_expected("x", projects["created_cmake_app"], self.suite)
+        dual = cts.created_expected("x", projects["created_dual_app"], self.suite)
+        dual.pop("sameModelAs")
+        self.assertEqual(single, dual)
+
+    def test_library_preview_names_follow_the_library(self):
+        expected = cts.created_expected("data-grid", {"kind": "library", "build-systems": ["mcpp"]}, self.suite)
+        self.assertEqual(expected["target"], "example_data-grid")
+        self.assertEqual(expected["facts"]["libraries"], ["DataGrid::DataGrid"])
+
+    def test_created_projects_are_selected_with_their_names(self):
+        with tempfile.TemporaryDirectory() as out:
+            application = Path(out) / "somewhere" / "preview"
+            application.mkdir(parents=True)
+            cts.write_json(application / "expected.json", {"project": "created_x"})
+            cts.write_json(cts.created_root(Path(out), "x", "linux") / "projects.json",
+                           {"projects": [str(application)]})
+            selected = cts.selected_projects(None, Path(out), "x", "linux")
+            self.assertEqual(cts.project_name(selected[-1]), "created_x")
+            self.assertEqual(cts.selected_projects(["created_x"], Path(out), "x", "linux"), [application])
+            self.assertNotIn(application, cts.selected_projects(None, Path(out), "x", "web"))
+
+    def test_undeclared_host_creates_nothing(self):
+        arguments = argparse.Namespace(integration="cmake", target="web", host="no-such-host", out=None, project=None,
+                                       cli=None)
+        with tempfile.TemporaryDirectory() as out:
+            arguments.out = out
+            self.assertEqual(cts.command_create(arguments), 0)
+            self.assertEqual(cts.selected_projects(None, Path(out), "cmake", "web"), cts.selected_projects(None))
+
+
+class DeviceLaunchTests(unittest.TestCase):
+    def test_probe_lines_are_read_with_and_without_the_prefix(self):
+        text = "HUXERUI_CTS_PROBE app.title=CTS app\napp.greeting=Hello = there\nsome other line\n"
+        self.assertEqual(cts.probe_lines(text), {"app.title": "CTS app", "app.greeting": "Hello = there"})
+
+    def test_nothing_recorded_is_unavailable(self):
+        with tempfile.TemporaryDirectory() as work:
+            with self.assertRaises(cts.Unavailable):
+                cts.device_launch_result({}, {"app.title": "x"}, Path(work) / "launch.log", "device")
+
+    def test_a_missing_fact_is_reported(self):
+        facts = cts.device_launch_result({"a": "1"}, {"a": "1", "b": "2"}, Path("unused"), "device")
+        self.assertEqual(facts, {"launch.a": "1", "launch.b": "<missing>"})
+
+    def test_launch_without_a_published_package_is_unavailable(self):
+        with tempfile.TemporaryDirectory() as work:
+            with self.assertRaisesRegex(cts.Unavailable, "package checkpoint"):
+                cts.android_launch_facts({"a": "1"}, Path(work), 1.0)
+            with self.assertRaisesRegex(cts.Unavailable, "package checkpoint"):
+                cts.ios_launch_facts({"a": "1"}, Path(work), 1.0)
+
+
 class CoverageTests(unittest.TestCase):
     def test_contract_has_clauses(self):
         clauses = cts.contract_clauses()

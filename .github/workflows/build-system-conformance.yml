@@ -245,6 +245,27 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      # The launch checkpoint starts the packaged APK here, and the package is built for the emulator's ABI. An
+      # emulator that does not boot leaves no device attached, which the checkpoint reports as unavailable.
+      - name: Start an Android emulator
+        if: matrix.row.target == 'android' && matrix.row.host == 'linux'
+        continue-on-error: true
+        timeout-minutes: 15
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules > /dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          image="system-images;android-34;google_apis;x86_64"
+          (yes || true) | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install emulator platform-tools "$image" > /dev/null
+          echo no | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd --force --name cts --package "$image"
+          nohup "$ANDROID_HOME/emulator/emulator" -avd cts -no-window -no-audio -no-boot-anim -no-snapshot \
+            -gpu swiftshader_indirect > "$RUNNER_TEMP/emulator.log" 2>&1 &
+          adb="$ANDROID_HOME/platform-tools/adb"
+          "$adb" wait-for-device
+          until [ "$("$adb" shell getprop sys.boot_completed | tr -d '\r')" = 1 ]; do sleep 5; done
+          "$adb" shell getprop ro.product.cpu.abi
+
       # The package checkpoints run `huxerui package` as a developer does, so the suite builds the CLI.
       - name: Build the HuxerUI CLI
         run: |
@@ -254,6 +275,12 @@ jobs:
           test -n "$cli"
           if [ "${{ matrix.row.host }}" = windows ]; then cli="$(cygpath -w "$cli")"; fi
           echo "CTS_CLI=$cli" >> "$GITHUB_ENV"
+
+      # Projects `huxerui create` writes are checked like the suite's own; created-projects.json declares where.
+      - name: Create projects with the CLI
+        run: |
+          ${{ matrix.row.python }} buildtools/cts/cts.py create --integration ${{ matrix.integration }} \
+            --target ${{ matrix.row.target }} --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts"
 
       - name: Build the conformance projects
         run: |
@@ -284,17 +311,18 @@ jobs:
           ${{ matrix.row.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
             --target ${{ matrix.row.target }} --check libraries --out "$RUNNER_TEMP/cts"
 
-      - name: "Check: startup and resource resolution"
-        if: ${{ !cancelled() }}
-        run: |
-          ${{ matrix.row.target == 'linux' && 'xvfb-run -a ' || '' }}${{ matrix.row.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
-            --target ${{ matrix.row.target }} --check launch --launch-timeout 120 --out "$RUNNER_TEMP/cts"
-
       - name: "Check: distributable"
         if: ${{ !cancelled() }}
         run: |
           ${{ matrix.row.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
             --target ${{ matrix.row.target }} --check package --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts"
+
+      # On Android and iOS the application starts from the APK or bundle the distributable check published.
+      - name: "Check: startup and resource resolution"
+        if: ${{ !cancelled() }}
+        run: |
+          ${{ matrix.row.target == 'linux' && 'xvfb-run -a ' || '' }}${{ matrix.row.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
+            --target ${{ matrix.row.target }} --check launch --launch-timeout 120 --out "$RUNNER_TEMP/cts"
 
       - name: "Check: distributable without the standard shell"
         if: ${{ !cancelled() }}
@@ -458,6 +486,12 @@ jobs:
           if [ "${{ matrix.row.host }}" = windows ]; then cli="$(cygpath -w "$cli")"; fi
           echo "CTS_CLI=$cli" >> "$GITHUB_ENV"
 
+      # Projects `huxerui create` writes are checked like the suite's own; created-projects.json declares where.
+      - name: Create projects with the CLI
+        run: |
+          ${{ matrix.row.python }} buildtools/cts/cts.py create --integration ${{ matrix.integration }} \
+            --target ${{ matrix.row.target }} --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts"
+
       - name: Build the conformance projects
         run: |
           ${{ matrix.row.python }} buildtools/cts/cts.py build --integration ${{ matrix.integration }} \
@@ -487,17 +521,18 @@ jobs:
           ${{ matrix.row.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
             --target ${{ matrix.row.target }} --check libraries --out "$RUNNER_TEMP/cts"
 
-      - name: "Check: startup and resource resolution"
-        if: ${{ !cancelled() }}
-        run: |
-          ${{ matrix.row.target == 'linux' && 'xvfb-run -a ' || '' }}${{ matrix.row.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
-            --target ${{ matrix.row.target }} --check launch --launch-timeout 120 --out "$RUNNER_TEMP/cts"
-
       - name: "Check: distributable"
         if: ${{ !cancelled() }}
         run: |
           ${{ matrix.row.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
             --target ${{ matrix.row.target }} --check package --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts"
+
+      # On Android and iOS the application starts from the APK or bundle the distributable check published.
+      - name: "Check: startup and resource resolution"
+        if: ${{ !cancelled() }}
+        run: |
+          ${{ matrix.row.target == 'linux' && 'xvfb-run -a ' || '' }}${{ matrix.row.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
+            --target ${{ matrix.row.target }} --check launch --launch-timeout 120 --out "$RUNNER_TEMP/cts"
 
       - name: "Check: distributable without the standard shell"
         if: ${{ !cancelled() }}

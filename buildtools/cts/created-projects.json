@@ -1,0 +1,93 @@
+{
+  "schema": 1,
+  "description": "Projects the conformance suite creates with `huxerui create` and checks like its own. Each project is created for the integrations whose declaration it carries; its expected facts are keyed by kind, source style, and template, never by build system, so a project that declares two build systems expects what a project declaring either one does.",
+  "hosts": {
+    "linux": ["linux"],
+    "web": ["linux"]
+  },
+  "projects": {
+    "created_cmake_app": {
+      "kind": "app",
+      "build-systems": ["cmake"]
+    },
+    "created_mcpp_app": {
+      "kind": "app",
+      "build-systems": ["mcpp"]
+    },
+    "created_dual_app": {
+      "kind": "app",
+      "build-systems": ["cmake", "mcpp"],
+      "sameModelAs": "created_cmake_app"
+    },
+    "created_mcpp_library": {
+      "kind": "library",
+      "build-systems": ["mcpp"]
+    }
+  },
+  "expected": {
+    "app/headers/default": {
+      "target": "{name}",
+      "requires": [],
+      "facts": {
+        "profile": "debug",
+        "artifact.name": "{name}",
+        "artifact.bundle": "<none>",
+        "framework.linkage": "static",
+        "resources.location": "<artifact>.resources/huxerui/resources.bin",
+        "libraries": [],
+        "package.kind": "appimage"
+      },
+      "targets": {
+        "web": {
+          "facts": {
+            "resources.location": "<artifact>.data:/huxerui/resources.bin",
+            "package.kind": "web"
+          }
+        }
+      }
+    },
+    "app/modules/default": {
+      "target": "{name}",
+      "requires": ["modules"],
+      "facts": {
+        "profile": "debug",
+        "artifact.name": "{name}",
+        "artifact.bundle": "<none>",
+        "framework.linkage": "static",
+        "resources.location": "<artifact>.resources/huxerui/resources.bin",
+        "libraries": [],
+        "package.kind": "appimage"
+      },
+      "targets": {
+        "web": {
+          "facts": {
+            "resources.location": "<artifact>.data:/huxerui/resources.bin",
+            "package.kind": "web"
+          }
+        }
+      }
+    },
+    "library/modules/default": {
+      "application": "examples/preview",
+      "target": "example_{name}",
+      "requires": ["modules"],
+      "facts": {
+        "profile": "debug",
+        "artifact.name": "example_{name}",
+        "artifact.bundle": "<none>",
+        "framework.linkage": "static",
+        "resources.location": "<artifact>.resources/huxerui/resources.bin",
+        "libraries": ["{product}::{product}"],
+        "package.kind": "appimage"
+      },
+      "targets": {
+        "web": {
+          "facts": {
+            "resources.location": "<artifact>.data:/huxerui/resources.bin",
+            "package.kind": "web"
+          }
+        }
+      }
+    }
+  }
+}

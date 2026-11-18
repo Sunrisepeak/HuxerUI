@@ -5,7 +5,9 @@ The suite is organized as checkpoints. `build` builds every conformance project 
 build-system integration and records the facts the build-system contract defines.
 `check` evaluates one or more checkpoints against each project's expected facts.
 `compare` checks that the integrations which ran agree on the facts that have no fixed
-expected value, such as the content of the final resource package.
+expected value, such as the content of the final resource package. `create` first writes the
+projects `created-projects.json` declares with the HuxerUI CLI, and the later commands check them
+like the suite's own.
 
 An integration is a directory `buildtools/<integration>/` with a `support.json`; the runner
 discovers it there and builds through the adapter beside it, `cts_adapter.py` (see
@@ -36,6 +38,7 @@ CTS_ROOT = Path(__file__).resolve().parent
 REPOSITORY = CTS_ROOT.parent.parent
 BUILDTOOLS = REPOSITORY / "buildtools"
 PROJECTS = CTS_ROOT / "projects"
+CREATED_PROJECTS = CTS_ROOT / "created-projects.json"
 ALLOWED_DIFFERENCES = CTS_ROOT / "allowed-differences.json"
 CONTRACT = BUILDTOOLS / "specs" / "build-system-integration.md"
 README = CTS_ROOT / "README.md"
@@ -124,9 +127,23 @@ def expected_for(project: Path, target: str) -> dict:
     return expected
 
 
-def selected_projects(names: list[str] | None) -> list[Path]:
+def project_name(project: Path) -> str:
+    """A project's name in results: its directory's, or the name a created project's expected facts give it."""
+    return load_json(project / "expected.json").get("project", project.name)
+
+
+def created_root(out: Path, integration: str, target: str) -> Path:
+    return out / "created" / f"{integration}-{target}"
+
+
+def selected_projects(names: list[str] | None, out: Path | None = None, integration: str = "",
+                      target: str = "") -> list[Path]:
+    """The suite's projects, then the projects `create` wrote below `out` for an integration and target."""
     projects = sorted(path for path in PROJECTS.iterdir() if (path / "expected.json").is_file())
-    return [path for path in projects if path.name in names] if names else projects
+    listing = created_root(out, integration, target) / "projects.json" if out is not None else None
+    if listing is not None and listing.is_file():
+        projects += [Path(path) for path in load_json(listing)["projects"]]
+    return [path for path in projects if project_name(path) in names] if names else projects
 
 
 def result_path(out: Path, integration: str, target: str, project: str) -> Path:
@@ -475,6 +492,168 @@ def launch_facts(record: dict, expected: dict, work: Path, timeout: float) -> di
     return {f"launch.{key}": observed.get(key, "<missing>") for key in expected}
 
 
+def probe_lines(text: str) -> dict[str, str]:
+    """The `key=value` facts in probe output, with or without the `HUXERUI_CTS_PROBE ` prefix."""
+    observed = {}
+    for line in text.splitlines():
+        line = line.strip().removeprefix("HUXERUI_CTS_PROBE ").strip()
+        key, separator, value = line.partition("=")
+        if separator and key and " " not in key:
+            observed[key] = value
+    return observed
+
+
+def wait_for_probe(read, expected: dict, timeout: float) -> dict[str, str]:
+    observed: dict[str, str] = {}
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        observed = read()
+        if all(key in observed for key in expected):
+            break
+        time.sleep(1.0)
+    return observed
+
+
+def device_launch_result(observed: dict[str, str], expected: dict, log_path: Path, what: str) -> dict:
+    """A device launch that recorded nothing before the timeout is unavailable rather than failed: a slow emulator
+    or simulator cannot be told apart from an application that did not start."""
+    if not observed:
+        tail = "\n".join(log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-20:]) \
+            if log_path.is_file() else ""
+        raise Unavailable(f"the application recorded no probe facts on the {what} before the timeout\n{tail}")
+    return {f"launch.{key}": observed.get(key, "<missing>") for key in expected}
+
+
+def find_android_tool(name: str) -> str | None:
+    found = shutil.which(name)
+    if found:
+        return found
+    for variable in ("ANDROID_HOME", "ANDROID_SDK_ROOT"):
+        root = os.environ.get(variable)
+        if not root:
+            continue
+        candidates = [Path(root) / "platform-tools" / name] + sorted((Path(root) / "build-tools").glob(f"*/{name}"),
+                                                                   reverse=True)
+        for candidate in candidates:
+            for path in (candidate, candidate.with_suffix(".exe")):
+                if path.is_file():
+                    return str(path)
+    return None
+
+
+def attached_android_devices(adb: str) -> list[str]:
+    listing = subprocess.run([adb, "devices"], capture_output=True, text=True, timeout=60).stdout
+    return [line.split()[0] for line in listing.splitlines()[1:] if line.strip().endswith("\tdevice")]
+
+
+def android_device_abi() -> str | None:
+    """The primary ABI of the one attached Android device or emulator, or None when there is none."""
+    adb = find_android_tool("adb")
+    devices = attached_android_devices(adb) if adb else []
+    if len(devices) != 1:
+        return None
+    abi = subprocess.run([adb, "shell", "getprop", "ro.product.cpu.abi"], capture_output=True, text=True, timeout=60)
+    return abi.stdout.strip() or None
+
+
+def android_launch_facts(expected: dict, work: Path, timeout: float) -> dict:
+    """Installs the APK the package checkpoint published on the attached device and reads the probe's log tag."""
+    apk = next(iter(sorted((work / "dist").glob("*.apk"))), None)
+    if apk is None:
+        raise Unavailable("no APK was published; the package checkpoint runs first")
+    adb = find_android_tool("adb")
+    if adb is None:
+        raise Unavailable("adb is not available")
+    devices = attached_android_devices(adb)
+    if len(devices) != 1:
+        raise Unavailable(f"one attached Android device or emulator is needed; found {len(devices)}")
+    aapt2 = find_android_tool("aapt2")
+    if aapt2 is None:
+        raise Unavailable("aapt2 is not available to read the APK's package name")
+    package = subprocess.run([aapt2, "dump", "packagename", str(apk)], capture_output=True, text=True,
+                             timeout=60, check=True).stdout.strip()
+    log_path = work / "launch.log"
+
+    def adb_run(*arguments: str, check: bool = True) -> subprocess.CompletedProcess:
+        return subprocess.run([adb, *arguments], capture_output=True, text=True, timeout=max(timeout, 300), check=check)
+
+    def probe() -> dict[str, str]:
+        return probe_lines(adb_run("logcat", "-d", "-v", "raw", "-s", "HUXERUI_CTS_PROBE:I").stdout)
+
+    log(f"  $ adb install {apk.name}; adb shell monkey -p {package} 1")
+    adb_run("install", "-r", str(apk))
+    try:
+        adb_run("logcat", "-c")
+        adb_run("shell", "monkey", "-p", package, "-c", "android.intent.category.LAUNCHER", "1")
+        observed = wait_for_probe(probe, expected, timeout)
+    finally:
+        log_path.write_text(adb_run("logcat", "-d", check=False).stdout, encoding="utf-8")
+        adb_run("shell", "am", "force-stop", package, check=False)
+        adb_run("uninstall", package, check=False)
+    return device_launch_result(observed, expected, log_path, "Android device")
+
+
+def ios_simulator(timeout: float) -> tuple[str, bool]:
+    """A booted iOS Simulator, booting the first available iPhone when none is; returns it and whether it was booted
+    here."""
+    listing = subprocess.run(["xcrun", "simctl", "list", "-j", "devices", "available"], capture_output=True,
+                             text=True, timeout=120, check=True).stdout
+    devices = [(runtime, device) for runtime, entries in json.loads(listing)["devices"].items()
+               if ".SimRuntime.iOS-" in runtime for device in entries]
+    for _, device in devices:
+        if device.get("state") == "Booted":
+            return device["udid"], False
+    phones = [device for _, device in sorted(devices, key=lambda entry: entry[0], reverse=True)
+              if device.get("name", "").startswith("iPhone")]
+    if not phones:
+        raise Unavailable("no iOS Simulator device is available")
+    udid = phones[0]["udid"]
+    log(f"  $ xcrun simctl boot {udid}  ({phones[0]['name']})")
+    try:
+        subprocess.run(["xcrun", "simctl", "bootstatus", udid, "-b"], capture_output=True, text=True,
+                       timeout=max(timeout, 600), check=True)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as failure:
+        subprocess.run(["xcrun", "simctl", "shutdown", udid], capture_output=True, timeout=120)
+        raise Unavailable(f"the iOS Simulator did not boot: {failure}")
+    return udid, True
+
+
+def ios_launch_facts(expected: dict, work: Path, timeout: float) -> dict:
+    """Installs the application bundle the package checkpoint published on a Simulator and reads the probe lines the
+    application writes to its standard output."""
+    import plistlib
+    bundle = next(iter(sorted((work / "dist").glob("*.app"))), None)
+    if bundle is None:
+        raise Unavailable("no application bundle was published; the package checkpoint runs first")
+    if shutil.which("xcrun") is None:
+        raise Unavailable("xcrun is not available")
+    with (bundle / "Info.plist").open("rb") as stream:
+        identifier = plistlib.load(stream)["CFBundleIdentifier"]
+    udid, booted_here = ios_simulator(timeout)
+    log_path = work / "launch.log"
+    log_path.unlink(missing_ok=True)
+
+    def simctl(*arguments: str, check: bool = True) -> subprocess.CompletedProcess:
+        return subprocess.run(["xcrun", "simctl", *arguments], capture_output=True, text=True,
+                              timeout=max(timeout, 300), check=check)
+
+    def probe() -> dict[str, str]:
+        return probe_lines(log_path.read_text(encoding="utf-8", errors="replace")) if log_path.is_file() else {}
+
+    log(f"  $ xcrun simctl install {udid} {bundle.name}; xcrun simctl launch {udid} {identifier}")
+    try:
+        simctl("install", udid, str(bundle))
+        simctl("launch", "--terminate-running-process", f"--stdout={log_path}", f"--stderr={log_path}", udid,
+               identifier)
+        observed = wait_for_probe(probe, expected, timeout)
+    finally:
+        simctl("terminate", udid, identifier, check=False)
+        simctl("uninstall", udid, identifier, check=False)
+        if booted_here:
+            simctl("shutdown", udid, check=False)
+    return device_launch_result(observed, expected, log_path, "iOS Simulator")
+
+
 # --------------------------------------------------------------------- package
 
 # What `huxerui package` may create inside a project; each one it creates is removed afterwards.
@@ -498,7 +677,30 @@ def resource_digests(root: Path) -> set[str]:
             if path.is_file() and path.parent.name == "huxerui"}
 
 
-def packaged_resources(kind: str, dist: Path, work: Path, timeout: float) -> set[str]:
+def bundled_msi(setup: Path, project: Path, work: Path, timeout: float) -> Path:
+    """The MSI a WiX setup executable carries, extracted with the WiX on the path or the one the package used."""
+    wix = shutil.which("wix") or next((str(path) for path in sorted((project / ".huxerui").rglob("wix.exe"))
+                                       if path.is_file()), None)
+    if wix is None:
+        raise Unavailable("the setup executable publishes no MSI beside it, and no WiX is available to extract it")
+    extracted = work / "setup-payloads"
+    shutil.rmtree(extracted, ignore_errors=True)
+    subprocess.run([wix, "burn", "extract", str(setup), "-o", str(extracted)], capture_output=True, timeout=timeout,
+                   check=True)
+    # Burn names extracted payloads by their identifiers; a payload is an MSI when it is a compound document.
+    for path in sorted(extracted.rglob("*")):
+        if not path.is_file():
+            continue
+        with path.open("rb") as stream:
+            header = stream.read(8)
+        if header == bytes.fromhex("d0cf11e0a1b11ae1"):
+            msi = work / "setup-package.msi"
+            shutil.copyfile(path, msi)
+            return msi
+    raise RuntimeError(f"the setup executable carries no MSI: {setup}")
+
+
+def packaged_resources(kind: str, dist: Path, project: Path, work: Path, timeout: float) -> set[str]:
     """The digests of every final resource package the distributable carries."""
     unpacked = work / "unpacked"
     shutil.rmtree(unpacked, ignore_errors=True)
@@ -525,9 +727,8 @@ def packaged_resources(kind: str, dist: Path, work: Path, timeout: float) -> set
         subprocess.run(["dpkg-deb", "-x", str(artifact), str(unpacked)], capture_output=True, timeout=timeout, check=True)
     elif kind in ("msi", "setup"):
         if kind == "setup":
-            artifact = next(iter(sorted(dist.glob("*.msi"))), None)
-            if artifact is None:
-                raise Unavailable("reading a setup executable without the MSI it chains is not implemented")
+            published = next(iter(sorted(dist.glob("*.msi"))), None)
+            artifact = published or bundled_msi(artifact, project, work, timeout)
         subprocess.run(["msiexec", "/a", str(artifact), "/qn", f"TARGETDIR={unpacked}"], capture_output=True,
                        timeout=timeout, check=True)
     elif kind == "dmg":
@@ -585,8 +786,9 @@ def package_facts(cli: str | None, integration: str, target: str, project: Path,
     if shellless:
         command.append("--no-shell")
     elif target == "android":
-        # One ABI bounds the run; the shell's handling of several is the same for every integration.
-        command += ["--abi", "arm64-v8a"]
+        # One ABI bounds the run; the shell's handling of several is the same for every integration. It is the
+        # attached device's, so the launch checkpoint can start the published APK.
+        command += ["--abi", android_device_abi() or "arm64-v8a"]
     log("  $ " + " ".join(command))
     try:
         completed = subprocess.run(command, cwd=project, capture_output=True, text=True, timeout=timeout)
@@ -598,7 +800,7 @@ def package_facts(cli: str | None, integration: str, target: str, project: Path,
         if not dist.is_dir() or not any(dist.iterdir()):
             return {"package.kind": "<none>", "package.location": "<missing>", "package.resources": "<missing>"}
         kind = package_kind(dist)
-        digests = packaged_resources(kind, dist, work, timeout) if kind != "<unknown>" else set()
+        digests = packaged_resources(kind, dist, project, work, timeout) if kind != "<unknown>" else set()
         wanted = built.get("resources.sha256")
         resources = "the built package" if wanted in digests else ("another package" if digests else "<missing>")
         published = work / "dist"
@@ -614,13 +816,82 @@ def package_facts(cli: str | None, integration: str, target: str, project: Path,
             shutil.move(str(set_aside), str(shell))
 
 
+# ---------------------------------------------------------------------- create
+
+
+def created_style(build_systems: list[str]) -> str:
+    """The source style `huxerui create` derives: mcpp alone is C++ modules, and a list naming CMake is headers."""
+    return "headers" if "cmake" in build_systems else "modules"
+
+
+def product_name(name: str) -> str:
+    """A segmented library name's PascalCase product, as `huxerui create library` derives it."""
+    return "".join(segment[:1].upper() + segment[1:] for segment in name.replace("-", "_").split("_"))
+
+
+def created_expected(name: str, project: dict, suite: dict) -> dict:
+    """A created project's expected facts: its kind, style, and template's, with the project's names filled in.
+    A project that names no template is created with the CLI's default for its kind and style, `default`."""
+    key = f"{project['kind']}/{created_style(project['build-systems'])}/{project.get('template', 'default')}"
+    if key not in suite["expected"]:
+        raise SystemExit(f"{CREATED_PROJECTS.name}: no expected facts for {key}")
+    text = json.dumps(suite["expected"][key]).replace("{name}", name).replace("{product}", product_name(name))
+    expected = {"schema": 1, "project": name, **json.loads(text)}
+    if project.get("sameModelAs"):
+        expected["sameModelAs"] = project["sameModelAs"]
+    return expected
+
+
+def command_create(arguments) -> int:
+    """Creates the declared projects with the CLI, for the integrations whose declaration each one carries."""
+    suite = load_json(CREATED_PROJECTS)
+    out = Path(arguments.out).resolve()
+    root = created_root(out, arguments.integration, arguments.target)
+    shutil.rmtree(root, ignore_errors=True)
+    root.mkdir(parents=True)
+    listing: list[str] = []
+    write_json(root / "projects.json", {"projects": listing})
+    if arguments.host not in suite["hosts"].get(arguments.target, []):
+        log(f"== create  no created projects are declared for {arguments.target} on {arguments.host}")
+        return 0
+    if not arguments.cli:
+        log("error: creating projects needs the HuxerUI CLI; pass --cli")
+        return 1
+    environment = {**os.environ, "HUXERUI_HOME": str(REPOSITORY)}
+    failed = False
+    for name, project in suite["projects"].items():
+        if arguments.project and name not in arguments.project:
+            continue
+        if arguments.integration not in project["build-systems"]:
+            continue
+        log(f"== create  {name}: {project['kind']} with {','.join(project['build-systems'])}")
+        command = [arguments.cli, "create", project["kind"], name, "--build-system", ",".join(project["build-systems"]),
+                   "--platform", arguments.target, "--agent", "none", "--yes"]
+        if project.get("template"):
+            command += ["--template", project["template"]]
+        log("  $ " + " ".join(command))
+        completed = subprocess.run(command, cwd=root, env=environment, capture_output=True, text=True)
+        if completed.returncode != 0:
+            log(f"   FAILED: `huxerui create` exited with {completed.returncode}\n{completed.stdout}{completed.stderr}")
+            failed = True
+            continue
+        expected = created_expected(name, project, suite)
+        application = root / name / expected.pop("application", ".")
+        write_json(application / "expected.json", expected)
+        listing.append(str(application.resolve()))
+    write_json(root / "projects.json", {"projects": listing})
+    return 1 if failed else 0
+
+
 # ----------------------------------------------------------------------- build
 
 
 def build_project(name: str, adapter, target: str, host: str, project: Path, out: Path) -> dict:
     expected = expected_for(project, target)
-    result: dict = {"project": project.name, "integration": name, "target": target, "host": host,
+    result: dict = {"project": project_name(project), "integration": name, "target": target, "host": host,
                     "status": "built", "reason": "", "record": {}, "facts": {}}
+    if expected.get("sameModelAs"):
+        result["sameModelAs"] = expected["sameModelAs"]
     support, reason = target_support(name, target, host)
     if support is None:
         result.update(status="undeclared", reason=reason)
@@ -630,7 +901,7 @@ def build_project(name: str, adapter, target: str, host: str, project: Path, out
         result.update(status="undeclared", reason="capabilities not declared: " + ", ".join(missing))
         return result
 
-    work = out / "work" / f"{name}-{target}" / project.name
+    work = out / "work" / f"{name}-{target}" / project_name(project)
     work.mkdir(parents=True, exist_ok=True)
     try:
         validate_record(name, adapter.build(project, work, target))
@@ -651,10 +922,10 @@ def command_build(arguments) -> int:
     adapter = ADAPTERS[arguments.integration].Adapter(arguments, REPOSITORY)
     out = Path(arguments.out).resolve()
     failed = False
-    for project in selected_projects(arguments.project):
-        log(f"== build  {arguments.integration} / {arguments.target} / {project.name}")
+    for project in selected_projects(arguments.project, out, arguments.integration, arguments.target):
+        log(f"== build  {arguments.integration} / {arguments.target} / {project_name(project)}")
         result = build_project(arguments.integration, adapter, arguments.target, arguments.host, project, out)
-        write_json(result_path(out, arguments.integration, arguments.target, project.name), result)
+        write_json(result_path(out, arguments.integration, arguments.target, project_name(project)), result)
         log(f"   {result['status'].upper()}" + (f": {result['reason']}" if result["reason"] else ""))
         failed = failed or result["status"] == "failed"
     return 1 if failed else 0
@@ -683,7 +954,8 @@ def summarize(title: str, rows: list[tuple[str, str, str]]) -> None:
 
 
 def check_project(check: str, integration: str, target: str, host: str, project: Path, out: Path, arguments) -> tuple[str, str]:
-    path = result_path(out, integration, target, project.name)
+    name = project_name(project)
+    path = result_path(out, integration, target, name)
     if not path.is_file():
         return "fail", "the project was not built; run `build` first"
     result = load_json(path)
@@ -706,15 +978,19 @@ def check_project(check: str, integration: str, target: str, host: str, project:
         launch = expected.get("launch", {})
         if not launch:
             return "pass", "the project defines no launch facts"
-        work = out / "work" / f"{integration}-{target}" / project.name
+        work = out / "work" / f"{integration}-{target}" / name
         try:
             if target == "web":
                 result["facts"].update(web_launch_facts(result["record"], launch, project, work, arguments.launch_timeout))
+            elif target == "android":
+                result["facts"].update(android_launch_facts(launch, work, arguments.launch_timeout))
+            elif target == "ios":
+                result["facts"].update(ios_launch_facts(launch, work, arguments.launch_timeout))
             else:
                 result["facts"].update(launch_facts(result["record"], launch, work, arguments.launch_timeout))
         except Unavailable as unavailable:
             return "unavailable", str(unavailable)
-        except RuntimeError as failure:
+        except (RuntimeError, subprocess.SubprocessError) as failure:
             return "fail", str(failure)
         write_json(path, result)
         wanted = {f"launch.{key}": value for key, value in launch.items()}
@@ -723,7 +999,7 @@ def check_project(check: str, integration: str, target: str, host: str, project:
             return "pass", "the project defines no package facts"
         if check == "package-shellless" and target not in SHELL_TARGETS:
             return "fail", f"{target} has no standard shell to package without"
-        work = out / "work" / f"{integration}-{target}" / project.name
+        work = out / "work" / f"{integration}-{target}" / name
         try:
             result["facts"].update(package_facts(arguments.cli, integration, target, project, result["facts"], work,
                                                  arguments.package_timeout, check == "package-shellless"))
@@ -738,7 +1014,7 @@ def check_project(check: str, integration: str, target: str, host: str, project:
         actual = result["facts"].get(fact, "<absent>")
         if actual == value:
             continue
-        reason = allowed_reason(integration, project.name, fact)
+        reason = allowed_reason(integration, name, fact)
         if reason:
             notes.append(f"allowed {fact}: {reason}")
         else:
@@ -755,10 +1031,10 @@ def command_check(arguments) -> int:
     for check in checks:
         log(f"== check  {check}: {CHECKS[check]['title']}  ({arguments.integration} / {arguments.target})")
         rows = []
-        for project in selected_projects(arguments.project):
+        for project in selected_projects(arguments.project, out, arguments.integration, arguments.target):
             status, detail = check_project(check, arguments.integration, arguments.target, arguments.host, project, out, arguments)
-            rows.append((project.name, status, detail))
-            log(f"   {status.upper():<12}{project.name}" + (f"\n                {detail}" if detail else ""))
+            rows.append((project_name(project), status, detail))
+            log(f"   {status.upper():<12}{project_name(project)}" + (f"\n                {detail}" if detail else ""))
             failed = failed or status == "fail"
         summarize(f"{check}: {CHECKS[check]['title']} ({arguments.integration}, {arguments.target})", rows)
     return 1 if failed else 0
@@ -805,10 +1081,11 @@ def command_compare(arguments) -> int:
                 if len(built) >= 2:
                     groups.append((project, "between " + ", ".join(sorted(built)),
                                    {name: result["facts"] for name, result in built.items()}))
-                # A project may state that another project is the same program in a different
-                # source form, such as C++ modules; the form must not change the program model.
-                twin = load_json(PROJECTS / project / "expected.json").get("sameModelAs")
+                # A project may state that another project is the same program in a different source form,
+                # such as C++ modules, or with another declaration beside its own; neither may change the
+                # program model. Its build result carries the statement.
                 for name, result in built.items():
+                    twin = result.get("sameModelAs")
                     other = results[target].get(twin, {}).get(name) if twin else None
                     if other is not None and other["status"] == "built":
                         groups.append((project, f"same model as {twin} ({name})",
@@ -874,8 +1151,8 @@ def contract_clauses() -> dict[str, str]:
 def expected_fact_names() -> set[str]:
     """Every fact some project expects, on any target."""
     names: set[str] = set()
-    for project in selected_projects(None):
-        expected = load_json(project / "expected.json")
+    created = load_json(CREATED_PROJECTS)["expected"].values()
+    for expected in [load_json(project / "expected.json") for project in selected_projects(None)] + list(created):
         names.update(expected.get("facts", {}))
         for override in expected.get("targets", {}).values():
             names.update(override.get("facts", {}))
@@ -959,6 +1236,8 @@ def command_list(arguments) -> int:
     for project in selected_projects(None):
         requires = load_json(project / "expected.json").get("requires", [])
         log(f"project  {project.name}" + (f"  (requires {', '.join(requires)})" if requires else ""))
+    for name, project in load_json(CREATED_PROJECTS)["projects"].items():
+        log(f"created  {name}: {project['kind']} with {','.join(project['build-systems'])}")
     return 0
 
 
@@ -979,6 +1258,15 @@ def main() -> int:
             command.add_argument("--launch-timeout", type=float, default=30.0)
             command.add_argument("--cli", help="the HuxerUI CLI the package checkpoint runs")
             command.add_argument("--package-timeout", type=float, default=3600.0)
+
+    create = commands.add_parser("create", help="create the declared projects with the CLI for build and check")
+    create.add_argument("--integration", required=True, choices=sorted(ADAPTERS))
+    create.add_argument("--target", required=True, help="target platform, for example linux")
+    create.add_argument("--host", default=current_host(), help="host platform; defaults to this machine")
+    create.add_argument("--out", required=True, help="directory for build output and result files")
+    create.add_argument("--project", action="append", help="limit to the named project; repeatable")
+    create.add_argument("--cli", help="the HuxerUI CLI that creates the projects")
+    create.set_defaults(handler=command_create)
 
     build = commands.add_parser("build", help="build the conformance projects and record their facts")
     add_selection(build, with_checks=False)
