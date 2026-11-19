@@ -97,10 +97,11 @@ Direct CMake builds of generated projects use `-DHUXERUI_HOME=<path>`. CMake loa
 
 A project's build system is identified by its native declaration: `CMakeLists.txt`, or `mcpp.toml` with `build.mcpp`.
 `build`, `run`, and `package` dispatch to that integration, so the same commands drive a CMake project and an mcpp project.
-A project that declares both needs `--build-system cmake` or `--build-system mcpp`.
-For an mcpp project, `build` runs `mcpp build` for the platform's target, `run` runs `mcpp run` on the host's own desktop platform, and `package` runs `mcpp pack` with the platform's format and publishes the result below `dist/<platform>`; running on Web, Android, and iOS is not available yet.
-An mcpp project takes HuxerUI from the `huxerui` dependency in `mcpp.toml`, so `--sdk` is a usage error there, as are `--abi`, `--optimization`, `--lto`, and `--profile`, which the mcpp integration cannot honor through the CLI.
-`--generator` and `--java-home` steer only the CMake driver; for an mcpp project the CLI reports them with a warning and does not apply them.
+A project that declares both builds with CMake and says so before it starts; `--build-system mcpp` selects mcpp for one command.
+For an mcpp project, desktop platforms and the Web build with `mcpp build`, run with `mcpp run`, and package with `mcpp pack`; Android and iOS build, run, and package through the same Gradle and Xcode shells as a CMake project, and `--no-shell` packages them with `mcpp pack` instead. Packages are published below `dist/<platform>` either way.
+An mcpp project takes HuxerUI from the `huxerui` dependency in `mcpp.toml`, so `--sdk` is a usage error there. `--optimization` and `--lto` select the release profiles `huxerui create` declares, `--profile` opens the framework's profiling feature, and `--abi`, `--device`, and `--java-home` apply to the shells.
+`--generator` steers only the CMake driver; for an mcpp project the CLI reports it with a warning and does not apply it.
+mcpp provisions its own compilers and libraries, so it needs nothing from the host but itself: install it with `xlings install mcpp -y`, as its [installation guide](https://github.com/mcpp-community/mcpp#install) describes. `huxerui doctor` checks the build system a project builds with and lists what is missing.
 Capabilities that only mcpp offers are used through `mcpp` directly.
 
 The CLI passes the selected framework home through its process environment and build arguments without writing it into platform configuration files. Direct Android Studio builds require `HUXERUI_HOME` in the IDE's environment; direct Xcode builds require it in the IDE's environment or explicit build settings, such as `Config/Local.xcconfig`. An already running IDE does not inherit the CLI's temporary environment or remember its last `--sdk` selection.
