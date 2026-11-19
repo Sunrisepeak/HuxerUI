@@ -548,16 +548,29 @@ TEST_CASE("HuxerUICliDoctorStatesWhatALibraryOffersImporters") {
               .result == 0);
   const std::filesystem::path meter = temporary.Path() / "meter";
 
-  // A library declaring both is the module its namespace names, whichever build system doctor checks.
+  // A library declaring both is a module, whichever build system doctor checks, named as its [lib] unit declares.
   REQUIRE(Invoke(meter, {"doctor"}).output.find("[ok] C++ modules: import meter\n") != std::string::npos);
   REQUIRE(Invoke(meter, {"doctor", "--json"}).output.find(
-              "\"library\":{\"modules\":\"module\",\"module\":\"meter\",\"macros\":false}") != std::string::npos);
-  {
-    std::ofstream macros(meter / "modules/meter.macros.cppm");
-    macros << "export module meter.macros;\n";
-  }
-  REQUIRE(Invoke(meter, {"doctor"}).output.find("[ok] C++ modules: import meter, with meter.macros\n") !=
+              "\"library\":{\"modules\":\"module\",\"module\":\"meter\",\"reexports\":[]}") != std::string::npos);
+  const auto rewrite = [](const std::filesystem::path& path, std::string_view from, std::string_view to) {
+    std::string content = Read(path);
+    const auto at = content.find(from);
+    REQUIRE(at != std::string::npos);
+    content.replace(at, from.size(), to);
+    std::ofstream(path, std::ios::binary) << content;
+  };
+  // What the interface re-exports under the module's name is named, as importers reach it.
+  rewrite(meter / "modules/meter.cppm", "export import huxerui;\n",
+          "export import huxerui;\nexport import meter.macros;\n");
+  REQUIRE(Invoke(meter, {"doctor"}).output.find("[ok] C++ modules: import meter (re-exports meter.macros)\n") !=
           std::string::npos);
+  // A module named otherwise still works; doctor recommends the package's name and fails nothing for it.
+  rewrite(meter / "modules/meter.cppm", "export module meter;", "export module gauges;");
+  const auto renamed = Invoke(meter, {"doctor", "--json"});
+  REQUIRE(renamed.output.find("\"module\":\"gauges\",\"reexports\":[],\"recommended\":\"meter\"") !=
+          std::string::npos);
+  REQUIRE(Invoke(meter, {"doctor"}).output.find(
+              "[ok] C++ modules: import gauges; recommended name: meter, the package\n") != std::string::npos);
 
   // A headers library without mcpp still builds and is still included: the line is optional and fails nothing.
   const auto headers = Invoke(temporary.Path() / "headers", {"doctor", "--json"});
@@ -567,25 +580,17 @@ TEST_CASE("HuxerUICliDoctorStatesWhatALibraryOffersImporters") {
               "[missing] C++ modules (optional): not exported; an mcpp declaration builds the module") !=
           std::string::npos);
 
+  // A headers library that declares mcpp without a module is told what it still lacks.
+  rewrite(meter / "mcpp.toml", "namespace = \"meter\"\n", "");
+  rewrite(meter / "mcpp.toml", "[lib]\npath = \"modules/meter.cppm\"\n", "");
+  const auto unnamed = Invoke(meter, {"doctor"}).output;
+  REQUIRE(unnamed.find("[missing] C++ modules (optional): not exported; name the C++ namespace to export") !=
+          std::string::npos);
+
   // An application has no importer, so doctor says nothing about modules.
   const auto plain = Invoke(temporary.Path() / "plain", {"doctor", "--json"});
   REQUIRE(plain.output.find("\"library\"") == std::string::npos);
   REQUIRE(Invoke(temporary.Path() / "plain", {"doctor"}).output.find("C++ modules") == std::string::npos);
-
-  // A [lib] path that is not the namespace's interface builds no interface at all, which is an error.
-  std::string manifest = Read(meter / "mcpp.toml");
-  const auto lib = manifest.find("path = \"modules/meter.cppm\"");
-  REQUIRE(lib != std::string::npos);
-  manifest.replace(lib, std::string_view("path = \"modules/meter.cppm\"").size(), "path = \"src/meter.cppm\"");
-  {
-    std::ofstream out(meter / "mcpp.toml", std::ios::binary);
-    out << manifest;
-  }
-  const auto misdeclared = Invoke(meter, {"doctor"});
-  REQUIRE(misdeclared.result == 1);
-  REQUIRE(misdeclared.output.find("[error] C++ modules: [lib] path is 'src/meter.cppm', but the interface of module "
-                                  "meter is modules/meter.cppm\n") != std::string::npos);
-  REQUIRE(Invoke(meter, {"doctor", "--json"}).output.find("\"projectErrors\":[\"C++ modules: ") != std::string::npos);
 }
 
 TEST_CASE("HuxerUICliDoctorChecksTheBuildSystemAProjectDispatchesTo") {

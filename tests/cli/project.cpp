@@ -193,11 +193,12 @@ TEST_CASE("HuxerUICliCreatesLibrariesForEveryBuildSystemByDefault") {
   REQUIRE(manifest.find("library   = \"DataGrid::DataGrid\"") != std::string::npos);
   REQUIRE(manifest.find("kind = \"lib\"") != std::string::npos);
   REQUIRE(manifest.find("include_dirs = [\"include\"]") != std::string::npos);
-  // The headers are also the module `data_grid`, whose interface mcpp's build regenerates from them.
-  REQUIRE(manifest.find("[lib]\npath = \"modules/data_grid.cppm\"") != std::string::npos);
-  const std::string interface = Read(project / "modules/data_grid.cppm");
+  // The headers are also a module named after the package, `datagrid`, whose interface mcpp's build regenerates
+  // from the names they declare in the C++ namespace `data_grid`.
+  REQUIRE(manifest.find("[lib]\npath = \"modules/datagrid.cppm\"") != std::string::npos);
+  const std::string interface = Read(project / "modules/datagrid.cppm");
   REQUIRE(interface.find("#include <datagrid/datagrid.h>\n") != std::string::npos);
-  REQUIRE(interface.find("export module data_grid;\n") != std::string::npos);
+  REQUIRE(interface.find("export module datagrid;\n") != std::string::npos);
   REQUIRE(interface.find("    using data_grid::Install;\n") != std::string::npos);
   REQUIRE(interface.find("@") == std::string::npos);
   REQUIRE(std::filesystem::is_regular_file(project / "examples/preview/CMakeLists.txt"));

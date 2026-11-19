@@ -12,8 +12,10 @@ resources = "resources"
 name      = "@PROJECT_NAME@"
 id        = "@PROJECT_ID@"
 namespace = "@LIBRARY_NAMESPACE@"
-# The headers are exported as the module `@LIBRARY_MODULE_NAME@` too: huxerui.rules generates its interface,
-# modules/@LIBRARY_MODULE_NAME@.cppm, from them. `cpp_modules_gen = false` keeps a hand-written one instead.
+# The headers are exported as the module `@LIBRARY_MODULE_NAME@` too, named after the package: huxerui.rules
+# generates its interface, the [lib] path below, from the names they declare in `namespace`. Macros importers
+# need are mapped by hand in a `@LIBRARY_MODULE_NAME@.macros` unit, modules/macros.cppm. `cpp_modules_gen = false`
+# keeps a hand-written interface instead.
 # cpp_modules_gen = true
 
 @MCPP_DEPENDENCIES@

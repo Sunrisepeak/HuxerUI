@@ -461,12 +461,13 @@ std::vector<GeneratedFile> LibraryProjectFiles(const LibraryTemplateContext& lib
   return RenderTemplateTree("project/library", library.project, replacements);
 }
 
-/// The module a C++ modules library exports: its C++ namespace, with `::` written as the module name's `.`.
-std::string LibraryModuleName(const LibraryTemplateContext& library) {
-  std::string name = library.cpp_namespace;
-  for (std::size_t position = name.find("::"); position != std::string::npos; position = name.find("::", position)) {
-    name.replace(position, 2, ".");
-  }
+/// The module a library exports: its package identity, which for a package `create` writes is the package name, as
+/// huxerui.rules names a generated interface. A module name is global to a program and a package name is unique
+/// where packages are published, while one C++ namespace may be shared by several libraries; `-`, which a package
+/// name may contain and a module name may not, becomes `_`.
+std::string PackageModuleName(std::string_view package_name) {
+  std::string name(package_name);
+  std::ranges::replace(name, '-', '_');
   return name;
 }
 
@@ -475,8 +476,8 @@ std::vector<GeneratedFile> McppLibraryDeclaration(const LibraryTemplateContext& 
   const LibraryTargetProjection target = DeriveLibraryTargetProjection(library.public_target);
   const std::string dependencies = McppDependencies(huxerui_home);
   // The module interface is what huxerui.rules generates from the template's one header, so the first build
-  // finds it current.
-  const std::string module_name = LibraryModuleName(library);
+  // finds it current. The package is named after the resource namespace.
+  const std::string module_name = PackageModuleName(target.resource_namespace);
   const std::string primary_header = target.include_directory + "/" + target.header_name + ".h";
   const std::array replacements{
       TemplateReplacement{"@LIBRARY_PUBLIC_TARGET@", library.public_target},
@@ -513,7 +514,8 @@ GeneratedFile& FindGeneratedFile(std::vector<GeneratedFile>& files, std::string_
 std::vector<GeneratedFile> McppModulesLibraryFiles(const LibraryTemplateContext& library,
                                                    const std::filesystem::path& huxerui_home) {
   std::vector<GeneratedFile> files = McppApplicationProjectFiles(library.project, huxerui_home, "library");
-  const std::string module = LibraryModuleName(library);
+  // The package is named after the project, as `templates/library` renders it.
+  const std::string module = PackageModuleName(library.project.project_name);
   const std::string unit = "src/" + module + ".cppm";
   FindGeneratedFile(files, "src/component.cppm", "templates/library").path = unit;
   for (GeneratedFile& file : files) {
@@ -534,7 +536,7 @@ std::vector<GeneratedFile> McppModulesLibraryFiles(const LibraryTemplateContext&
 std::vector<GeneratedFile> ModulesPreviewProjectFiles(const LibraryTemplateContext& library,
                                                       const std::filesystem::path& huxerui_home) {
   const ProjectTemplateContext context = PreviewContext(library);
-  const std::string module = LibraryModuleName(library);
+  const std::string module = PackageModuleName(library.project.project_name);
   const std::array replacements{
       TemplateReplacement{"@LIBRARY_MODULE@", module},
       TemplateReplacement{"@LIBRARY_PROJECT_NAME@", library.project.project_name},
@@ -925,7 +927,7 @@ std::string_view CreateStyleName(const CreateSelection& selection) noexcept {
 }
 
 std::string ModuleInterfaceName(const LibraryTemplateContext& library) {
-  return LibraryModuleName(library);
+  return PackageModuleName(DeriveLibraryTargetProjection(library.public_target).resource_namespace);
 }
 
 CreateSelection ResolveCreateSelection(ProjectKind kind, std::span<const BuildSystem> build_systems) {
@@ -987,27 +989,54 @@ LibraryModules DescribeLibraryModules(const Project& project) {
   }
   const std::string manifest = ReadFile(project.root / "mcpp.toml");
   const std::string lib_path = ManifestValue(manifest, "lib", "path");
-  std::string module = ManifestValue(manifest, "package.metadata.huxerui", "namespace");
-  for (std::size_t at = module.find("::"); at != std::string::npos; at = module.find("::", at)) {
-    module.replace(at, 2, ".");
-  }
-  if (!headers) {
-    // A C++ modules library: its [lib] unit is the module, named after the namespace `create` wrote.
-    if (module.empty()) {
-      module = std::filesystem::path(lib_path).stem().string();
+  const std::filesystem::path unit = project.root / lib_path;
+  const std::string text = !lib_path.empty() && std::filesystem::is_regular_file(unit) ? ReadFile(unit) : std::string();
+  // The unit's own declaration, as an importer reads it, wherever the author put the file.
+  std::string module;
+  std::vector<std::string> reexports;
+  for (std::size_t start = 0; start < text.size();) {
+    const std::size_t end = std::min(text.find('\n', start), text.size());
+    std::string_view line = std::string_view(text).substr(start, end - start);
+    start = end + 1;
+    while (!line.empty() && (line.front() == ' ' || line.front() == '\t')) {
+      line.remove_prefix(1);
     }
-    return {LibraryModules::State::Module, module};
+    const auto name = [](std::string_view rest) {
+      const std::size_t length = rest.find_first_of("; \t\r");
+      return std::string(rest.substr(0, length == std::string_view::npos ? rest.size() : length));
+    };
+    if (line.starts_with("export module ")) {
+      module = name(line.substr(std::string_view("export module ").size()));
+    } else if (line.starts_with("export import ")) {
+      reexports.push_back(name(line.substr(std::string_view("export import ").size())));
+    }
   }
+  if (headers && module.empty()) {
+    std::string reason;
+    if (ManifestValue(manifest, "package.metadata.huxerui", "namespace").empty()) {
+      reason = "name the C++ namespace to export as `namespace` under [package.metadata.huxerui]";
+    } else if (lib_path.empty()) {
+      reason = "name the interface file as the [lib] path";
+    } else if (!std::filesystem::is_regular_file(unit)) {
+      reason = "create " + lib_path + "; the mcpp build writes it";
+    } else {
+      reason = "build with mcpp once to generate " + lib_path;
+    }
+    return {LibraryModules::State::NotExported, {}, {}, {}, reason};
+  }
+  // The documentation names a module after its package identity, which is unique where packages are published.
+  std::string recommended = ManifestValue(manifest, "package", "namespace");
+  recommended += (recommended.empty() ? "" : ".") + ManifestValue(manifest, "package", "name");
+  std::ranges::replace(recommended, '-', '_');
   if (module.empty()) {
-    return {LibraryModules::State::NotExported};
+    // A C++ modules library whose unit is not readable yet; the build reports the unit itself.
+    module = recommended;
   }
-  // The rules generate the interface at modules/<module>.cppm only, so another [lib] path builds no interface.
-  const std::string interface_path = "modules/" + module + ".cppm";
-  if (lib_path != interface_path) {
-    return {LibraryModules::State::Misdeclared, module, false, lib_path};
+  std::erase_if(reexports, [&](const std::string& name) { return !name.starts_with(module + "."); });
+  if (recommended == module || recommended.empty()) {
+    recommended.clear();
   }
-  return {LibraryModules::State::Module, module,
-          std::filesystem::is_regular_file(project.root / "modules" / (module + ".macros.cppm"))};
+  return {LibraryModules::State::Module, module, reexports, recommended};
 }
 
 ProjectTemplate LoadProjectTemplate(const Project& project) {

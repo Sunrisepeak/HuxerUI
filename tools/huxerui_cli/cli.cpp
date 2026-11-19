@@ -1025,14 +1025,13 @@ std::string_view LibraryModulesStateName(LibraryModules::State state) {
     return "not-exported";
   case LibraryModules::State::NoMcpp:
     return "no-mcpp";
-  case LibraryModules::State::Misdeclared:
-    return "misdeclared";
   }
   return "none";
 }
 
-/// The doctor line of a library's C++ modules state, or none for an application. Only a misdeclaration is
-/// required: a library that is not a module yet still builds and is still included.
+/// The doctor line of a library's C++ modules state, or none for an application. It never fails the diagnosis: a
+/// library that is not a module yet still builds and is still included, and a module named otherwise than the
+/// documentation recommends still works.
 std::optional<EnvironmentDiagnostic> LibraryModulesDiagnostic(const LibraryModules& modules) {
   EnvironmentDiagnostic line;
   line.id = "cpp-modules";
@@ -1045,18 +1044,23 @@ std::optional<EnvironmentDiagnostic> LibraryModulesDiagnostic(const LibraryModul
   case LibraryModules::State::Module:
     line.status = EnvironmentDiagnosticStatus::Ready;
     line.required = true;
-    line.detail = "import " + modules.module + (modules.macros ? ", with " + modules.module + ".macros" : "");
+    line.detail = "import " + modules.module;
+    if (!modules.reexports.empty()) {
+      std::string units;
+      for (const std::string& unit : modules.reexports) {
+        units += (units.empty() ? "" : ", ") + unit;
+      }
+      line.detail += " (re-exports " + units + ")";
+    }
+    if (!modules.recommended.empty()) {
+      line.detail += "; recommended name: " + modules.recommended + ", the package";
+    }
     break;
   case LibraryModules::State::NotExported:
-    line.detail = "not exported; name the namespace and the [lib] interface in mcpp.toml";
+    line.detail = "not exported; " + modules.reason;
     break;
   case LibraryModules::State::NoMcpp:
     line.detail = "not exported; an mcpp declaration builds the module from the headers";
-    break;
-  case LibraryModules::State::Misdeclared:
-    line.required = true;
-    line.detail = "[lib] path is '" + modules.lib_path + "', but the interface of module " + modules.module +
-                  " is modules/" + modules.module + ".cppm";
     break;
   }
   return line;
@@ -1133,8 +1137,12 @@ void PrintEnvironmentJson(const EnvironmentPlan& plan, EnvironmentOperation oper
   write_strings(project_errors);
   if (modules.state != LibraryModules::State::NotLibrary) {
     output << ",\"library\":{\"modules\":" << JsonQuote(LibraryModulesStateName(modules.state));
-    if (!modules.module.empty())
-      output << ",\"module\":" << JsonQuote(modules.module) << ",\"macros\":" << (modules.macros ? "true" : "false");
+    if (modules.state == LibraryModules::State::Module) {
+      output << ",\"module\":" << JsonQuote(modules.module) << ",\"reexports\":";
+      write_strings(modules.reexports);
+      if (!modules.recommended.empty())
+        output << ",\"recommended\":" << JsonQuote(modules.recommended);
+    }
     output << '}';
   }
   output << "}\n";
@@ -1357,8 +1365,6 @@ int RunEnvironment(std::span<const std::string_view> arguments, const std::files
   if (project && options.request.operation != EnvironmentOperation::Devices) {
     modules = DescribeLibraryModules(*discovered);
     modules_line = LibraryModulesDiagnostic(modules);
-    if (modules.state == LibraryModules::State::Misdeclared)
-      project_errors.push_back("C++ modules: " + modules_line->detail);
     if (!std::filesystem::is_directory(project->root / "src"))
       project_errors.push_back("missing src directory");
     for (const auto& id : project->unknown_platforms)
@@ -1405,11 +1411,6 @@ int RunEnvironment(std::span<const std::string_view> arguments, const std::files
       }
     }
     PrintEnvironmentPlan(plan, output);
-    // The modules line states a misdeclaration itself, so the error list does not repeat it.
-    const auto listed = [&](const std::string& error) {
-      return !(modules_line && modules.state == LibraryModules::State::Misdeclared &&
-               error == "C++ modules: " + modules_line->detail);
-    };
     if ((modules_line || !project_errors.empty()) && console.Styled()) {
       console.Gap(output);
       console.Step(output, "Project");
@@ -1423,18 +1424,12 @@ int RunEnvironment(std::span<const std::string_view> arguments, const std::files
                      modules_line->label.size());
       }
       for (const auto& error : project_errors)
-        if (listed(error))
-          console.Item(output, prompt::Console::Mark::Missing, error, {});
+        console.Item(output, prompt::Console::Mark::Missing, error, {});
     } else {
-      if (modules_line) {
-        if (modules.state == LibraryModules::State::Misdeclared)
-          output << "[error] C++ modules: " << modules_line->detail << '\n';
-        else
-          PrintEnvironmentDiagnostics(std::span(&*modules_line, 1), "", output);
-      }
+      if (modules_line)
+        PrintEnvironmentDiagnostics(std::span(&*modules_line, 1), "", output);
       for (const auto& error : project_errors)
-        if (listed(error))
-          output << "[error] " << error << '\n';
+        output << "[error] " << error << '\n';
     }
   }
   return EnvironmentReady(plan) && project_errors.empty() ? 0 : 1;

@@ -26,7 +26,7 @@ struct CreateSelection {
   SourceStyle style = SourceStyle::Headers;
   /// Selected build systems, without duplicates, in `BuildSystem` order.
   std::vector<BuildSystem> build_systems;
-  /// Whether a headers library also exports its headers as a module, generated as `modules/<module>.cppm`.
+  /// Whether a headers library also exports its headers as a module, generated as `modules/<package name>.cppm`.
   bool module_interface = false;
 
   /// Whether the selection carries a build system's declaration.
@@ -50,7 +50,8 @@ struct CreateSelection {
 /// The style a created project has: its source style, or `headers + modules` for a library exporting both.
 [[nodiscard]] std::string_view CreateStyleName(const CreateSelection& selection) noexcept;
 
-/// The module a library's headers are exported as, which also names its interface file under `modules/`.
+/// The module a library's headers are exported as: its package name, which also names its interface file under
+/// `modules/`.
 [[nodiscard]] std::string ModuleInterfaceName(const LibraryTemplateContext& library);
 
 /// Applies `huxerui create`'s defaults to the explicit build-system choice.
@@ -153,22 +154,22 @@ struct LibraryModules {
   enum class State {
     /// The root is an application's, which has no importer.
     NotLibrary,
-    /// Importers name `module`; a headers library's interface is generated from its headers.
+    /// Importers name `module`, as the `[lib]` unit declares it.
     Module,
-    /// A headers library that declares mcpp without the `namespace` that makes it a module.
+    /// A headers library that declares mcpp but is not a module yet; `reason` says what is missing.
     NotExported,
     /// A headers library without an mcpp declaration, which is what builds the module.
     NoMcpp,
-    /// A `namespace` whose module interface is not the `[lib]` path, so no interface is generated.
-    Misdeclared,
   };
   State state = State::NotLibrary;
-  /// The module importers name, for `Module` and `Misdeclared`.
+  /// The module importers name, as the `[lib]` unit declares it.
   std::string module = {};
-  /// Whether `modules/<module>.macros.cppm` maps macros for importers.
-  bool macros = false;
-  /// The `[lib]` path the manifest states, for `Misdeclared`.
-  std::string lib_path = {};
+  /// The modules the `[lib]` unit re-exports under its own name, such as `<module>.macros`.
+  std::vector<std::string> reexports = {};
+  /// The package identity the documentation recommends as the module name, when the module is named otherwise.
+  std::string recommended = {};
+  /// What a headers library still needs to be a module.
+  std::string reason = {};
 };
 
 /// Reads a project root's C++ modules state from its declarations and files, without building.
