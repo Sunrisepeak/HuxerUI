@@ -409,6 +409,13 @@ jobs:
           ${{ matrix.row.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
             --target ${{ matrix.row.target }} --check package --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts"
 
+      # After the distributable, whose release build the inapplicable driver option rebuilds without new work.
+      - name: "Check: exit codes and inapplicable options"
+        if: ${{ !cancelled() }}
+        run: |
+          ${{ matrix.row.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
+            --target ${{ matrix.row.target }} --check usage --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts"
+
       # On Android and iOS the application starts from the APK or bundle the distributable check published.
       - name: "Check: startup and resource resolution"
         if: ${{ !cancelled() }}
@@ -789,6 +796,13 @@ jobs:
         run: |
           ${{ matrix.row.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
             --target ${{ matrix.row.target }} --check package --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts"
+
+      # After the distributable, whose release build the inapplicable driver option rebuilds without new work.
+      - name: "Check: exit codes and inapplicable options"
+        if: ${{ !cancelled() }}
+        run: |
+          ${{ matrix.row.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
+            --target ${{ matrix.row.target }} --check usage --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts"
 
       # On Android and iOS the application starts from the APK or bundle the distributable check published.
       - name: "Check: startup and resource resolution"

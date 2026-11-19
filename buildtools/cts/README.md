@@ -43,6 +43,7 @@ The suite is divided into checkpoints so a run shows which part of the contract 
 | `launch` | `launch.*`: what the started application resolved | |
 | `package` | `package.kind`: the distributable `huxerui package` published; `package.location` and `package.resources`, which the contract fixes: it is below `dist/<platform>` and carries the resource package the build produced; `package.dispatch`: the CLI is called as a developer calls it, with no `--build-system` for a root that declares only the checked integration or that declares several when the checked integration is CMake, and with it otherwise, and must state that it built with the checked integration | |
 | `package-shellless` | The same facts for `huxerui package --no-shell`, on Android and iOS, where an integration packages without the standard shell | |
+| `usage` | The exit codes the contract fixes for `huxerui build`: `usage.unknown_build_system` and, on a root that does not declare another integration, `usage.undeclared_build_system` are invalid usage; `usage.product_option`, each product option the integration declares inapplicable, is invalid usage; `usage.driver_option`, each such driver option, is reported; `usage.operation_failure`, a build of a copy carrying an unknown platform directory, is an operation failure. A fact that does not apply is left out with its reason | |
 
 The compared facts are also checked between a project and the project it names in `sameModelAs`.
 A difference is accepted only when [`allowed-differences.json`](allowed-differences.json) lists it with its reason.
@@ -59,11 +60,11 @@ A clause is `checked` when some project's `expected.json`, or the contract itsel
 | Clause | Coverage | Checkpoints |
 | --- | --- | --- |
 | `DEFAULT-PROFILE` | checked | `build` |
-| `EXIT-CODES` | not covered |  |
+| `EXIT-CODES` | checked | `usage` |
 | `ABI-SELECT` | not covered |  |
-| `DISPATCH-ROOT` | checked | `package`, `package-shellless` |
+| `DISPATCH-ROOT` | checked | `package`, `package-shellless`, `usage` |
 | `DISPATCH-DEFAULT` | checked | `package`, `package-shellless` |
-| `OPTION-INAPPLICABLE` | not covered |  |
+| `OPTION-INAPPLICABLE` | checked | `usage` |
 | `CREATE-SELECT` | checked | `build` |
 | `LAYOUT-COMMON` | not covered |  |
 | `SETTINGS-PRECEDENCE` | not covered |  |
@@ -93,6 +94,8 @@ A clause is `checked` when some project's `expected.json`, or the contract itsel
 ## Declared support
 
 Each integration states what it supports in `buildtools/<integration>/support.json`: for every target platform, the hosts that can build it, the checkpoints it implements, and its capabilities.
+It also names its native declaration in `declaration`, the arguments every CLI command it is reached through needs in `cli_arguments`, such as CMake's framework location, and the options it cannot honor in `inapplicable`, as `product` options that are invalid usage and `driver` options that are reported; `{repository}` in an argument names this checkout.
+The runner reads these declarations and names no integration itself.
 The suite checks an integration for exactly that.
 An undeclared target, host, checkpoint, or capability is reported as `undeclared` and skipped; an environment that cannot run a check, such as a machine without a display, is reported as `unavailable`.
 Neither is a pass or a failure.
@@ -122,6 +125,7 @@ A device launch that records nothing before the timeout, or a host with no devic
 The `package` checkpoint runs `huxerui package <platform> --build-system <integration>` in the project, as a developer does, with the CLI `--cli` names, reads the published distributable, including the MSI a WiX setup executable carries, and removes what the command created in the project.
 On Android and iOS the package comes from the standard shell: a project without one gets it from `huxerui platform add <platform>` first, which is removed afterwards, and Android is packaged for `arm64-v8a`.
 The `package-shellless` checkpoint adds `--no-shell` and is declared only by an integration that offers it.
+The `usage` checkpoint runs `huxerui build` with what a developer can get wrong and reads only the exit code and, for a driver option, whether the option was reported; it follows `package`, so the release build a driver option repeats has nothing left to do.
 A project without `package.kind` in `expected.json` is not packaged.
 
 ## Targets

@@ -101,7 +101,25 @@ CHECKS: dict[str, dict] = {
                   "package.dispatch": DISPATCHED},
         "equivalent": {},
     },
+    # The CLI's answer to usage the contract fixes, run against a built project: a build system that does not exist
+    # or that the root does not declare, the options the integration declares inapplicable, and a failing operation.
+    # Each fact is recorded only where it applies, as when an integration declares no inapplicable option.
+    "usage": {
+        "title": "Exit codes and inapplicable options",
+        "facts": {"usage.unknown_build_system": ["EXIT-CODES"],
+                  "usage.undeclared_build_system": ["EXIT-CODES", "DISPATCH-ROOT"],
+                  "usage.product_option": ["EXIT-CODES", "OPTION-INAPPLICABLE"],
+                  "usage.driver_option": ["OPTION-INAPPLICABLE"],
+                  "usage.operation_failure": ["EXIT-CODES"]},
+        "fixed": {"usage.unknown_build_system": "invalid usage", "usage.undeclared_build_system": "invalid usage",
+                  "usage.product_option": "invalid usage", "usage.driver_option": "reported",
+                  "usage.operation_failure": "operation failure"},
+        "equivalent": {},
+    },
 }
+
+# The exit codes the contract fixes (EXIT-CODES), named as the usage checkpoint records them.
+EXIT_MEANINGS = {0: "success", 1: "operation failure", 2: "invalid usage"}
 
 # The platforms whose standard shell builds and packages the application from the core an integration builds.
 SHELL_TARGETS = ("android", "ios")
@@ -128,6 +146,24 @@ def target_support(integration: str, target: str, host: str) -> tuple[dict | Non
     if host not in support["hosts"]:
         return None, f"host {host} is not declared for target {target}"
     return support, ""
+
+
+def support_strings(values: list[str]) -> list[str]:
+    """A support.json argument list, with `{repository}` naming this checkout."""
+    return [value.replace("{repository}", str(REPOSITORY)) for value in values]
+
+
+def cli_arguments(integration: str) -> list[str]:
+    """The arguments an integration's support.json gives every CLI command it is reached through, such as the
+    framework location a build needs."""
+    return support_strings(load_json(BUILDTOOLS / integration / "support.json").get("cli_arguments", []))
+
+
+def inapplicable_options(integration: str) -> dict[str, list[list[str]]]:
+    """The options an integration's support.json declares it cannot honor: `product` options change the product and
+    are invalid usage, `driver` options only steer another integration's driver and are reported."""
+    declared = load_json(BUILDTOOLS / integration / "support.json").get("inapplicable", {})
+    return {kind: [support_strings(option) for option in declared.get(kind, [])] for kind in ("product", "driver")}
 
 
 def declared_integrations(root: Path) -> list[str]:
@@ -786,6 +822,62 @@ def shell_project_exists(target: str, shell: Path) -> bool:
     return any(shell.glob("*.xcodeproj"))
 
 
+def usage_facts(cli: str | None, integration: str, target: str, project: Path, work: Path,
+                timeout: float) -> tuple[dict, list[str]]:
+    """Runs `huxerui build` as a developer who gets it wrong does, and names each exit code as the contract does.
+
+    Returns the facts that apply to this project and integration, and why the others do not."""
+    if not cli:
+        raise Unavailable("no HuxerUI CLI was given; pass --cli")
+    selection = dispatch_selection(integration, project)
+    common = cli_arguments(integration)
+
+    def build(arguments: list[str], directory: Path = project) -> subprocess.CompletedProcess:
+        command = [cli, "build", target, *arguments]
+        log("  $ " + " ".join(command))
+        return subprocess.run(command, cwd=directory, capture_output=True, text=True, timeout=timeout)
+
+    def meaning(completed: subprocess.CompletedProcess) -> str:
+        return EXIT_MEANINGS.get(completed.returncode, f"exit code {completed.returncode}")
+
+    facts, notes = {}, []
+    facts["usage.unknown_build_system"] = meaning(build(["--build-system", "nonesuch"]))
+    undeclared = [name for name in discover_integrations() if name not in declared_integrations(project)]
+    if undeclared:
+        facts["usage.undeclared_build_system"] = meaning(build(["--build-system", undeclared[0]]))
+    else:
+        notes.append("the root declares every integration, so none can be selected without its declaration")
+
+    options = inapplicable_options(integration)
+    if options["product"]:
+        answers = [(option[0], meaning(build([*selection, *option, *common]))) for option in options["product"]]
+        wrong = [f"{name}: {answer}" for name, answer in answers if answer != "invalid usage"]
+        facts["usage.product_option"] = "; ".join(wrong) if wrong else "invalid usage"
+    else:
+        notes.append(f"{integration} declares no inapplicable product option")
+    if options["driver"]:
+        answers = []
+        for option in options["driver"]:
+            # A release build follows the package checkpoint's, so the build itself has nothing left to do.
+            completed = build([*selection, "--config", "release", *option, *common])
+            if completed.returncode != 0:
+                answers.append(f"{option[0]}: {meaning(completed)}")
+            elif option[0] not in completed.stderr:
+                answers.append(f"{option[0]}: silent")
+        facts["usage.driver_option"] = "; ".join(answers) if answers else "reported"
+    else:
+        notes.append(f"{integration} declares no inapplicable driver option")
+
+    # An unknown platform directory makes the operation fail after its usage was accepted.
+    failing = work / "usage-failure"
+    shutil.rmtree(failing, ignore_errors=True)
+    shutil.copytree(project, failing, ignore=shutil.ignore_patterns(".huxerui", "target", "build", "dist"))
+    (failing / "platform" / "nonesuch").mkdir(parents=True, exist_ok=True)
+    facts["usage.operation_failure"] = meaning(build([*selection, *common], failing))
+    shutil.rmtree(failing, ignore_errors=True)
+    return facts, notes
+
+
 def package_facts(cli: str | None, integration: str, target: str, project: Path, built: dict, work: Path,
                   timeout: float, shellless: bool = False) -> dict:
     """Runs `huxerui package` the way a developer does and reads what it published.
@@ -815,9 +907,7 @@ def package_facts(cli: str | None, integration: str, target: str, project: Path,
                     shutil.move(str(set_aside), str(shell))
                 raise RuntimeError(f"`huxerui platform add {target}` exited with {added.returncode}\n{added.stderr}")
     # The integration is reached the way a developer reaches it, so the dispatch is checked with the package.
-    command = [cli, "package", target, *dispatch_selection(integration, project)]
-    if integration == "cmake":
-        command += ["--sdk", str(REPOSITORY)]
+    command = [cli, "package", target, *dispatch_selection(integration, project), *cli_arguments(integration)]
     if shellless:
         command.append("--no-shell")
     elif target == "android":
@@ -1110,7 +1200,20 @@ def check_project(check: str, integration: str, target: str, host: str, project:
             return "fail", str(failure)
         write_json(path, result)
 
-    problems, notes = [], []
+    notes = []
+    if check == "usage":
+        work = out / "work" / f"{integration}-{target}" / name
+        try:
+            facts, notes = usage_facts(arguments.cli, integration, target, project, work, arguments.package_timeout)
+        except Unavailable as unavailable:
+            return "unavailable", str(unavailable)
+        except (RuntimeError, subprocess.SubprocessError) as failure:
+            return "fail", str(failure)
+        result["facts"].update(facts)
+        write_json(path, result)
+        wanted = {fact: CHECKS["usage"]["fixed"][fact] for fact in facts}
+
+    problems = []
     for fact, value in wanted.items():
         actual = result["facts"].get(fact, "<absent>")
         if actual == value:
@@ -1154,9 +1257,7 @@ SEQUENCE_CHECKS = ("build", "linkage", "resources", "libraries")
 
 def cli_build_list(cli: str, integration: str, targets: list[str], project: Path) -> tuple[str, str]:
     """`huxerui build <list>`: one command that builds several targets of one project."""
-    command = [cli, "build", ",".join(targets), "--build-system", integration]
-    if integration == "cmake":
-        command += ["--sdk", str(REPOSITORY)]
+    command = [cli, "build", ",".join(targets), "--build-system", integration, *cli_arguments(integration)]
     log("  $ " + " ".join(command))
     completed = subprocess.run(command, cwd=project, capture_output=True, text=True)
     if completed.returncode != 0:

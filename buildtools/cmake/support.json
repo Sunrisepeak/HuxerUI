@@ -2,6 +2,10 @@
   "schema": 1,
   "integration": "cmake",
   "declaration": "CMakeLists.txt",
+  "cli_arguments": [
+    "--sdk",
+    "{repository}"
+  ],
   "targets": {
     "linux": {
       "hosts": [
@@ -13,7 +17,8 @@
         "resources",
         "libraries",
         "launch",
-        "package"
+        "package",
+        "usage"
       ],
       "capabilities": []
     },
@@ -27,7 +32,8 @@
         "resources",
         "libraries",
         "launch",
-        "package"
+        "package",
+        "usage"
       ],
       "capabilities": []
     },
@@ -41,7 +47,8 @@
         "resources",
         "libraries",
         "launch",
-        "package"
+        "package",
+        "usage"
       ],
       "capabilities": []
     },
@@ -57,7 +64,8 @@
         "resources",
         "libraries",
         "launch",
-        "package"
+        "package",
+        "usage"
       ],
       "capabilities": []
     },
@@ -73,7 +81,8 @@
         "resources",
         "libraries",
         "launch",
-        "package"
+        "package",
+        "usage"
       ],
       "capabilities": []
     },
@@ -87,7 +96,8 @@
         "resources",
         "libraries",
         "launch",
-        "package"
+        "package",
+        "usage"
       ],
       "capabilities": []
     }

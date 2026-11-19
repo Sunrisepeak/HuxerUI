@@ -167,6 +167,80 @@ class DispatchTests(unittest.TestCase):
         self.assertIsNone(cts.dispatched_integration("Packaged dist/linux/app.AppImage\n"))
 
 
+class SupportDeclarationTests(unittest.TestCase):
+    def test_cli_arguments_name_this_checkout(self):
+        self.assertEqual(cts.cli_arguments("cmake"), ["--sdk", str(cts.REPOSITORY)])
+        self.assertEqual(cts.cli_arguments("mcpp"), [])
+
+    def test_inapplicable_options_are_read_by_kind(self):
+        options = cts.inapplicable_options("mcpp")
+        self.assertIn(["--sdk", str(cts.REPOSITORY)], options["product"])
+        self.assertIn(["--generator", "Ninja"], options["driver"])
+        self.assertEqual(cts.inapplicable_options("cmake"), {"product": [], "driver": []})
+
+    def test_the_runner_names_no_integration_when_it_calls_the_cli(self):
+        source = (SOURCE / "buildtools/cts/cts.py").read_text(encoding="utf-8")
+        self.assertNotIn('integration == "cmake"', source)
+        self.assertNotIn('integration == "mcpp"', source)
+
+
+class UsageTests(unittest.TestCase):
+    """The usage checkpoint against a CLI that answers as the contract says, or does not."""
+
+    def facts(self, files, integration, answer):
+        """Runs usage_facts on a root carrying `files`, with `answer(arguments, directory)` giving each exit code."""
+        calls = []
+
+        def run(command, cwd, **_):
+            calls.append(command[1:])
+            code, stderr = answer(command[3:], Path(cwd))
+            return mock.Mock(returncode=code, stdout="", stderr=stderr)
+
+        with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as work:
+            for name in files:
+                (Path(root) / name).write_text("", encoding="utf-8")
+            with mock.patch.object(cts.subprocess, "run", side_effect=run):
+                facts, notes = cts.usage_facts("huxerui", integration, "linux", Path(root), Path(work), 60)
+        return facts, notes, calls
+
+    @staticmethod
+    def conforming(arguments, directory):
+        # The fake answers for an mcpp root, where --sdk is a product option.
+        if "nonesuch" in arguments or "--sdk" in arguments:
+            return 2, ""
+        if "--build-system" in arguments and arguments[arguments.index("--build-system") + 1] == "cmake":
+            return 2, ""
+        if (directory / "platform" / "nonesuch").is_dir():
+            return 1, ""
+        if "--generator" in arguments:
+            return 0, "huxerui: warning: --generator selects a CMake generator ..."
+        return 0, ""
+
+    def test_a_conforming_cli_records_the_contract_values(self):
+        facts, notes, calls = self.facts(["mcpp.toml"], "mcpp", self.conforming)
+        self.assertEqual(facts, {"usage.unknown_build_system": "invalid usage",
+                                 "usage.undeclared_build_system": "invalid usage",
+                                 "usage.product_option": "invalid usage",
+                                 "usage.driver_option": "reported",
+                                 "usage.operation_failure": "operation failure"})
+        self.assertEqual(notes, [])
+        # The driver option rebuilds the release build the distributable checkpoint left.
+        self.assertIn(["build", "linux", "--config", "release", "--generator", "Ninja"], calls)
+
+    def test_facts_that_do_not_apply_are_left_out_with_a_reason(self):
+        facts, notes, _ = self.facts(["CMakeLists.txt", "mcpp.toml"], "cmake", self.conforming)
+        self.assertNotIn("usage.undeclared_build_system", facts)
+        self.assertNotIn("usage.product_option", facts)
+        self.assertNotIn("usage.driver_option", facts)
+        self.assertEqual(len(notes), 3)
+
+    def test_a_silent_driver_option_and_an_accepted_product_option_are_named(self):
+        facts, _, _ = self.facts(["mcpp.toml"], "mcpp", lambda arguments, directory: (0, ""))
+        self.assertEqual(facts["usage.product_option"], "--sdk: success")
+        self.assertEqual(facts["usage.driver_option"], "--generator: silent")
+        self.assertEqual(facts["usage.operation_failure"], "success")
+
+
 class CreatedFactTests(unittest.TestCase):
     def test_facts_observed_at_creation_join_the_build(self):
         adapter = mock.Mock()

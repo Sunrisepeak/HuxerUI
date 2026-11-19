@@ -2,6 +2,20 @@
   "schema": 1,
   "integration": "mcpp",
   "declaration": "mcpp.toml",
+  "inapplicable": {
+    "product": [
+      [
+        "--sdk",
+        "{repository}"
+      ]
+    ],
+    "driver": [
+      [
+        "--generator",
+        "Ninja"
+      ]
+    ]
+  },
   "targets": {
     "linux": {
       "hosts": [
@@ -13,7 +27,8 @@
         "resources",
         "libraries",
         "launch",
-        "package"
+        "package",
+        "usage"
       ],
       "capabilities": [
         "modules"
@@ -29,7 +44,8 @@
         "resources",
         "libraries",
         "launch",
-        "package"
+        "package",
+        "usage"
       ],
       "capabilities": [
         "modules"
@@ -45,7 +61,8 @@
         "resources",
         "libraries",
         "launch",
-        "package"
+        "package",
+        "usage"
       ],
       "capabilities": [
         "modules"
@@ -63,7 +80,8 @@
         "resources",
         "libraries",
         "launch",
-        "package"
+        "package",
+        "usage"
       ],
       "capabilities": [
         "modules"
