@@ -843,9 +843,13 @@ inline std::vector<edge> plan_resources(const options& opt, const project_graph&
             tail += "-weak_framework UniformTypeIdentifiers\n";
             const std::string link_tail = odir + "/ios/" + program + "/link-tail.rsp";
             detail::write_if_changed(link_tail, tail);
+            // The shell compiles its own entry, so the program's `platform/ios/App/main.mm` stays out of the core.
+            // mcpp files the root package's objects flat, as `obj/main.o`, unless two of its sources share a name,
+            // and below their directories otherwise; both places are left out.
             const std::string script =
                 "set -e; mkdir -p '" + directory + "'; rm -f '" + archive + "'; "
-                "find obj -name '*.o' ! -path '*platform/ios/App/*' -print0 | xargs -0 libtool -static -o '" + archive +
+                "find obj -name '*.o' ! -path '*platform/ios/App/*' ! -path 'obj/main.o' -print0 | "
+                "xargs -0 libtool -static -o '" + archive +
                 "'; core=$(cd '" + directory + "' && pwd); "
                 "{ printf '%s\\n\"%s\"\\n' -force_load \"$core/lib" + program + "_huxerui.a\"; cat '" + link_tail +
                 "'; } > '" + directory + "/link.rsp'";
