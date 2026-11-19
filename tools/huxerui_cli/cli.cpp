@@ -128,10 +128,12 @@ void PrintHelp(std::ostream& output) {
   PrintBuildOptions(output);
   output << watch_option_help;
   PrintPackageOptions(output);
-  output << "create asks for a missing kind, name, build system, template, or platform list when run in a\n"
-         << "terminal; --yes, or no terminal, applies the defaults instead. A build-system list is cmake, mcpp, or\n"
+  output << "create asks for a missing kind, name, build system, template, platform list, or agent list when\n"
+         << "run in a terminal, and confirms before writing; --yes, or no terminal, applies the defaults instead.\n"
+         << "A build-system list is cmake, mcpp, or\n"
          << "cmake,mcpp: mcpp alone creates a C++ modules project (import huxerui;), and a list naming cmake a\n"
-         << "headers project (#include <huxerui/huxerui.h>). An app defaults to cmake and a library to both.\n"
+         << "headers project (#include <huxerui/huxerui.h>); a library naming both is also a module, whose\n"
+         << "interface the mcpp build generates from its headers. An app defaults to cmake and a library to both.\n"
          << "Without --platform, an app and a common library's Preview enable all platforms.\n"
          << "An agent list is comma-separated and supports ";
   for (std::size_t index = 0; index < agent_skill_mappings.size(); ++index) {
@@ -532,6 +534,16 @@ int RunCreate(std::span<const std::string_view> arguments, const std::filesystem
   if (assume_defaults) {
     prompter = nullptr;
   }
+  // The questions open under one title, written before the first of them.
+  bool introduced = false;
+  const auto ask = [&]() -> prompt::Prompter& {
+    if (!introduced) {
+      const std::array intro{prompt::IntroLine("create a project", prompter->OutputStyle())};
+      prompter->Show(intro);
+      introduced = true;
+    }
+    return *prompter;
+  };
 
   if (!kind) {
     if (prompter == nullptr) {
@@ -541,7 +553,7 @@ int RunCreate(std::span<const std::string_view> arguments, const std::filesystem
         {"app", "an application"},
         {"library", "a reusable library with a Preview application"},
     }};
-    kind = RequireAnswer(prompter->Select("Project kind", kinds, 0)) == 0 ? ProjectKind::App : ProjectKind::Library;
+    kind = RequireAnswer(ask().Select("Project kind", kinds, 0)) == 0 ? ProjectKind::App : ProjectKind::Library;
   }
   const auto name_problem = [&kind](std::string_view candidate) -> std::string {
     if (!IsValidProjectName(candidate)) {
@@ -557,8 +569,8 @@ int RunCreate(std::span<const std::string_view> arguments, const std::filesystem
     if (prompter == nullptr) {
       throw UsageError("create requires app or library and a project name");
     }
-    name = RequireAnswer(prompter->Text("Project name", kind == ProjectKind::App ? "my-app" : "my-library",
-                                        name_problem));
+    name = RequireAnswer(ask().Text("Project name", kind == ProjectKind::App ? "hello-hui" : "hello-hui-lib",
+                                    name_problem));
   }
   if (const std::string problem = name_problem(*name); !problem.empty()) {
     throw UsageError(problem);
@@ -569,14 +581,22 @@ int RunCreate(std::span<const std::string_view> arguments, const std::filesystem
   }
 
   if (prompter != nullptr && build_systems.empty()) {
-    // One question selects both the build systems and, through them, the source style.
+    // One question selects both the build systems and, through them, the source style. A library declaring both
+    // keeps its headers and gains a module interface over them; an application has no importer, so it stays headers.
+    using prompt::Role;
+    const prompt::Span headers{"headers", Role::Headers};
+    const prompt::Span modules{"C++ modules", Role::Modules};
+    const prompt::Line both = kind == ProjectKind::Library
+                                  ? prompt::Line{headers, {" & ", Role::Plain}, modules,
+                                                 {"  (#include & import)", Role::Muted}}
+                                  : prompt::Line{headers, {"  (#include <huxerui/huxerui.h>)", Role::Muted}};
     const std::array<prompt::Choice, 3> choices{{
-        {"cmake", "headers: #include <huxerui/huxerui.h>"},
-        {"mcpp", "C++ modules: import huxerui;"},
-        {"cmake+mcpp", "headers, with both declarations"},
+        {"cmake", prompt::Line{headers, {"  (#include <huxerui/huxerui.h>)", Role::Muted}}},
+        {"mcpp", prompt::Line{modules, {"  (import huxerui;)", Role::Muted}}},
+        {"cmake + mcpp", both},
     }};
     const std::size_t answer =
-        RequireAnswer(prompter->Select("Build system", choices, kind == ProjectKind::App ? 0 : 2));
+        RequireAnswer(ask().Select("Build system", choices, kind == ProjectKind::App ? 0 : 2));
     if (answer != 1) {
       build_systems.push_back(BuildSystem::CMake);
     }
@@ -602,16 +622,21 @@ int RunCreate(std::span<const std::string_view> arguments, const std::filesystem
         {"app", "a page with a counter"},
         {"navigation", "pages on a NavigationStack"},
     }};
-    template_name = RequireAnswer(prompter->Select("Template", templates, 0)) == 0 ? "app" : "navigation";
+    template_name = RequireAnswer(ask().Select("Template", templates, 0)) == 0 ? "app" : "navigation";
   }
   if (prompter != nullptr && !platform_list && kind == ProjectKind::App) {
+    // Every platform is on, as without --platform; the hints state only what building a platform needs.
     std::vector<prompt::Choice> choices;
     std::vector<std::size_t> all;
     for (const std::string_view id : PlatformIds()) {
       all.push_back(choices.size());
-      choices.push_back({std::string(id), ""});
+      const std::string_view hint = id == "macos" || id == "ios" ? "builds on a Mac"
+                                    : id == "web"                ? "WebAssembly"
+                                    : id == "android"            ? "an APK through Gradle"
+                                                                 : "";
+      choices.push_back({std::string(id), std::string(hint)});
     }
-    for (const std::size_t index : RequireAnswer(prompter->MultiSelect("Platforms", choices, all))) {
+    for (const std::size_t index : RequireAnswer(ask().MultiSelect("Platforms", choices, all))) {
       prompted_platforms += (prompted_platforms.empty() ? "" : ",") + choices[index].label;
     }
     platform_list = prompted_platforms;
@@ -646,38 +671,48 @@ int RunCreate(std::span<const std::string_view> arguments, const std::filesystem
       library_platforms = application_platforms;
     }
   }
+  std::string prompted_agents;
+  if (prompter != nullptr && !agent_list) {
+    // The skill is looked for before the question, so an agent is not offered only to fail after the last answer.
+    bool skill_found = true;
+    try {
+      static_cast<void>(ResolveApplicationDevelopmentSkill(huxerui_home));
+    } catch (const std::runtime_error&) {
+      skill_found = false;
+    }
+    std::vector<prompt::Choice> choices;
+    for (const AgentSkillMapping& mapping : agent_skill_mappings) {
+      choices.push_back({std::string(mapping.id)});
+    }
+    std::vector<std::size_t> checked;
+    if (skill_found) {
+      checked.push_back(0);
+    } else {
+      const std::array note{prompt::NoteLine(
+          {{"No agent skill is found; set HUXERUI_HOME to a HuxerUI SDK or source checkout to add one.",
+            prompt::Role::Muted}},
+          prompter->OutputStyle())};
+      ask().Show(note);
+    }
+    for (const std::size_t index : RequireAnswer(ask().MultiSelect("Agent skills", choices, checked, 0))) {
+      prompted_agents += (prompted_agents.empty() ? "" : ",") + choices[index].label;
+    }
+    agent_list = prompted_agents.empty() ? std::string_view("none") : std::string_view(prompted_agents);
+  }
   const std::vector<AgentSkillDirectory> agent_skill_directories =
       ResolveAgentSkillDirectories(agent_list.value_or("codex"));
   const std::filesystem::path skill_source = agent_skill_directories.empty()
                                                  ? std::filesystem::path{}
                                                  : ResolveApplicationDevelopmentSkill(huxerui_home);
   const std::filesystem::path destination = working_directory / *name;
+  if (introduced && !RequireAnswer(prompter->Confirm("Create " + *name + "?", true))) {
+    const std::array declined{prompt::NoteLine({{"Nothing was created.", prompt::Role::Muted}},
+                                               prompter->OutputStyle())};
+    prompter->Show(declined);
+    return 0;
+  }
   CreateProject(destination, project_template, application_platforms, library_platforms, skill_source,
                 agent_skill_directories, selection, huxerui_home, template_name.value_or(std::string_view{}));
-
-  output << "Created " << (kind == ProjectKind::App ? "app " : "library ") << destination.string() << '\n';
-  output << "Style: " << SourceStyleName(selection.style) << '\n';
-  output << "Build systems: " << JoinBuildSystems(selection.build_systems, ", ") << '\n';
-  if (kind == ProjectKind::App) {
-    output << "Platforms:";
-    for (const PlatformDriver* platform : application_platforms) {
-      output << ' ' << platform->Id();
-    }
-    output << '\n';
-  } else {
-    output << "Library platforms:";
-    for (const PlatformDriver* platform : library_platforms) {
-      output << ' ' << platform->Id();
-    }
-    if (library_platforms.empty()) {
-      output << " none";
-    }
-    output << "\nPreview platforms:";
-    for (const PlatformDriver* platform : application_platforms) {
-      output << ' ' << platform->Id();
-    }
-    output << '\n';
-  }
 
   // The selections as options, so the same project can be created again without prompts.
   std::string command = "huxerui create " + std::string(kind == ProjectKind::App ? "app " : "library ") + *name +
@@ -700,7 +735,61 @@ int RunCreate(std::span<const std::string_view> arguments, const std::filesystem
   if (agent_list) {
     command += " --agent " + std::string(*agent_list);
   }
-  output << "Command: " << command << '\n';
+  if (!introduced) {
+    output << "Created " << (kind == ProjectKind::App ? "app " : "library ") << destination.string() << '\n';
+    output << "Style: " << CreateStyleName(selection) << '\n';
+    output << "Build systems: " << JoinBuildSystems(selection.build_systems, ", ") << '\n';
+    if (kind == ProjectKind::App) {
+      output << "Platforms:";
+      for (const PlatformDriver* platform : application_platforms) {
+        output << ' ' << platform->Id();
+      }
+      output << '\n';
+    } else {
+      output << "Library platforms:";
+      for (const PlatformDriver* platform : library_platforms) {
+        output << ' ' << platform->Id();
+      }
+      if (library_platforms.empty()) {
+        output << " none";
+      }
+      output << "\nPreview platforms:";
+      for (const PlatformDriver* platform : application_platforms) {
+        output << ' ' << platform->Id();
+      }
+      output << '\n';
+    }
+    output << "Command: " << command << '\n';
+  }
+  if (introduced) {
+    // After questions, the outcome closes them: where the project is, what to run next, and the same choices as
+    // options.
+    using prompt::Role;
+    const std::string host(CurrentHostId());
+    const auto runs_here = std::ranges::find_if(application_platforms, [&host](const PlatformDriver* platform) {
+      return platform->Id() == host;
+    });
+    const std::string first = application_platforms.empty()
+                                  ? host
+                                  : std::string((runs_here != application_platforms.end() ? *runs_here
+                                                                                          : application_platforms.front())
+                                                    ->Id());
+    const std::string directory = kind == ProjectKind::App ? *name : *name + "/examples/preview";
+    std::vector<std::pair<std::string, prompt::Line>> details{
+        {"next", {{"cd " + directory + " && huxerui run " + first, Role::Accent}}},
+        {"same as", {{command, Role::Muted}}},
+    };
+    if (const auto* library = std::get_if<LibraryTemplateContext>(&project_template);
+        library != nullptr && selection.module_interface) {
+      details.push_back({"note", {{"modules/" + ModuleInterfaceName(*library) +
+                                       ".cppm is generated from the headers by the mcpp build",
+                                   Role::Muted}}});
+    }
+    prompter->Show(prompt::OutroLines(
+        {{"Created ", Role::Plain}, {std::string(kind == ProjectKind::App ? "app " : "library ") + "./" + *name,
+                                     Role::Strong}},
+        details, prompter->OutputStyle()));
+  }
   return 0;
 }
 

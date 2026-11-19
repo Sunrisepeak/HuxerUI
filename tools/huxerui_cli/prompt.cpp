@@ -9,11 +9,55 @@
 namespace huxerui::cli::prompt {
 namespace {
 
-constexpr std::string_view select_help = "  Use up and down to move, enter to confirm.";
-constexpr std::string_view multi_select_help = "  Use up and down to move, space to select, enter to confirm.";
+// The prompt's symbols, and the ASCII stand-ins for a terminal without them.
+struct Glyphs {
+  std::string_view active;
+  std::string_view done;
+  std::string_view cancelled;
+  std::string_view rail;
+  std::string_view top;
+  std::string_view bottom;
+  std::string_view selected;
+  std::string_view unselected;
+  std::string_view checked;
+  std::string_view unchecked;
+  std::string_view field;
+  std::string_view problem;
+  std::string_view success;
+  std::string_view move;
+  std::string_view separator;
+  std::string_view ellipsis;
+};
 
-std::string ChoiceLine(const Choice& choice) {
-  return choice.hint.empty() ? choice.label : choice.label + "  (" + choice.hint + ')';
+constexpr Glyphs unicode_glyphs{"◆", "◇", "■", "│", "┌", "└", "●", "○", "◼", "◻", "›", "▲", "✔", "↑/↓", " · ", "…"};
+constexpr Glyphs ascii_glyphs{"*", "+", "x", "|", "+", "+", "(*)", "( )", "[x]", "[ ]", ">", "!", "ok", "up/down",
+                              " - ", "..."};
+
+const Glyphs& GlyphsFor(const Style& style) {
+  return style.unicode ? unicode_glyphs : ascii_glyphs;
+}
+
+// Answers line up after the longest question the CLI asks.
+constexpr std::size_t question_width = 14;
+
+std::size_t DisplayWidth(std::string_view text) {
+  // Every character the prompt draws takes one column; UTF-8 continuation bytes add none.
+  return static_cast<std::size_t>(std::ranges::count_if(text, [](char byte) {
+    return (static_cast<unsigned char>(byte) & 0xC0U) != 0x80U;
+  }));
+}
+
+std::string Padded(std::string_view text, std::size_t width) {
+  std::string padded(text);
+  const std::size_t used = DisplayWidth(text);
+  if (used < width) {
+    padded.append(width - used, ' ');
+  }
+  return padded;
+}
+
+Span Rail(const Glyphs& glyphs) {
+  return {std::string(glyphs.rail) + "  ", Role::Muted};
 }
 
 void PopCodePoint(std::string& text) {
@@ -44,7 +88,50 @@ std::optional<std::size_t> ParseChoiceNumber(std::string_view value, std::size_t
   return number - 1;
 }
 
+std::string ChoiceLine(const Choice& choice) {
+  const std::string hint = PlainText(choice.hint);
+  return hint.empty() ? choice.label : choice.label + "  (" + hint + ')';
+}
+
+// The SGR parameters of a role at a color depth. The two brand colors are HuxerUI's violet (#5B51E6) and the C++
+// logo's blue (#659AD2); with 16 colors the violet is magenta, so the two never become one blue.
+std::string_view RoleColor(Role role, ColorDepth depth) {
+  const auto pick = [depth](std::string_view basic, std::string_view palette, std::string_view full) {
+    return depth == ColorDepth::True ? full : depth == ColorDepth::Palette ? palette : basic;
+  };
+  switch (role) {
+  case Role::Plain:
+    return {};
+  case Role::Strong:
+    return "1";
+  case Role::Brand:
+    return pick("1;95", "1;38;5;62", "1;38;2;91;81;230");
+  case Role::Accent:
+    return pick("95", "38;5;62", "38;2;91;81;230");
+  case Role::Muted:
+    return pick("90", "38;5;244", "38;2;128;128;128");
+  case Role::Headers:
+    return pick("36", "38;5;36", "38;2;42;161;152");
+  case Role::Modules:
+    return pick("34", "38;5;68", "38;2;101;154;210");
+  case Role::Success:
+    return "32";
+  case Role::Error:
+    return "31";
+  }
+  return {};
+}
+
 } // namespace
+
+Choice::Choice(std::string label_value, std::string hint_value) : label(std::move(label_value)) {
+  if (!hint_value.empty()) {
+    hint.push_back({std::move(hint_value), Role::Muted});
+  }
+}
+
+Choice::Choice(std::string label_value, Line hint_value)
+    : label(std::move(label_value)), hint(std::move(hint_value)) {}
 
 State MakeSelect(std::string question, std::vector<Choice> choices, std::size_t initial) {
   State state;
@@ -56,11 +143,12 @@ State MakeSelect(std::string question, std::vector<Choice> choices, std::size_t 
 }
 
 State MakeMultiSelect(std::string question, std::vector<Choice> choices,
-                      std::span<const std::size_t> initially_checked) {
+                      std::span<const std::size_t> initially_checked, std::size_t minimum) {
   State state;
   state.kind = Kind::MultiSelect;
   state.question = std::move(question);
   state.choices = std::move(choices);
+  state.minimum = minimum;
   state.checked.assign(state.choices.size(), false);
   for (const std::size_t index : initially_checked) {
     if (index < state.checked.size()) {
@@ -79,6 +167,14 @@ State MakeText(std::string question, std::string default_text, Validator validat
   return state;
 }
 
+State MakeConfirm(std::string question, bool default_yes) {
+  State state;
+  state.kind = Kind::Confirm;
+  state.question = std::move(question);
+  state.yes = default_yes;
+  return state;
+}
+
 void Apply(State& state, const KeyEvent& event) {
   if (state.status != Status::Active) {
     return;
@@ -89,17 +185,22 @@ void Apply(State& state, const KeyEvent& event) {
   }
   state.error.clear();
   const std::size_t count = state.choices.size();
+  const bool up = event.key == Key::Up || (event.key == Key::Text && event.text == "k");
+  const bool down = event.key == Key::Down || (event.key == Key::Text && event.text == "j");
   switch (state.kind) {
   case Kind::Select:
   case Kind::MultiSelect:
-    if (event.key == Key::Up && count > 0) {
+    if (up && count > 0) {
       state.cursor = (state.cursor + count - 1) % count;
-    } else if (event.key == Key::Down && count > 0) {
+    } else if (down && count > 0) {
       state.cursor = (state.cursor + 1) % count;
     } else if (event.key == Key::Space && state.kind == Kind::MultiSelect && count > 0) {
       state.checked[state.cursor] = !state.checked[state.cursor];
+    } else if (event.key == Key::Text && event.text == "a" && state.kind == Kind::MultiSelect) {
+      const bool all = std::ranges::all_of(state.checked, [](bool checked) { return checked; });
+      state.checked.assign(state.checked.size(), !all);
     } else if (event.key == Key::Enter) {
-      if (state.kind == Kind::MultiSelect && std::ranges::none_of(state.checked, [](bool checked) { return checked; })) {
+      if (state.kind == Kind::MultiSelect && CheckedIndices(state).size() < state.minimum) {
         state.error = "Select at least one option.";
       } else if (count > 0) {
         state.status = Status::Submitted;
@@ -124,36 +225,177 @@ void Apply(State& state, const KeyEvent& event) {
       }
     }
     break;
+  case Kind::Confirm:
+    if (event.key == Key::Text && (event.text == "y" || event.text == "Y")) {
+      state.yes = true;
+      state.status = Status::Submitted;
+    } else if (event.key == Key::Text && (event.text == "n" || event.text == "N")) {
+      state.yes = false;
+      state.status = Status::Submitted;
+    } else if (event.key == Key::Enter) {
+      state.status = Status::Submitted;
+    }
+    break;
   }
 }
 
-std::vector<std::string> Render(const State& state) {
-  std::vector<std::string> lines;
+Frame Render(const State& state, const Style& style) {
+  const Glyphs& glyphs = GlyphsFor(style);
+  Frame frame;
   if (state.status != Status::Active) {
-    lines.push_back("? " + state.question + ": " + (state.status == Status::Cancelled ? "cancelled" : Answer(state)));
-    return lines;
+    const bool cancelled = state.status == Status::Cancelled;
+    frame.lines.push_back({
+        {std::string(cancelled ? glyphs.cancelled : glyphs.done) + "  ", cancelled ? Role::Error : Role::Success},
+        {Padded(state.question, question_width), Role::Plain},
+        {cancelled ? std::string("cancelled") : Answer(state), cancelled ? Role::Muted : Role::Accent},
+    });
+    return frame;
   }
-  if (state.kind == Kind::Text) {
-    std::string line = "? " + state.question;
-    if (!state.default_text.empty()) {
-      line += " (" + state.default_text + ')';
+
+  const std::string separator(glyphs.separator);
+  Line title{{std::string(glyphs.active) + "  ", Role::Accent}, {state.question, Role::Strong}};
+  std::string help;
+  switch (state.kind) {
+  case Kind::Select:
+  case Kind::MultiSelect: {
+    frame.lines.push_back(std::move(title));
+    std::size_t label_width = 0;
+    for (const Choice& choice : state.choices) {
+      label_width = std::max(label_width, DisplayWidth(choice.label));
     }
-    lines.push_back(line + ": " + state.text);
-  } else {
-    lines.push_back("? " + state.question);
     for (std::size_t index = 0; index < state.choices.size(); ++index) {
-      std::string line = index == state.cursor ? "  > " : "    ";
+      const bool current = index == state.cursor;
+      std::string_view mark;
+      Role mark_role = Role::Muted;
       if (state.kind == Kind::MultiSelect) {
-        line += state.checked[index] ? "[x] " : "[ ] ";
+        mark = state.checked[index] ? glyphs.checked : glyphs.unchecked;
+        mark_role = state.checked[index] ? Role::Accent : Role::Muted;
+      } else {
+        mark = current ? glyphs.selected : glyphs.unselected;
+        mark_role = current ? Role::Accent : Role::Muted;
       }
-      lines.push_back(line + ChoiceLine(state.choices[index]));
+      Line line{Rail(glyphs), {std::string(mark) + ' ', mark_role},
+                {Padded(state.choices[index].label, label_width + 2), current ? Role::Accent : Role::Plain}};
+      line.insert(line.end(), state.choices[index].hint.begin(), state.choices[index].hint.end());
+      frame.lines.push_back(std::move(line));
     }
-    lines.emplace_back(state.kind == Kind::MultiSelect ? multi_select_help : select_help);
+    help = std::string(glyphs.move) + " move" + separator;
+    if (state.kind == Kind::MultiSelect) {
+      help += "space toggle" + separator + "a all" + separator;
+    }
+    help += "enter confirm" + separator + "esc cancel";
+    if (state.kind == Kind::MultiSelect && state.minimum == 0) {
+      help += separator + "none is fine";
+    }
+    break;
+  }
+  case Kind::Text: {
+    frame.lines.push_back(std::move(title));
+    Line field{Rail(glyphs), {std::string(glyphs.field) + ' ', Role::Accent}};
+    if (state.text.empty()) {
+      field.push_back({state.default_text, Role::Muted});
+    } else {
+      field.push_back({state.text, Role::Plain});
+    }
+    frame.cursor_line = frame.lines.size();
+    frame.cursor_column = DisplayWidth(PlainText({field[0], field[1]})) + DisplayWidth(state.text);
+    frame.lines.push_back(std::move(field));
+    help = state.text.empty() && !state.default_text.empty()
+               ? "type" + separator + "enter keeps " + state.default_text + separator + "esc cancel"
+               : "enter confirm" + separator + "esc cancel";
+    break;
+  }
+  case Kind::Confirm:
+    title.push_back({state.yes ? "  (Y/n)" : "  (y/N)", Role::Muted});
+    frame.lines.push_back(std::move(title));
+    return frame;
   }
   if (!state.error.empty()) {
-    lines.push_back("  ! " + state.error);
+    frame.lines.push_back({Rail(glyphs), {std::string(glyphs.problem) + ' ' + state.error, Role::Error}});
+  } else {
+    frame.lines.push_back({Rail(glyphs), {help, Role::Muted}});
+  }
+  return frame;
+}
+
+Line IntroLine(std::string_view title, const Style& style) {
+  return {{std::string(GlyphsFor(style).top) + "  ", Role::Muted},
+          {"HuxerUI", Role::Brand},
+          {std::string(GlyphsFor(style).separator) + std::string(title), Role::Muted}};
+}
+
+Line NoteLine(Line text, const Style& style) {
+  Line line{Rail(GlyphsFor(style))};
+  line.insert(line.end(), text.begin(), text.end());
+  return line;
+}
+
+std::vector<Line> OutroLines(Line result, std::span<const std::pair<std::string, Line>> details, const Style& style) {
+  const Glyphs& glyphs = GlyphsFor(style);
+  std::vector<Line> lines;
+  Line first{{std::string(glyphs.bottom) + "  ", Role::Muted}, {std::string(glyphs.success) + ' ', Role::Success}};
+  first.insert(first.end(), result.begin(), result.end());
+  lines.push_back(std::move(first));
+  std::size_t label_width = 0;
+  for (const auto& detail : details) {
+    label_width = std::max(label_width, DisplayWidth(detail.first));
+  }
+  for (const auto& [label, value] : details) {
+    Line line{{"   " + Padded(label, label_width + 2), Role::Muted}};
+    line.insert(line.end(), value.begin(), value.end());
+    lines.push_back(std::move(line));
   }
   return lines;
+}
+
+std::string PlainText(const Line& line) {
+  std::string text;
+  for (const Span& span : line) {
+    text += span.text;
+  }
+  return text;
+}
+
+std::string Paint(const Line& line, const Style& style) {
+  std::string painted;
+  std::size_t used = 0;
+  const std::string_view ellipsis = GlyphsFor(style).ellipsis;
+  // One column stays free: a line that fills the last column makes some terminals wrap, which breaks the redraw.
+  const std::size_t limit = style.width > 1 ? style.width - 1 : 0;
+  bool cut = false;
+  for (const Span& span : line) {
+    std::string text = span.text;
+    if (limit > 0 && used + DisplayWidth(text) > limit) {
+      const std::size_t room = limit > used + DisplayWidth(ellipsis) ? limit - used - DisplayWidth(ellipsis) : 0;
+      std::string kept;
+      std::size_t width = 0;
+      for (std::size_t index = 0; index < text.size();) {
+        std::size_t length = 1;
+        while (index + length < text.size() && (static_cast<unsigned char>(text[index + length]) & 0xC0U) == 0x80U) {
+          ++length;
+        }
+        if (width + 1 > room) {
+          break;
+        }
+        kept.append(text, index, length);
+        ++width;
+        index += length;
+      }
+      text = kept + std::string(ellipsis);
+      cut = true;
+    }
+    used += DisplayWidth(text);
+    const std::string_view color = style.color == ColorDepth::None ? std::string_view{} : RoleColor(span.role, style.color);
+    if (color.empty() || text.empty()) {
+      painted += text;
+    } else {
+      painted += "\x1b[" + std::string(color) + 'm' + text + "\x1b[0m";
+    }
+    if (cut) {
+      break;
+    }
+  }
+  return painted;
 }
 
 std::string Answer(const State& state) {
@@ -165,10 +407,12 @@ std::string Answer(const State& state) {
     for (const std::size_t index : CheckedIndices(state)) {
       answer += (answer.empty() ? "" : ", ") + state.choices[index].label;
     }
-    return answer;
+    return answer.empty() ? std::string("none") : answer;
   }
   case Kind::Text:
     return state.text;
+  case Kind::Confirm:
+    return state.yes ? "yes" : "no";
   }
   return {};
 }
@@ -247,22 +491,55 @@ std::optional<KeyEvent> KeyDecoder::Feed(unsigned char byte) {
   return std::nullopt;
 }
 
-KeyPrompter::KeyPrompter(std::function<std::optional<KeyEvent>()> next_key, std::ostream& output)
-    : next_key_(std::move(next_key)), output_(output) {}
+bool KeyDecoder::AwaitsSequence() const noexcept {
+  return pending_ == "\x1b";
+}
+
+std::optional<KeyEvent> KeyDecoder::Flush() {
+  if (AwaitsSequence()) {
+    pending_.clear();
+    return KeyEvent{Key::Cancel, {}};
+  }
+  return std::nullopt;
+}
+
+KeyPrompter::KeyPrompter(std::function<std::optional<KeyEvent>()> next_key, std::ostream& output,
+                         std::function<Style()> style)
+    : next_key_(std::move(next_key)), output_(output), style_(std::move(style)) {}
+
+Style KeyPrompter::OutputStyle() const {
+  return style_ ? style_() : Style{};
+}
 
 bool KeyPrompter::Drive(State& state) {
   std::size_t drawn = 0;
+  // The row of the previous frame the terminal's cursor is on, counted from the frame's first line.
+  std::size_t row = 0;
   const auto draw = [&] {
     if (drawn > 0) {
-      // Move to the first line of the previous frame and clear everything below it.
-      output_ << "\x1b[" << drawn << "F\x1b[J";
+      // Back to the first line of the previous frame, then clear everything below it.
+      if (row > 0) {
+        output_ << "\x1b[" << row << 'F';
+      } else {
+        output_ << '\r';
+      }
+      output_ << "\x1b[J";
     }
-    const std::vector<std::string> lines = Render(state);
-    for (const std::string& line : lines) {
-      output_ << line << '\n';
+    const Style style = OutputStyle();
+    const Frame frame = Render(state, style);
+    for (const Line& line : frame.lines) {
+      output_ << Paint(line, style) << '\n';
+    }
+    drawn = frame.lines.size();
+    row = drawn;
+    if (frame.cursor_line && state.status == Status::Active) {
+      // A text prompt shows the terminal's own cursor in its field, blinking as a bar.
+      output_ << "\x1b[" << drawn - *frame.cursor_line << "A\x1b[" << frame.cursor_column + 1 << "G\x1b[5 q\x1b[?25h";
+      row = *frame.cursor_line;
+    } else {
+      output_ << "\x1b[?25l";
     }
     output_.flush();
-    drawn = lines.size();
   };
   draw();
   while (state.status == Status::Active) {
@@ -270,6 +547,9 @@ bool KeyPrompter::Drive(State& state) {
     Apply(state, event.value_or(KeyEvent{Key::Cancel, {}}));
     draw();
   }
+  // The terminal's cursor as it was: shown, in its own shape.
+  output_ << "\x1b[0 q\x1b[?25h";
+  output_.flush();
   return state.status == Status::Submitted;
 }
 
@@ -284,8 +564,10 @@ std::optional<std::size_t> KeyPrompter::Select(std::string_view question, std::s
 
 std::optional<std::vector<std::size_t>> KeyPrompter::MultiSelect(std::string_view question,
                                                                  std::span<const Choice> choices,
-                                                                 std::span<const std::size_t> initially_checked) {
-  State state = MakeMultiSelect(std::string(question), {choices.begin(), choices.end()}, initially_checked);
+                                                                 std::span<const std::size_t> initially_checked,
+                                                                 std::size_t minimum) {
+  State state =
+      MakeMultiSelect(std::string(question), {choices.begin(), choices.end()}, initially_checked, minimum);
   if (!Drive(state)) {
     return std::nullopt;
   }
@@ -299,6 +581,22 @@ std::optional<std::string> KeyPrompter::Text(std::string_view question, std::str
     return std::nullopt;
   }
   return state.text;
+}
+
+std::optional<bool> KeyPrompter::Confirm(std::string_view question, bool default_yes) {
+  State state = MakeConfirm(std::string(question), default_yes);
+  if (!Drive(state)) {
+    return std::nullopt;
+  }
+  return state.yes;
+}
+
+void KeyPrompter::Show(std::span<const Line> lines) {
+  const Style style = OutputStyle();
+  for (const Line& line : lines) {
+    output_ << Paint(line, style) << '\n';
+  }
+  output_.flush();
 }
 
 LinePrompter::LinePrompter(std::istream& input, std::ostream& output) : input_(input), output_(output) {}
@@ -333,7 +631,8 @@ std::optional<std::size_t> LinePrompter::Select(std::string_view question, std::
 
 std::optional<std::vector<std::size_t>> LinePrompter::MultiSelect(std::string_view question,
                                                                   std::span<const Choice> choices,
-                                                                  std::span<const std::size_t> initially_checked) {
+                                                                  std::span<const std::size_t> initially_checked,
+                                                                  std::size_t minimum) {
   output_ << "? " << question << '\n';
   PrintChoices(choices);
   std::string defaults;
@@ -341,14 +640,15 @@ std::optional<std::vector<std::size_t>> LinePrompter::MultiSelect(std::string_vi
     defaults += (defaults.empty() ? "" : ",") + std::to_string(index + 1);
   }
   while (true) {
-    output_ << "Choose one or more, separated by commas [" << defaults << "]: ";
+    output_ << (minimum == 0 ? "Choose any, separated by commas [" : "Choose one or more, separated by commas [")
+            << (defaults.empty() ? std::string("none") : defaults) << "]: ";
     output_.flush();
     std::string line;
     if (!std::getline(input_, line)) {
       return std::nullopt;
     }
     const std::string answer = Trim(line);
-    if (answer.empty() && !initially_checked.empty()) {
+    if (answer.empty() && (!initially_checked.empty() || minimum == 0)) {
       return std::vector<std::size_t>(initially_checked.begin(), initially_checked.end());
     }
     std::vector<bool> checked(choices.size(), false);
@@ -403,6 +703,39 @@ std::optional<std::string> LinePrompter::Text(std::string_view question, std::st
     }
     output_ << "  ! " << problem << '\n';
   }
+}
+
+std::optional<bool> LinePrompter::Confirm(std::string_view question, bool default_yes) {
+  while (true) {
+    output_ << "? " << question << (default_yes ? " [Y/n]: " : " [y/N]: ");
+    output_.flush();
+    std::string line;
+    if (!std::getline(input_, line)) {
+      return std::nullopt;
+    }
+    const std::string answer = Trim(line);
+    if (answer.empty()) {
+      return default_yes;
+    }
+    if (answer == "y" || answer == "Y" || answer == "yes") {
+      return true;
+    }
+    if (answer == "n" || answer == "N" || answer == "no") {
+      return false;
+    }
+    output_ << "  ! Enter y or n.\n";
+  }
+}
+
+void LinePrompter::Show(std::span<const Line> lines) {
+  for (const Line& line : lines) {
+    output_ << PlainText(line) << '\n';
+  }
+  output_.flush();
+}
+
+Style LinePrompter::OutputStyle() const {
+  return {};
 }
 
 } // namespace huxerui::cli::prompt

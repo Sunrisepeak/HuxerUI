@@ -13,16 +13,19 @@ cd hello_huxer
 The command creates shared sources under `src`, resources under `resources`, the requested platform shells, and the HuxerUI application-development Skill under `.agents/skills`.
 Only build platforms supported by the current development host.
 
-Run in a terminal, `huxerui create` asks for whatever the command line leaves out: the kind and name, the build system, the template, and the platforms.
+Run in a terminal, `huxerui create` asks for whatever the command line leaves out: the kind and name, the build system, the template, the platforms, and the agents whose skill files to add. It confirms before writing anything, then names the command to run next.
 `--yes`, or running without a terminal, applies the defaults instead, and the command prints the options that recreate the same project.
 
-A project is written in one of two source styles, and its build system selects which:
+A project's source style follows its build systems:
 
 | `--build-system` | Source style | Sources write |
 | --- | --- | --- |
 | `cmake` (an application's default) | headers | `#include <huxerui/huxerui.h>` |
 | `mcpp` | C++ modules | `import huxerui;` in module units |
-| `cmake,mcpp` (a library's default) | headers, with both declarations | `#include <huxerui/huxerui.h>` |
+| `cmake,mcpp`, application | headers, with both declarations | `#include <huxerui/huxerui.h>` |
+| `cmake,mcpp`, library (a library's default) | headers and C++ modules | headers; consumers include them or import the library's module |
+
+A library declaring both is the module named by its C++ namespace as well: the mcpp build generates `modules/<module>.cppm` from its public headers, so a consumer built with mcpp writes `import <module>;` and one built with CMake includes the headers. Set `cpp_modules_gen = false` under `[package.metadata.huxerui]` to write that file yourself; the build then reports the names it leaves out.
 
 ```bash
 huxerui create app hello_modules --build-system mcpp

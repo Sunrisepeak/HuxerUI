@@ -21,7 +21,8 @@ A project lists the capabilities it needs in `requires`.
 ### Created projects
 
 The suite also checks the projects `huxerui create` writes, so a change to the CLI or the templates that breaks a new project fails here.
-[`created-projects.json`](created-projects.json) declares each one by kind and build systems: an application with CMake, one with mcpp, one with both, and a library with mcpp and its Preview.
+[`created-projects.json`](created-projects.json) declares each one by kind and build systems: an application with CMake, one with mcpp, one with both, a library with mcpp and its Preview, and a library with both, which also exports its headers as a module.
+Into that library's Preview the runner writes `src/cts_import_check.cppm`, a module unit that imports the library's module; the Preview's mcpp declaration compiles it and its CMake declaration, which globs `*.cpp`, does not, so the mcpp build fails when the generated interface does not reach the library's names.
 A project is created for every integration whose declaration it carries, and the library's Preview is the application that is built.
 `platforms` states whether a project is created with only the checked target's platform or with every platform the CLI offers, so a project missing another platform's shell and one carrying all of them are both checked.
 Expected facts are keyed by kind, source style, and template, never by build system, so the application that declares both build systems expects what each single-system application does, and the integrations that build it must agree on it. Created projects name no `sameModelAs`: the CLI writes each project's name into its resources, so two created projects never share a resource package.

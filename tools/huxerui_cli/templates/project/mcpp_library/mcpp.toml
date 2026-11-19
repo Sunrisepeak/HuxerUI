@@ -12,11 +12,18 @@ resources = "resources"
 name      = "@PROJECT_NAME@"
 id        = "@PROJECT_ID@"
 namespace = "@LIBRARY_NAMESPACE@"
+# The headers are exported as the module `@LIBRARY_MODULE_NAME@` too: huxerui.rules generates its interface,
+# modules/@LIBRARY_MODULE_NAME@.cppm, from them. `cpp_modules_gen = false` keeps a hand-written one instead.
+# cpp_modules_gen = true
 
 @MCPP_DEPENDENCIES@
 
 [targets.@LIBRARY_RESOURCE_NAMESPACE@]
 kind = "lib"
+
+# The module an mcpp consumer imports; a CMake consumer includes the headers.
+[lib]
+path = "modules/@LIBRARY_MODULE_NAME@.cppm"
 
 [build]
 # huxerui.rules selects the sources and transforms composables.

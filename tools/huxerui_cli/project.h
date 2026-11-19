@@ -26,6 +26,8 @@ struct CreateSelection {
   SourceStyle style = SourceStyle::Headers;
   /// Selected build systems, without duplicates, in `BuildSystem` order.
   std::vector<BuildSystem> build_systems;
+  /// Whether a headers library also exports its headers as a module, generated as `modules/<module>.cppm`.
+  bool module_interface = false;
 
   /// Whether the selection carries a build system's declaration.
   [[nodiscard]] bool Has(BuildSystem build_system) const noexcept;
@@ -40,6 +42,12 @@ struct CreateSelection {
 
 /// The command-line spelling of a source style: `headers` or `modules`.
 [[nodiscard]] std::string_view SourceStyleName(SourceStyle style) noexcept;
+
+/// The style a created project has: its source style, or `headers + modules` for a library exporting both.
+[[nodiscard]] std::string_view CreateStyleName(const CreateSelection& selection) noexcept;
+
+/// The module a library's headers are exported as, which also names its interface file under `modules/`.
+[[nodiscard]] std::string ModuleInterfaceName(const LibraryTemplateContext& library);
 
 /// Applies `huxerui create`'s defaults to the explicit build-system choice.
 ///

@@ -45,7 +45,7 @@ The project above uses headers (`#include <huxerui/huxerui.h>`) and CMake. For a
 huxerui create app hello_modules --build-system mcpp
 ```
 
-`--build-system cmake,mcpp` gives a headers project both declarations; it builds with CMake unless a command passes `--build-system mcpp`. See [C++ Modules and mcpp](skills/huxerui-app-development/references/cpp-modules-and-mcpp.md).
+`--build-system cmake,mcpp` gives a headers project both declarations; it builds with CMake unless a command passes `--build-system mcpp`, and a library created this way is also importable as a C++ module. See [C++ Modules and mcpp](skills/huxerui-app-development/references/cpp-modules-and-mcpp.md).
 
 ## Example
 

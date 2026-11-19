@@ -18,6 +18,15 @@ KeyEvent Type(std::string text) {
   return {Key::Text, std::move(text)};
 }
 
+// The frame's lines as plain text, as a terminal without colors shows them.
+std::vector<std::string> Lines(const State& state, const Style& style = {}) {
+  std::vector<std::string> lines;
+  for (const Line& line : Render(state, style).lines) {
+    lines.push_back(PlainText(line));
+  }
+  return lines;
+}
+
 std::vector<KeyEvent> Decode(std::string_view bytes) {
   KeyDecoder decoder;
   std::vector<KeyEvent> events;
@@ -47,11 +56,79 @@ TEST_CASE("HuxerUICliPromptSelectMovesAndWraps") {
 
 TEST_CASE("HuxerUICliPromptSelectRendersCursorAndHints") {
   const State state = MakeSelect("Build system", BuildSystems(), 1);
-  const std::vector<std::string> lines = Render(state);
-  REQUIRE(lines.size() == 4);
-  REQUIRE(lines[0] == "? Build system");
-  REQUIRE(lines[1] == "    cmake");
-  REQUIRE(lines[2] == "  > mcpp  (C++ modules)");
+  // Labels pad to one column so the hints line up.
+  REQUIRE(Lines(state) == std::vector<std::string>{
+                              "*  Build system",
+                              "|  ( ) cmake  ",
+                              "|  (*) mcpp   C++ modules",
+                              "|  up/down move - enter confirm - esc cancel",
+                          });
+  Style unicode;
+  unicode.unicode = true;
+  REQUIRE(Lines(state, unicode) == std::vector<std::string>{
+                                       "◆  Build system",
+                                       "│  ○ cmake  ",
+                                       "│  ● mcpp   C++ modules",
+                                       "│  ↑/↓ move · enter confirm · esc cancel",
+                                   });
+}
+
+TEST_CASE("HuxerUICliPromptPaintsRolesAtTheTerminalsDepth") {
+  const Line line{{"headers", Role::Headers}, {" & ", Role::Plain}, {"C++ modules", Role::Modules}};
+  REQUIRE(Paint(line, {}) == "headers & C++ modules");
+  Style basic;
+  basic.color = ColorDepth::Basic;
+  REQUIRE(Paint(line, basic) == "\x1b[36mheaders\x1b[0m & \x1b[34mC++ modules\x1b[0m");
+  Style full;
+  full.color = ColorDepth::True;
+  // HuxerUI's violet for the prompt, and the C++ logo's blue for modules.
+  REQUIRE(Paint({{"x", Role::Accent}}, full) == "\x1b[38;2;91;81;230mx\x1b[0m");
+  REQUIRE(Paint({{"x", Role::Modules}}, full) == "\x1b[38;2;101;154;210mx\x1b[0m");
+}
+
+TEST_CASE("HuxerUICliPromptCutsLinesToTheTerminalWidth") {
+  Style narrow;
+  narrow.width = 10;
+  REQUIRE(Paint({{"abcdefghijklmnop", Role::Plain}}, narrow) == "abcdef...");
+  narrow.unicode = true;
+  REQUIRE(Paint({{"ab", Role::Plain}, {"cdefghijkl", Role::Muted}}, narrow) == "abcdefgh…");
+  REQUIRE(Paint({{"short", Role::Plain}}, narrow) == "short");
+}
+
+TEST_CASE("HuxerUICliPromptTextShowsItsFieldAndCursor") {
+  State state = MakeText("Project name", "hello-hui");
+  Frame frame = Render(state);
+  REQUIRE(PlainText(frame.lines[1]) == "|  > hello-hui");
+  REQUIRE(frame.cursor_line == std::optional<std::size_t>(1));
+  REQUIRE(frame.cursor_column == 5);
+  REQUIRE(PlainText(frame.lines[2]) == "|  type - enter keeps hello-hui - esc cancel");
+  Apply(state, Type("ab"));
+  frame = Render(state);
+  REQUIRE(PlainText(frame.lines[1]) == "|  > ab");
+  REQUIRE(frame.cursor_column == 7);
+}
+
+TEST_CASE("HuxerUICliPromptConfirmTakesItsDefaultOrALetter") {
+  State state = MakeConfirm("Create hello-hui?", true);
+  REQUIRE(Lines(state) == std::vector<std::string>{"*  Create hello-hui?  (Y/n)"});
+  Apply(state, Press(Key::Enter));
+  REQUIRE(state.yes);
+  State declined = MakeConfirm("Create hello-hui?", true);
+  Apply(declined, Type("n"));
+  REQUIRE(declined.status == Status::Submitted);
+  REQUIRE_FALSE(declined.yes);
+  REQUIRE(Answer(declined) == "no");
+}
+
+TEST_CASE("HuxerUICliPromptMultiSelectTogglesAllAndAcceptsNoneWhenAllowed") {
+  State state = MakeMultiSelect("Agent skills", BuildSystems(), std::vector<std::size_t>{0}, 0);
+  Apply(state, Type("a"));
+  REQUIRE(CheckedIndices(state) == std::vector<std::size_t>{0, 1});
+  Apply(state, Type("a"));
+  REQUIRE(CheckedIndices(state).empty());
+  Apply(state, Press(Key::Enter));
+  REQUIRE(state.status == Status::Submitted);
+  REQUIRE(Answer(state) == "none");
 }
 
 TEST_CASE("HuxerUICliPromptMultiSelectRequiresOneChoice") {
@@ -61,13 +138,13 @@ TEST_CASE("HuxerUICliPromptMultiSelectRequiresOneChoice") {
   Apply(state, Press(Key::Space));
   Apply(state, Press(Key::Enter));
   REQUIRE(state.status == Status::Active);
-  REQUIRE(Render(state).back() == "  ! Select at least one option.");
+  REQUIRE(Lines(state).back() == "|  ! Select at least one option.");
   Apply(state, Press(Key::Space));
-  REQUIRE(Render(state).back().find('!') == std::string::npos);
+  REQUIRE(Lines(state).back().find('!') == std::string::npos);
   Apply(state, Press(Key::Enter));
   REQUIRE(state.status == Status::Submitted);
   REQUIRE(CheckedIndices(state) == std::vector<std::size_t>{1});
-  REQUIRE(Render(state) == std::vector<std::string>{"? Build systems: mcpp"});
+  REQUIRE(Lines(state) == std::vector<std::string>{"+  Build systems mcpp"});
 }
 
 TEST_CASE("HuxerUICliPromptTextUsesDefaultAndValidates") {
@@ -101,10 +178,20 @@ TEST_CASE("HuxerUICliPromptCancelEndsEveryKind") {
   State select = MakeSelect("Q", BuildSystems(), 0);
   Apply(select, Press(Key::Cancel));
   REQUIRE(select.status == Status::Cancelled);
-  REQUIRE(Render(select) == std::vector<std::string>{"? Q: cancelled"});
+  REQUIRE(Lines(select) == std::vector<std::string>{"x  Q             cancelled"});
   State text = MakeText("Q", "x");
   Apply(text, Press(Key::Cancel));
   REQUIRE(text.status == Status::Cancelled);
+}
+
+TEST_CASE("HuxerUICliPromptDecoderTreatsALoneEscapeAsCancel") {
+  KeyDecoder decoder;
+  REQUIRE_FALSE(decoder.Feed(0x1b).has_value());
+  REQUIRE(decoder.AwaitsSequence());
+  const std::optional<KeyEvent> event = decoder.Flush();
+  REQUIRE(event.has_value());
+  REQUIRE(event->key == Key::Cancel);
+  REQUIRE_FALSE(decoder.AwaitsSequence());
 }
 
 TEST_CASE("HuxerUICliPromptDecodesTerminalBytes") {
@@ -130,8 +217,25 @@ TEST_CASE("HuxerUICliKeyPrompterRedrawsAndReturnsTheChoice") {
   }, output);
   const std::vector<Choice> choices = BuildSystems();
   REQUIRE(prompter.Select("Build system", choices, 0) == std::optional<std::size_t>(1));
+  // Each frame returns to the previous one's first line and clears below it; a list hides the cursor.
   REQUIRE(output.str().find("\x1b[4F\x1b[J") != std::string::npos);
-  REQUIRE(output.str().ends_with("? Build system: mcpp\n"));
+  REQUIRE(output.str().find("\x1b[?25l") != std::string::npos);
+  REQUIRE(output.str().find("+  Build system  mcpp\n") != std::string::npos);
+  // The terminal's cursor is restored, shown and in its own shape.
+  REQUIRE(output.str().ends_with("\x1b[0 q\x1b[?25h"));
+}
+
+TEST_CASE("HuxerUICliKeyPrompterPutsTheCursorInTheTextField") {
+  std::vector<KeyEvent> keys{Type("a"), Press(Key::Enter)};
+  std::size_t next = 0;
+  std::ostringstream output;
+  KeyPrompter prompter([&]() -> std::optional<KeyEvent> {
+    return next < keys.size() ? std::optional<KeyEvent>(keys[next++]) : std::nullopt;
+  }, output);
+  REQUIRE(prompter.Text("Name", "x", {}) == std::optional<std::string>("a"));
+  // Up two lines to the field, to the column after `|  > `, as a blinking bar; the next frame starts one line up.
+  REQUIRE(output.str().find("\x1b[2A\x1b[6G\x1b[5 q\x1b[?25h") != std::string::npos);
+  REQUIRE(output.str().find("\x1b[1F\x1b[J") != std::string::npos);
 }
 
 TEST_CASE("HuxerUICliKeyPrompterTreatsEndOfInputAsCancel") {
@@ -158,4 +262,15 @@ TEST_CASE("HuxerUICliLinePrompterReadsNumberedAnswers") {
   REQUIRE(prompter.Text("Name", "", validate) == std::optional<std::string>("good"));
   REQUIRE(output.str().find("! No spaces.") != std::string::npos);
   REQUIRE_FALSE(prompter.Text("Name", "", validate).has_value());
+}
+
+TEST_CASE("HuxerUICliLinePrompterConfirmsAndAllowsAnEmptySelection") {
+  std::istringstream input("\nmaybe\nn\n\n");
+  std::ostringstream output;
+  LinePrompter prompter(input, output);
+  REQUIRE(prompter.Confirm("Create?", true) == std::optional<bool>(true));
+  REQUIRE(prompter.Confirm("Create?", true) == std::optional<bool>(false));
+  REQUIRE(output.str().find("! Enter y or n.") != std::string::npos);
+  const std::vector<Choice> choices = BuildSystems();
+  REQUIRE(prompter.MultiSelect("Agents", choices, {}, 0) == std::optional<std::vector<std::size_t>>(std::vector<std::size_t>{}));
 }

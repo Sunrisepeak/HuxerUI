@@ -282,15 +282,32 @@ Selections resolve as follows:
 | Given | Result |
 | --- | --- |
 | Nothing, application | headers, cmake |
-| Nothing, library | headers, cmake and mcpp |
+| Nothing, library | headers and a module interface, cmake and mcpp |
 | `--build-system mcpp` | C++ modules, mcpp |
 | `--build-system cmake` | headers, cmake |
-| `--build-system cmake,mcpp` | headers, both declarations |
+| `--build-system cmake,mcpp`, application | headers, both declarations |
+| `--build-system cmake,mcpp`, library | headers and a module interface, both declarations |
+
+A library declaring both build systems keeps its headers for CMake consumers and is also the module named by its C++ namespace for mcpp consumers: its mcpp declaration's `[lib]` path is `modules/<module>.cppm`, the same shape as `modules/huxerui.cppm`, and the mcpp build generates that file from the public headers (see [mcpp build system](mcpp-build-system.md)).
+An application declaring both stays headers, since nothing imports an application.
 
 `--template` selects C++ modules content (`app` or `navigation` for an application, `library` for a library) and is a usage error for a list naming cmake.
 A missing selection is prompted for only when standard input and output are terminals; `--yes` suppresses every prompt.
-The prompts ask for the kind, the name, one build-system question whose answers `cmake`, `mcpp`, and `cmake+mcpp` also name the resulting source style, the template for a C++ modules application, and the platforms; the command then prints the options that recreate the project.
-The prompt module is a state machine fed by key events, with raw terminal input through termios on POSIX hosts and virtual-terminal console input on Windows, and numbered line input where raw mode is unavailable.
+The prompts ask for the kind, the name (`hello-hui` or `hello-hui-lib` by default), one build-system question whose answers `cmake`, `mcpp`, and `cmake + mcpp` also show the resulting source style, the template for a C++ modules application, the platforms (all, as without `--platform`), and, without `--agent`, the agents whose skill files to add.
+The skill is looked for before that question; when none is found the question starts with no agent checked and says how to make one available.
+A confirmation precedes any file being written; declining creates nothing. The outcome then names the project, the command to run next, and the options that recreate it; without prompts the command prints the plain summary instead.
+The prompt module is a state machine fed by key events. Rendering produces lines of text with roles, such as accent, muted, headers, and C++ modules, and the terminal layer maps each role to the terminal's capabilities:
+
+| Terminal | Shown |
+| --- | --- |
+| 24-bit color (`COLORTERM=truecolor` or `24bit`, or Windows Terminal) | HuxerUI's violet `#5B51E6`, the C++ logo's blue `#659AD2` for modules, `#2AA198` for headers |
+| 256 colors (`TERM` naming 256) | the nearest palette entries |
+| 16 colors | magenta, blue, and cyan, so the brand and modules colors stay apart |
+| `NO_COLOR`, `TERM=dumb`, or a console without VT processing | no colors; `FORCE_COLOR` or `CLICOLOR_FORCE` turns them on |
+| A locale or console without UTF-8, or a classic Windows console font | ASCII symbols in place of `◆ ◇ │ ● ◼ ›` |
+
+Lines are cut to the terminal's width, which is read before every frame, so a frame never wraps and its redraw stays in place. A text prompt shows the terminal's own cursor in its field as a blinking bar; every prompt restores the cursor's shape and visibility when it ends.
+Raw input is termios on POSIX hosts and virtual-terminal console input on Windows, where the console also takes UTF-8 output while the prompter lives; a lone Escape cancels, told apart from an arrow key's sequence by a short wait. Numbered line input is used where raw mode is unavailable.
 A C++ modules library is the `templates/library` package with the identity the CLI knows: its placeholder module `component` takes the library's C++ namespace as its name, since a module name is global to a program, and its manifest gains the `[package.metadata.huxerui]` table with `library`, `name`, `id`, and `namespace`.
 Its `examples/preview` is a C++ modules application whose `src/app.cppm` imports the library's module, with the same platform shells and the same `--platform` packages as a headers library's Preview.
 The `templates/app` and `templates/navigation` trees carry each desktop platform's entry, the iOS entry, and the macOS bundle metadata, because `mcpp new` renders them without the CLI; a CLI test checks that they equal the CLI's shell files rendered in mcpp's template vocabulary.

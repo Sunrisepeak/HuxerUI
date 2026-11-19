@@ -461,14 +461,29 @@ std::vector<GeneratedFile> LibraryProjectFiles(const LibraryTemplateContext& lib
   return RenderTemplateTree("project/library", library.project, replacements);
 }
 
+/// The module a C++ modules library exports: its C++ namespace, with `::` written as the module name's `.`.
+std::string LibraryModuleName(const LibraryTemplateContext& library) {
+  std::string name = library.cpp_namespace;
+  for (std::size_t position = name.find("::"); position != std::string::npos; position = name.find("::", position)) {
+    name.replace(position, 2, ".");
+  }
+  return name;
+}
+
 std::vector<GeneratedFile> McppLibraryDeclaration(const LibraryTemplateContext& library,
                                                   const std::filesystem::path& huxerui_home) {
   const LibraryTargetProjection target = DeriveLibraryTargetProjection(library.public_target);
   const std::string dependencies = McppDependencies(huxerui_home);
+  // The module interface is what huxerui.rules generates from the template's one header, so the first build
+  // finds it current.
+  const std::string module_name = LibraryModuleName(library);
+  const std::string primary_header = target.include_directory + "/" + target.header_name + ".h";
   const std::array replacements{
       TemplateReplacement{"@LIBRARY_PUBLIC_TARGET@", library.public_target},
       TemplateReplacement{"@LIBRARY_RESOURCE_NAMESPACE@", target.resource_namespace},
       TemplateReplacement{"@LIBRARY_NAMESPACE@", library.cpp_namespace},
+      TemplateReplacement{"@LIBRARY_MODULE_NAME@", module_name},
+      TemplateReplacement{"@LIBRARY_PRIMARY_HEADER@", primary_header},
       TemplateReplacement{"@MCPP_DEPENDENCIES@", dependencies},
   };
   return RenderTemplateTree("project/mcpp_library", library.project, replacements);
@@ -480,15 +495,6 @@ std::vector<GeneratedFile> McppPreviewDeclaration(const LibraryTemplateContext& 
   const LibraryTargetProjection target = DeriveLibraryTargetProjection(library.public_target);
   return McppApplicationDeclaration(PreviewContext(library), huxerui_home,
                                     target.resource_namespace + " = { path = \"../..\" }\n");
-}
-
-/// The module a C++ modules library exports: its C++ namespace, with `::` written as the module name's `.`.
-std::string LibraryModuleName(const LibraryTemplateContext& library) {
-  std::string name = library.cpp_namespace;
-  for (std::size_t position = name.find("::"); position != std::string::npos; position = name.find("::", position)) {
-    name.replace(position, 2, ".");
-  }
-  return name;
 }
 
 GeneratedFile& FindGeneratedFile(std::vector<GeneratedFile>& files, std::string_view path, std::string_view origin) {
@@ -910,6 +916,14 @@ std::string_view SourceStyleName(SourceStyle style) noexcept {
   return style == SourceStyle::Modules ? "modules" : "headers";
 }
 
+std::string_view CreateStyleName(const CreateSelection& selection) noexcept {
+  return selection.module_interface ? "headers + modules" : SourceStyleName(selection.style);
+}
+
+std::string ModuleInterfaceName(const LibraryTemplateContext& library) {
+  return LibraryModuleName(library);
+}
+
 CreateSelection ResolveCreateSelection(ProjectKind kind, std::span<const BuildSystem> build_systems) {
   CreateSelection selection;
   for (const BuildSystem build_system : {BuildSystem::CMake, BuildSystem::Mcpp}) {
@@ -925,6 +939,10 @@ CreateSelection ResolveCreateSelection(ProjectKind kind, std::span<const BuildSy
   // The style a project's sources use is the one every declared integration can build: a list naming CMake,
   // which lacks the `modules` capability, is headers, and mcpp alone is C++ modules.
   selection.style = selection.Has(BuildSystem::CMake) ? SourceStyle::Headers : SourceStyle::Modules;
+  // A library declaring both exports its headers as a module as well, for consumers built with mcpp. An application
+  // has no importer, so it stays headers.
+  selection.module_interface =
+      kind == ProjectKind::Library && selection.Has(BuildSystem::CMake) && selection.Has(BuildSystem::Mcpp);
   return selection;
 }
 

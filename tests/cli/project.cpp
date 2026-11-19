@@ -185,7 +185,7 @@ TEST_CASE("HuxerUICliCreatesLibrariesForEveryBuildSystemByDefault") {
   TemporaryDirectory temporary;
   const Invocation invocation = Invoke(temporary.Path(), {"create", "library", "data-grid", "--agent", "none"});
   REQUIRE(invocation.result == 0);
-  REQUIRE(invocation.output.find("Style: headers\nBuild systems: cmake, mcpp\n") != std::string::npos);
+  REQUIRE(invocation.output.find("Style: headers + modules\nBuild systems: cmake, mcpp\n") != std::string::npos);
   const std::filesystem::path project = temporary.Path() / "data-grid";
   REQUIRE(std::filesystem::is_regular_file(project / "CMakeLists.txt"));
   const std::string manifest = Read(project / "mcpp.toml");
@@ -193,6 +193,13 @@ TEST_CASE("HuxerUICliCreatesLibrariesForEveryBuildSystemByDefault") {
   REQUIRE(manifest.find("library   = \"DataGrid::DataGrid\"") != std::string::npos);
   REQUIRE(manifest.find("kind = \"lib\"") != std::string::npos);
   REQUIRE(manifest.find("include_dirs = [\"include\"]") != std::string::npos);
+  // The headers are also the module `data_grid`, whose interface mcpp's build regenerates from them.
+  REQUIRE(manifest.find("[lib]\npath = \"modules/data_grid.cppm\"") != std::string::npos);
+  const std::string interface = Read(project / "modules/data_grid.cppm");
+  REQUIRE(interface.find("#include <datagrid/datagrid.h>\n") != std::string::npos);
+  REQUIRE(interface.find("export module data_grid;\n") != std::string::npos);
+  REQUIRE(interface.find("    using data_grid::Install;\n") != std::string::npos);
+  REQUIRE(interface.find("@") == std::string::npos);
   REQUIRE(std::filesystem::is_regular_file(project / "examples/preview/CMakeLists.txt"));
   const std::string preview = Read(project / "examples/preview/mcpp.toml");
   REQUIRE(preview.find("datagrid = { path = \"../..\" }") != std::string::npos);
@@ -286,8 +293,9 @@ TEST_CASE("HuxerUICliRejectsUnsupportedCreateSelections") {
 
 TEST_CASE("HuxerUICliPromptsForMissingCreateSelections") {
   TemporaryDirectory temporary;
-  // Kind: app; name: Asked; build system: mcpp; template: navigation; platforms: 1 and 2 of the list.
-  std::istringstream answers("1\nAsked\n2\n2\n1,2\n");
+  // Kind: app; name: Asked; build system: mcpp; template: navigation; platforms: 1 and 2 of the list; then the
+  // confirmation's default, yes.
+  std::istringstream answers("1\nAsked\n2\n2\n1,2\n\n");
   std::ostringstream prompts;
   huxerui::cli::prompt::LinePrompter prompter(answers, prompts);
   std::ostringstream output;
@@ -297,17 +305,38 @@ TEST_CASE("HuxerUICliPromptsForMissingCreateSelections") {
   const huxerui::cli::SdkLocation sdk{HUXERUI_TEST_SOURCE_DIRECTORY, huxerui::cli::SdkLocationSource::Executable};
   REQUIRE(huxerui::cli::Run(arguments, temporary.Path(), sdk, input, output, error, &prompter) == 0);
   for (const std::string_view question : {"? Project kind", "? Project name", "? Build system", "? Template",
-                                          "? Platforms"}) {
+                                          "? Platforms", "? Create Asked? [Y/n]"}) {
     REQUIRE(prompts.str().find(question) != std::string::npos);
   }
   // The build-system answer selects the source style, so no separate question asks for it.
   REQUIRE(prompts.str().find("? Source style") == std::string::npos);
   const auto platforms = huxerui::cli::PlatformIds();
-  const std::string expected = "Command: huxerui create app Asked --build-system mcpp --template "
+  // After questions the outcome closes them, with the same choices as options.
+  const std::string expected = "same as  huxerui create app Asked --build-system mcpp --template "
                                "navigation --platform " + std::string(platforms[0]) + "," +
                                std::string(platforms[1]) + " --agent none\n";
-  REQUIRE(output.str().find(expected) != std::string::npos);
+  REQUIRE(prompts.str().find(expected) != std::string::npos);
+  REQUIRE(prompts.str().find("+  HuxerUI - create a project\n") != std::string::npos);
+  REQUIRE(output.str().empty());
   REQUIRE(Read(temporary.Path() / "Asked/src/app.cppm").find("NavigationStack") != std::string::npos);
+}
+
+TEST_CASE("HuxerUICliAsksForAgentSkillsAndCreatesNothingWhenDeclined") {
+  TemporaryDirectory temporary;
+  // Kind: library; name: default; build systems: default; agents: none; then declining the confirmation.
+  std::istringstream answers("2\n\n\n\nn\n");
+  std::ostringstream prompts;
+  huxerui::cli::prompt::LinePrompter prompter(answers, prompts);
+  std::ostringstream output;
+  std::ostringstream error;
+  std::istringstream input;
+  const std::vector<std::string_view> arguments{"create"};
+  const huxerui::cli::SdkLocation sdk{HUXERUI_TEST_SOURCE_DIRECTORY, huxerui::cli::SdkLocationSource::Executable};
+  REQUIRE(huxerui::cli::Run(arguments, temporary.Path(), sdk, input, output, error, &prompter) == 0);
+  REQUIRE(prompts.str().find("? Project name [hello-hui-lib]") != std::string::npos);
+  REQUIRE(prompts.str().find("? Agent skills") != std::string::npos);
+  REQUIRE(prompts.str().find("Nothing was created.") != std::string::npos);
+  REQUIRE_FALSE(std::filesystem::exists(temporary.Path() / "hello-hui-lib"));
 }
 
 TEST_CASE("HuxerUICliYesAppliesCreateDefaultsWithoutPrompting") {

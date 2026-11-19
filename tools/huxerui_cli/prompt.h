@@ -8,14 +8,65 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace huxerui::cli::prompt {
 
+/// What a piece of prompt text means. The terminal layer decides how a role looks: a color, emphasis, or nothing.
+enum class Role {
+  Plain,
+  Strong,
+  /// HuxerUI's own color: the prompt's title.
+  Brand,
+  /// The current choice and given answers, in HuxerUI's color.
+  Accent,
+  /// Help, hints, and the rail that joins the questions.
+  Muted,
+  /// Sources that reach HuxerUI through `#include`.
+  Headers,
+  /// Sources that reach HuxerUI through `import`, in the C++ logo's color.
+  Modules,
+  Success,
+  Error,
+};
+
+/// A run of text with one role.
+struct Span {
+  std::string text;
+  Role role = Role::Plain;
+};
+
+/// One output line, as spans.
+using Line = std::vector<Span>;
+
 /// One option of a selection prompt.
 struct Choice {
+  Choice(std::string label_value, std::string hint_value = {});
+  Choice(std::string label_value, Line hint_value);
+
   std::string label;
-  std::string hint;
+  Line hint;
+};
+
+/// How many colors the terminal shows.
+enum class ColorDepth {
+  None,
+  /// The 16 ANSI colors, which every terminal theme maps.
+  Basic,
+  /// The 256-color palette.
+  Palette,
+  /// 24-bit color.
+  True,
+};
+
+/// What the terminal can show. The default is plain ASCII without colors or a width limit.
+struct Style {
+  ColorDepth color = ColorDepth::None;
+  /// Whether the terminal draws the prompt's symbols, such as `◆` and `│`; ASCII stand-ins are used otherwise.
+  bool unicode = false;
+  /// Columns available to a line; zero means unbounded.
+  std::size_t width = 0;
 };
 
 enum class Key {
@@ -38,6 +89,7 @@ enum class Kind {
   Select,
   MultiSelect,
   Text,
+  Confirm,
 };
 
 enum class Status {
@@ -60,19 +112,48 @@ struct State {
   std::string default_text;
   Validator validate;
   std::string error;
+  /// The fewest choices a multi-select accepts.
+  std::size_t minimum = 1;
+  /// A confirmation's answer, starting from its default.
+  bool yes = true;
   Status status = Status::Active;
 };
 
 [[nodiscard]] State MakeSelect(std::string question, std::vector<Choice> choices, std::size_t initial);
 [[nodiscard]] State MakeMultiSelect(std::string question, std::vector<Choice> choices,
-                                    std::span<const std::size_t> initially_checked);
+                                    std::span<const std::size_t> initially_checked, std::size_t minimum = 1);
 [[nodiscard]] State MakeText(std::string question, std::string default_text, Validator validate = {});
+[[nodiscard]] State MakeConfirm(std::string question, bool default_yes);
 
 /// Advances the prompt by one key event.
 void Apply(State& state, const KeyEvent& event);
 
-/// The lines that show the prompt in its current state, without terminal control sequences.
-[[nodiscard]] std::vector<std::string> Render(const State& state);
+/// The lines that show a prompt, and where a text prompt's cursor belongs.
+struct Frame {
+  std::vector<Line> lines;
+  /// The line and the column, counted in characters from zero, of the text cursor; empty when none is shown.
+  std::optional<std::size_t> cursor_line;
+  std::size_t cursor_column = 0;
+};
+
+/// The prompt in its current state, with the symbols `style` can show and without terminal control sequences.
+[[nodiscard]] Frame Render(const State& state, const Style& style = {});
+
+/// The first line of a series of questions, naming what they are for.
+[[nodiscard]] Line IntroLine(std::string_view title, const Style& style);
+
+/// A line beside the questions, such as a reason for a default.
+[[nodiscard]] Line NoteLine(Line text, const Style& style);
+
+/// The last line of a series of questions, and the lines under it.
+[[nodiscard]] std::vector<Line> OutroLines(Line result, std::span<const std::pair<std::string, Line>> details,
+                                           const Style& style);
+
+/// A line's text without roles.
+[[nodiscard]] std::string PlainText(const Line& line);
+
+/// A line for the terminal: each role's color where `style` has colors, cut to `style.width` with an ellipsis.
+[[nodiscard]] std::string Paint(const Line& line, const Style& style);
 
 /// The submitted answer as text: the chosen labels separated by ", ", or the entered text.
 [[nodiscard]] std::string Answer(const State& state);
@@ -84,6 +165,12 @@ void Apply(State& state, const KeyEvent& event);
 class KeyDecoder final {
 public:
   [[nodiscard]] std::optional<KeyEvent> Feed(unsigned char byte);
+
+  /// Whether an escape byte waits for the rest of a sequence.
+  [[nodiscard]] bool AwaitsSequence() const noexcept;
+
+  /// Ends a pending escape byte that no sequence followed: the Escape key, which cancels.
+  [[nodiscard]] std::optional<KeyEvent> Flush();
 
 private:
   std::string pending_;
@@ -98,29 +185,42 @@ public:
                                                           std::size_t initial) = 0;
   [[nodiscard]] virtual std::optional<std::vector<std::size_t>>
   MultiSelect(std::string_view question, std::span<const Choice> choices,
-              std::span<const std::size_t> initially_checked) = 0;
+              std::span<const std::size_t> initially_checked, std::size_t minimum = 1) = 0;
   [[nodiscard]] virtual std::optional<std::string> Text(std::string_view question, std::string_view default_text,
                                                         const Validator& validate) = 0;
+  [[nodiscard]] virtual std::optional<bool> Confirm(std::string_view question, bool default_yes) = 0;
+
+  /// Writes lines beside the questions, such as their introduction or the outcome.
+  virtual void Show(std::span<const Line> lines) = 0;
+
+  /// What the prompter's output can show, for lines built with `IntroLine`, `NoteLine`, and `OutroLines`.
+  [[nodiscard]] virtual Style OutputStyle() const = 0;
 };
 
-/// Runs each prompt through the state machine with keys from `next_key`, writing frames to `output`.
+/// Runs each prompt through the state machine with keys from `next_key`, writing frames to `output`, which must
+/// accept VT control sequences. `style` is read before every frame, so a resized terminal is drawn at its new width.
 class KeyPrompter : public Prompter {
 public:
-  KeyPrompter(std::function<std::optional<KeyEvent>()> next_key, std::ostream& output);
+  KeyPrompter(std::function<std::optional<KeyEvent>()> next_key, std::ostream& output,
+              std::function<Style()> style = {});
 
   [[nodiscard]] std::optional<std::size_t> Select(std::string_view question, std::span<const Choice> choices,
                                                   std::size_t initial) override;
   [[nodiscard]] std::optional<std::vector<std::size_t>>
   MultiSelect(std::string_view question, std::span<const Choice> choices,
-              std::span<const std::size_t> initially_checked) override;
+              std::span<const std::size_t> initially_checked, std::size_t minimum = 1) override;
   [[nodiscard]] std::optional<std::string> Text(std::string_view question, std::string_view default_text,
                                                 const Validator& validate) override;
+  [[nodiscard]] std::optional<bool> Confirm(std::string_view question, bool default_yes) override;
+  void Show(std::span<const Line> lines) override;
+  [[nodiscard]] Style OutputStyle() const override;
 
 private:
   bool Drive(State& state);
 
   std::function<std::optional<KeyEvent>()> next_key_;
   std::ostream& output_;
+  std::function<Style()> style_;
 };
 
 /// Asks with numbered choices, one answer per input line; used where a raw terminal is unavailable.
@@ -132,9 +232,12 @@ public:
                                                   std::size_t initial) override;
   [[nodiscard]] std::optional<std::vector<std::size_t>>
   MultiSelect(std::string_view question, std::span<const Choice> choices,
-              std::span<const std::size_t> initially_checked) override;
+              std::span<const std::size_t> initially_checked, std::size_t minimum = 1) override;
   [[nodiscard]] std::optional<std::string> Text(std::string_view question, std::string_view default_text,
                                                 const Validator& validate) override;
+  [[nodiscard]] std::optional<bool> Confirm(std::string_view question, bool default_yes) override;
+  void Show(std::span<const Line> lines) override;
+  [[nodiscard]] Style OutputStyle() const override;
 
 private:
   void PrintChoices(std::span<const Choice> choices);

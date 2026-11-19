@@ -105,6 +105,9 @@ class CreatedProjectTests(unittest.TestCase):
         self.assertEqual(cts.created_style(["mcpp"]), "modules")
         self.assertEqual(cts.created_style(["cmake"]), "headers")
         self.assertEqual(cts.created_style(["cmake", "mcpp"]), "headers")
+        # A library declaring both also exports its headers as a module; an application has no importer.
+        self.assertEqual(cts.created_style(["cmake", "mcpp"], "library"), "headers+modules")
+        self.assertEqual(cts.created_style(["mcpp"], "library"), "modules")
 
     def test_a_second_declaration_does_not_change_the_expected_facts(self):
         projects = self.suite["projects"]
@@ -177,6 +180,18 @@ class CreatedFactTests(unittest.TestCase):
                     mock.patch.object(cts, "target_support", return_value=({"capabilities": []}, "")):
                 result = cts.build_project("x", adapter, "linux", "linux", project, Path(directory) / "out")
         self.assertEqual(result["facts"]["create.declarations"], cts.CREATED_DECLARATIONS)
+
+
+class ImportCheckTests(unittest.TestCase):
+    def test_the_preview_imports_the_library_module(self):
+        with tempfile.TemporaryDirectory() as directory:
+            library = Path(directory) / "acme"
+            (library / "examples/preview/src").mkdir(parents=True)
+            (library / "mcpp.toml").write_text('[package.metadata.huxerui]\nnamespace = "acme::widgets"\n', encoding="utf-8")
+            cts.write_import_check(library, library / "examples/preview")
+            unit = (library / "examples/preview/src/cts_import_check.cppm").read_text(encoding="utf-8")
+        self.assertIn("import acme.widgets;", unit)
+        self.assertIn("acme::widgets::Install(context);", unit)
 
 
 class SequenceTests(unittest.TestCase):

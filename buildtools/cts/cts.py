@@ -868,9 +868,12 @@ def package_facts(cli: str | None, integration: str, target: str, project: Path,
 # ---------------------------------------------------------------------- create
 
 
-def created_style(build_systems: list[str]) -> str:
-    """The source style `huxerui create` derives: mcpp alone is C++ modules, and a list naming CMake is headers."""
-    return "headers" if "cmake" in build_systems else "modules"
+def created_style(build_systems: list[str], kind: str = "app") -> str:
+    """The style `huxerui create` derives: mcpp alone is C++ modules, a list naming CMake is headers, and a library
+    declaring both exports its headers as a module too."""
+    if "cmake" not in build_systems:
+        return "modules"
+    return "headers+modules" if kind == "library" and "mcpp" in build_systems else "headers"
 
 
 def product_name(name: str) -> str:
@@ -881,7 +884,8 @@ def product_name(name: str) -> str:
 def created_expected(name: str, project: dict, suite: dict) -> dict:
     """A created project's expected facts: its kind, style, and template's, with the project's names filled in.
     A project that names no template is created with the CLI's default for its kind and style, `default`."""
-    key = f"{project['kind']}/{created_style(project['build-systems'])}/{project.get('template', 'default')}"
+    style = created_style(project["build-systems"], project["kind"])
+    key = f"{project['kind']}/{style}/{project.get('template', 'default')}"
     if key not in suite["expected"]:
         raise SystemExit(f"{CREATED_PROJECTS.name}: no expected facts for {key}")
     text = json.dumps(suite["expected"][key]).replace("{name}", name).replace("{product}", product_name(name))
@@ -889,6 +893,24 @@ def created_expected(name: str, project: dict, suite: dict) -> dict:
     if project.get("sameModelAs"):
         expected["sameModelAs"] = project["sameModelAs"]
     return expected
+
+
+def write_import_check(library: Path, preview: Path) -> None:
+    """Has the Preview of a library that exports its headers as a module import that module. The unit is a module
+    interface, which the Preview's mcpp declaration compiles and its CMake declaration, globbing `*.cpp`, does not, so
+    an mcpp build of the Preview fails when the generated interface does not reach the library's names."""
+    manifest = (library / "mcpp.toml").read_text(encoding="utf-8")
+    match = re.search(r'^namespace\s*=\s*"([^"]+)"', manifest, re.MULTILINE)
+    if not match:
+        raise SystemExit(f"{library}: the mcpp declaration states no namespace")
+    name_space = match.group(1)
+    module = name_space.replace("::", ".")
+    (preview / "src" / "cts_import_check.cppm").write_text(
+        "// Written by cts.py create: the Preview reaches the library through `import`, which only mcpp builds.\n"
+        "export module cts_import_check;\n\n"
+        f"import {module};\n\n"
+        f"export void CtsImportCheck(huxerui::ApplicationContext& context) {{ {name_space}::Install(context); }}\n",
+        encoding="utf-8")
 
 
 def command_create(arguments) -> int:
@@ -938,6 +960,8 @@ def command_create(arguments) -> int:
         observed = CREATED_DECLARATIONS if declared == selected else \
             f"<declared {','.join(sorted(declared)) or 'none'} for {','.join(sorted(selected))}>"
         write_json(application / "created.json", {"facts": {"create.declarations": observed}})
+        if created_style(project["build-systems"], project["kind"]) == "headers+modules":
+            write_import_check(root / name, application)
         listing.append(str(application.resolve()))
     write_json(root / "projects.json", {"projects": listing})
     return 1 if failed else 0

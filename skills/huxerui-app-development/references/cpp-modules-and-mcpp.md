@@ -2,7 +2,7 @@
 
 Use this reference for a C++ modules project: its sources are module units that write `import huxerui;`, its `mcpp.toml` depends on `huxerui`, and its `build.mcpp` imports `huxerui.rules`. `import huxerui;` exposes the same public entities as the umbrella header. Preserve the dependency version and build setup selected by the project.
 
-A headers project that also carries an mcpp declaration (`--build-system cmake,mcpp`) builds with the same rules; its sources stay as described in the other references.
+A headers project that also carries an mcpp declaration (`--build-system cmake,mcpp`) builds with the same rules; its sources stay as described in the other references. Such a library is also the module named by its C++ namespace: the mcpp build generates `modules/<module>.cppm` from its public headers, so do not edit that file; to keep a hand-written one, set `cpp_modules_gen = false` under `[package.metadata.huxerui]` and export every public name it reports.
 
 Drive the project with the HuxerUI CLI, which dispatches to mcpp:
 
