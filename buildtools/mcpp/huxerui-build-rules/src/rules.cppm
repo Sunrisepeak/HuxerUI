@@ -1208,6 +1208,13 @@ inline bool plan_packages(const options& opt, const std::string& program, const 
 inline bool plan_module_interface() {
     namespace sources = huxerui::rules::sources;
     const std::filesystem::path root = mcpp::manifest_dir();
+    // Whether the package is a module at all follows the manifest's `namespace`, its headers, and its interface
+    // file, and the rules may run first while one of them is still missing, as when a headers library is being made
+    // a module: watched only once the package is one, adding the last of them would never run the rules again. The
+    // set of headers decides the interface too, and `cpp_modules_gen` is read from the manifest.
+    mcpp::rerun_if_changed((root / "mcpp.toml").string().c_str());
+    mcpp::rerun_if_changed_glob("include/**");
+    mcpp::rerun_if_changed_glob("modules/*.cppm");
     const std::string name_space = detail::own_metadata("namespace");
     if (name_space.empty() || !std::filesystem::is_directory(root / "include")) return false;
     std::string module = name_space;
@@ -1216,12 +1223,8 @@ inline bool plan_module_interface() {
     if (!std::filesystem::is_regular_file(file)) return false;
     mcpp::source(file.string().c_str());
 
-    // The set of headers and the content of each decide the interface; the interface file itself is the author's
-    // when it is not generated.
-    mcpp::rerun_if_changed_glob("include/**");
+    // The interface file itself is the author's when it is not generated.
     mcpp::rerun_if_changed(file.string().c_str());
-    // `cpp_modules_gen` is read from the manifest.
-    mcpp::rerun_if_changed((root / "mcpp.toml").string().c_str());
     std::vector<std::string> headers;
     detail::collect(root, "include/**/*.h", headers);
     detail::collect(root, "include/**/*.hpp", headers);

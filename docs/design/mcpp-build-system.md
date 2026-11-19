@@ -120,6 +120,7 @@ The interface has the shape of `modules/huxerui.cppm`: the headers in the global
 | `false` | the author writes it; `configure()` reports the names the headers declare and the interface does not export |
 
 Either way the rules add the interface to the package's sources, rerun when a header, the interface, or the manifest changes, and warn about a macro a header defines, which no module exports. A name declared `static` has internal linkage and is not exported.
+They watch the manifest, the set of headers, and the set of files below `modules/` before they decide whether the package is a module, so a headers library made a module later, by adding the `namespace` or the interface file after a build, runs them again.
 The key matters only to such a library: a CMake-only library has no mcpp build, and a C++ modules library's interface is its source.
 
 ## 4. The module surface
