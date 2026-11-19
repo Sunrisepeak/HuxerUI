@@ -841,6 +841,26 @@ jobs:
           ${{ matrix.row.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
             --target ${{ matrix.row.target }} --check package-shellless --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts" $CTS_PROJECTS
 
+      # The checks build for the Simulator. A device build is compiled and linked as Xcode builds a project opened in
+      # it, with the settings `huxerui build ios` writes for the shell; it is not signed, since the runner holds no
+      # signing identity.
+      - name: Build for an iOS device without signing
+        if: ${{ !cancelled() && matrix.row.target == 'ios' }}
+        working-directory: buildtools/cts/projects/app_minimal
+        run: |
+          if [ ! -d platform/ios ]; then
+            echo "app_minimal was not built in this run"
+            exit 0
+          fi
+          if [ "${{ matrix.integration }}" = mcpp ]; then
+            "$CTS_CLI" build ios --abi arm64 --build-system mcpp
+          else
+            "$CTS_CLI" build ios --abi arm64 --sdk "$GITHUB_WORKSPACE"
+          fi
+          project="$(ls -d platform/ios/*.xcodeproj)"
+          xcodebuild -project "$project" -scheme "$(basename "$project" .xcodeproj)" -configuration Debug \
+            -destination generic/platform=iOS -derivedDataPath "$RUNNER_TEMP/ios-device" CODE_SIGNING_ALLOWED=NO build
+
       - name: Trim the build caches
         if: always()
         run: |
