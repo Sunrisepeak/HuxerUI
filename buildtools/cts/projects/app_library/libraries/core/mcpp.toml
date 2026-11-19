@@ -6,6 +6,8 @@ standard = "c++23"
 [package.metadata.huxerui]
 library   = "CtsKit::Core"
 resources = "resources"
+# The Android package its platform package is built under.
+id        = "org.huxerui.ctskit.core"
 
 [dependencies]
 huxerui = { path = "../../../../../.." }

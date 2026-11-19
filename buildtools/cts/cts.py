@@ -86,7 +86,8 @@ CHECKS: dict[str, dict] = {
     "package": {
         "title": "Distributable kind, publication, and the resource package it carries",
         "facts": {"package.kind": ["PKG-KIND"], "package.location": ["PKG-KIND", "PKG-PUBLISH"],
-                  "package.resources": ["PKG-KIND"], "package.dispatch": ["DISPATCH-ROOT", "DISPATCH-DEFAULT"]},
+                  "package.resources": ["PKG-KIND"], "package.dispatch": ["DISPATCH-ROOT", "DISPATCH-DEFAULT"],
+                  "package.library_code": ["LIB-PLATFORM"]},
         "fixed": {"package.location": "dist/<platform>", "package.resources": "the built package",
                   "package.dispatch": DISPATCHED},
         "equivalent": {},
@@ -96,7 +97,8 @@ CHECKS: dict[str, dict] = {
     "package-shellless": {
         "title": "Distributable without the standard shell",
         "facts": {"package.kind": ["PKG-KIND", "SHELL-EXPLICIT"], "package.location": ["PKG-KIND", "PKG-PUBLISH"],
-                  "package.resources": ["PKG-KIND"], "package.dispatch": ["DISPATCH-ROOT", "DISPATCH-DEFAULT"]},
+                  "package.resources": ["PKG-KIND"], "package.dispatch": ["DISPATCH-ROOT", "DISPATCH-DEFAULT"],
+                  "package.library_code": ["LIB-PLATFORM"]},
         "fixed": {"package.location": "dist/<platform>", "package.resources": "the built package",
                   "package.dispatch": DISPATCHED},
         "equivalent": {},
@@ -767,6 +769,19 @@ def bundled_msi(setup: Path, project: Path, work: Path, timeout: float) -> Path:
     raise RuntimeError(f"the setup executable carries no MSI: {setup}")
 
 
+def packaged_library_code(dist: Path) -> list[str]:
+    """The classes under `org.huxerui.ctsprobe`, the package the projects' libraries give their Android platform code,
+    that the published APK or AAB carries in its dex files."""
+    import re
+    import zipfile
+
+    artifact = next(path for path in sorted(dist.iterdir()) if path.suffix.lower() in (".apk", ".aab"))
+    with zipfile.ZipFile(artifact) as archive:
+        descriptors = {match.decode() for name in archive.namelist() if name.endswith(".dex")
+                       for match in re.findall(rb"Lorg/huxerui/ctsprobe/[A-Za-z0-9_/$]+;", archive.read(name))}
+    return sorted(descriptor[1:-1].replace("/", ".") for descriptor in descriptors)
+
+
 def packaged_resources(kind: str, dist: Path, project: Path, work: Path, timeout: float) -> set[str]:
     """The digests of every final resource package the distributable carries."""
     unpacked = work / "unpacked"
@@ -954,8 +969,11 @@ def package_facts(cli: str | None, integration: str, target: str, project: Path,
         published = work / "dist"
         shutil.rmtree(published, ignore_errors=True)
         shutil.copytree(dist, published, symlinks=True)
-        return {"package.kind": kind, "package.location": "dist/<platform>", "package.resources": resources,
-                "package.dispatch": dispatch}
+        facts = {"package.kind": kind, "package.location": "dist/<platform>", "package.resources": resources,
+                 "package.dispatch": dispatch}
+        if kind in ("apk", "aab"):
+            facts["package.library_code"] = packaged_library_code(dist)
+        return facts
     except subprocess.CalledProcessError as failure:
         raise RuntimeError(f"reading the package failed: {' '.join(failure.cmd)} exited with {failure.returncode}")
     finally:

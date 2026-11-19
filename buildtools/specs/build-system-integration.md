@@ -261,6 +261,7 @@ The conformance suite names the clauses each of its checks covers, and its [cove
 | `CORE-SHELL` | The integration produces the application core each platform shell consumes, with the records naming it. | [Platform shells and the application core](#platform-shells-and-the-application-core) |
 | `ENTRY-POINTS` | Entry points the platform discovers by name, such as Android's JNI entries, are exported and survive linking. | [Targets and dependencies](#targets-and-dependencies) |
 | `LIB-GRAPH` | The ordered library-graph record lists each source-backed library once, depth-first in declaration order. | [Libraries](#libraries) |
+| `LIB-PLATFORM` | Each library's platform package reaches the application's distributable from the library graph, through the standard shell and through an integration's path without it alike. | [Libraries](#libraries) |
 | `LIB-IDENTITY` | A library declared for several build systems projects the same identity, resource namespace, and dependencies under each. | [Libraries](#libraries) |
 | `RES-PACKAGE` | One final resource package holds built-in, library, and application resources in the contract's order and namespaces. | [Code generation and resources](#code-generation-and-resources) |
 | `RES-LOCATION` | The final resource package is at the platform's runtime location. | [Code generation and resources](#code-generation-and-resources) |

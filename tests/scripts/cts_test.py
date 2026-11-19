@@ -321,6 +321,20 @@ class ShellTests(unittest.TestCase):
             self.assertFalse((project / "platform/web").exists())
 
 
+class LibraryCodeTests(unittest.TestCase):
+    def test_the_probe_classes_are_read_from_every_dex_file(self):
+        import zipfile
+
+        with tempfile.TemporaryDirectory() as directory:
+            dist = Path(directory)
+            with zipfile.ZipFile(dist / "app.apk", "w") as archive:
+                archive.writestr("classes.dex", b"\x00Lorg/huxerui/ctsprobe/core/CoreAndroid;\x00Lorg/huxerui/Other;")
+                archive.writestr("classes2.dex", b"\x00Lorg/huxerui/ctsprobe/widgets/WidgetsExtra;\x00")
+                archive.writestr("assets/notes.txt", b"Lorg/huxerui/ctsprobe/elsewhere/NotCode;")
+            self.assertEqual(cts.packaged_library_code(dist),
+                             ["org.huxerui.ctsprobe.core.CoreAndroid", "org.huxerui.ctsprobe.widgets.WidgetsExtra"])
+
+
 class ImportCheckTests(unittest.TestCase):
     def test_the_preview_imports_the_module_the_library_declares(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -42,7 +42,7 @@ The suite is divided into checkpoints so a run shows which part of the contract 
 | `resources` | `resources.location`: the final package where the Runtime looks for it | `resources.sha256`, `resources.files` |
 | `libraries` | `libraries`: the ordered library-graph record | `libraries.roots` |
 | `launch` | `launch.*`: what the started application resolved | |
-| `package` | `package.kind`: the distributable `huxerui package` published; `package.location` and `package.resources`, which the contract fixes: it is below `dist/<platform>` and carries the resource package the build produced; `package.dispatch`: the CLI is called as a developer calls it, with no `--build-system` for a root that declares only the checked integration or that declares several when the checked integration is CMake, and with it otherwise, and must state that it built with the checked integration | |
+| `package` | `package.kind`: the distributable `huxerui package` published; `package.location` and `package.resources`, which the contract fixes: it is below `dist/<platform>` and carries the resource package the build produced; `package.dispatch`: the CLI is called as a developer calls it, with no `--build-system` for a root that declares only the checked integration or that declares several when the checked integration is CMake, and with it otherwise, and must state that it built with the checked integration; on Android `package.library_code`, the libraries' platform-package classes the APK carries, which `app_library`'s libraries contribute once by the standard layout and once by a declaration that adds a source root | |
 | `package-shellless` | The same facts for `huxerui package --no-shell`, on Android and iOS, where an integration packages without the standard shell | |
 | `usage` | The exit codes the contract fixes for `huxerui build`: `usage.unknown_build_system` and, on a root that does not declare another integration, `usage.undeclared_build_system` are invalid usage; `usage.product_option`, each product option the integration declares inapplicable, is invalid usage; `usage.driver_option`, each such driver option, is reported; `usage.operation_failure`, a build of a copy carrying an unknown platform directory, is an operation failure. A fact that does not apply is left out with its reason | |
 | `doctor` | `doctor.ready`: `huxerui doctor <platform>` run in a built project as a developer runs it reports ready; a run that needs `--build-system` to reach the checked integration has no verdict, since the diagnosis plans for the root's default | |
@@ -80,6 +80,7 @@ A clause is `checked` when some project's `expected.json`, or the contract itsel
 | `CORE-SHELL` | checked | `linkage` |
 | `ENTRY-POINTS` | checked | `linkage` |
 | `LIB-GRAPH` | checked | `libraries` |
+| `LIB-PLATFORM` | checked | `package`, `package-shellless` |
 | `LIB-IDENTITY` | compared only | `libraries` |
 | `RES-PACKAGE` | compared only | `resources` |
 | `RES-LOCATION` | checked | `resources` |

@@ -7,6 +7,13 @@ standard = "c++23"
 library   = "CtsKit::Widgets"
 resources = "resources"
 
+# What its Android platform package contributes to a package built without the Gradle shell, stated in place of
+# the standard layout's inference because it adds a source root the layout does not have.
+[package.metadata.dist-apk]
+package      = "org.huxerui.ctskit.widgets"
+java_sources = ["platform/android/src/main/java", "platform/android/src/extra/java"]
+manifest     = "platform/android/src/main/AndroidManifest.xml"
+
 [dependencies]
 huxerui     = { path = "../../../../../.." }
 ctskit_core = { path = "../core" }
