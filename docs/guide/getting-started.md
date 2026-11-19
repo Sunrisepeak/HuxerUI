@@ -63,6 +63,7 @@ huxerui doctor web,android
 ```
 
 `doctor` reports the selected SDK, project configuration, compiler, platform tools, and actionable missing prerequisites without changing the machine.
+For a library it also states whether importers can `import` it as a C++ module.
 
 For supported downloadable prerequisites:
 

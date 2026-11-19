@@ -361,6 +361,21 @@ class CreatePromptTests(unittest.TestCase):
         self.assertIn("Android NDK", provided)
         self.assertTrue(all(cell.fg == VIOLET for cell in self.cells(terminal, "◆")))
 
+    def test_doctor_states_what_a_library_offers_importers(self):
+        result = subprocess.run([CLI, "create", "library", "meter", "--build-system", "cmake,mcpp", "--platform",
+                                 "android", "--agent", "none", "--yes"], cwd=self.work,
+                                env=dict(environment(), HUXERUI_HOME=str(self.home)), stdin=subprocess.DEVNULL,
+                                capture_output=True, timeout=TIMEOUT)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.work = self.work / "meter"
+        terminal = self.start(environment(), arguments=("doctor",))
+        terminal.finish()
+        rows = terminal.rows()
+        self.assertIn("◆  Project", rows)
+        line = next(row for row in rows if "C++ modules" in row)
+        self.assertTrue(line.lstrip("│ ").startswith("✔"), line)
+        self.assertIn("C++ modules  import meter", line)
+
     def test_help_is_colored_and_reads_as_without_a_terminal(self):
         plain = subprocess.run([CLI, "--help"], capture_output=True, text=True, encoding="utf-8",
                                timeout=TIMEOUT).stdout

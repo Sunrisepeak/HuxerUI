@@ -977,6 +977,39 @@ Project DiscoverProject(const std::filesystem::path& start) {
   throw std::runtime_error("no HuxerUI project found from " + start.string());
 }
 
+LibraryModules DescribeLibraryModules(const Project& project) {
+  if (!IsLibraryRoot(project.root)) {
+    return {};
+  }
+  const bool headers = std::filesystem::is_directory(project.root / "include");
+  if (!project.Declares(BuildSystem::Mcpp)) {
+    return {headers ? LibraryModules::State::NoMcpp : LibraryModules::State::NotLibrary};
+  }
+  const std::string manifest = ReadFile(project.root / "mcpp.toml");
+  const std::string lib_path = ManifestValue(manifest, "lib", "path");
+  std::string module = ManifestValue(manifest, "package.metadata.huxerui", "namespace");
+  for (std::size_t at = module.find("::"); at != std::string::npos; at = module.find("::", at)) {
+    module.replace(at, 2, ".");
+  }
+  if (!headers) {
+    // A C++ modules library: its [lib] unit is the module, named after the namespace `create` wrote.
+    if (module.empty()) {
+      module = std::filesystem::path(lib_path).stem().string();
+    }
+    return {LibraryModules::State::Module, module};
+  }
+  if (module.empty()) {
+    return {LibraryModules::State::NotExported};
+  }
+  // The rules generate the interface at modules/<module>.cppm only, so another [lib] path builds no interface.
+  const std::string interface_path = "modules/" + module + ".cppm";
+  if (lib_path != interface_path) {
+    return {LibraryModules::State::Misdeclared, module, false, lib_path};
+  }
+  return {LibraryModules::State::Module, module,
+          std::filesystem::is_regular_file(project.root / "modules" / (module + ".macros.cppm"))};
+}
+
 ProjectTemplate LoadProjectTemplate(const Project& project) {
   if (!project.Declares(BuildSystem::CMake)) {
     return LoadMcppProjectTemplate(project);

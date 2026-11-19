@@ -148,6 +148,34 @@ Project DiscoverProject(const std::filesystem::path& start);
 /// @throws std::runtime_error if planning fails or emits invalid metadata.
 ProjectTemplate LoadProjectTemplate(const Project& project);
 
+/// What `import` reaches of a library, which `doctor` reports whatever build system builds it.
+struct LibraryModules {
+  enum class State {
+    /// The root is an application's, which has no importer.
+    NotLibrary,
+    /// Importers name `module`; a headers library's interface is generated from its headers.
+    Module,
+    /// A headers library that declares mcpp without the `namespace` that makes it a module.
+    NotExported,
+    /// A headers library without an mcpp declaration, which is what builds the module.
+    NoMcpp,
+    /// A `namespace` whose module interface is not the `[lib]` path, so no interface is generated.
+    Misdeclared,
+  };
+  State state = State::NotLibrary;
+  /// The module importers name, for `Module` and `Misdeclared`.
+  std::string module = {};
+  /// Whether `modules/<module>.macros.cppm` maps macros for importers.
+  bool macros = false;
+  /// The `[lib]` path the manifest states, for `Misdeclared`.
+  std::string lib_path = {};
+};
+
+/// Reads a project root's C++ modules state from its declarations and files, without building.
+/// @param project Discovered application or library project.
+/// @return `NotLibrary` for an application.
+LibraryModules DescribeLibraryModules(const Project& project);
+
 /// Selects the runnable application for a project.
 /// @param project Discovered application or library project.
 /// @return The project itself for applications, or its preview application for libraries.

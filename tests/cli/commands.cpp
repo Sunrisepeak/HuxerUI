@@ -536,6 +536,58 @@ TEST_CASE("HuxerUICliDoctorChecksRequestedPlatformsOutsideAProject") {
   REQUIRE(invocation.output.find("cmake") < invocation.output.find("Platform android:"));
 }
 
+TEST_CASE("HuxerUICliDoctorStatesWhatALibraryOffersImporters") {
+  TemporaryDirectory temporary;
+  for (const std::string_view build_systems : {"cmake,mcpp", "cmake"}) {
+    const std::string name = build_systems == "cmake" ? "headers" : "meter";
+    REQUIRE(Invoke(temporary.Path(), {"create", "library", name, "--build-system", build_systems, "--platform",
+                                      "android", "--agent", "none", "--yes"})
+                .result == 0);
+  }
+  REQUIRE(Invoke(temporary.Path(), {"create", "app", "plain", "--platform", "android", "--agent", "none", "--yes"})
+              .result == 0);
+  const std::filesystem::path meter = temporary.Path() / "meter";
+
+  // A library declaring both is the module its namespace names, whichever build system doctor checks.
+  REQUIRE(Invoke(meter, {"doctor"}).output.find("[ok] C++ modules: import meter\n") != std::string::npos);
+  REQUIRE(Invoke(meter, {"doctor", "--json"}).output.find(
+              "\"library\":{\"modules\":\"module\",\"module\":\"meter\",\"macros\":false}") != std::string::npos);
+  {
+    std::ofstream macros(meter / "modules/meter.macros.cppm");
+    macros << "export module meter.macros;\n";
+  }
+  REQUIRE(Invoke(meter, {"doctor"}).output.find("[ok] C++ modules: import meter, with meter.macros\n") !=
+          std::string::npos);
+
+  // A headers library without mcpp still builds and is still included: the line is optional and fails nothing.
+  const auto headers = Invoke(temporary.Path() / "headers", {"doctor", "--json"});
+  REQUIRE(headers.output.find("\"library\":{\"modules\":\"no-mcpp\"}") != std::string::npos);
+  REQUIRE(headers.output.find("C++ modules: ") == std::string::npos);
+  REQUIRE(Invoke(temporary.Path() / "headers", {"doctor"}).output.find(
+              "[missing] C++ modules (optional): not exported; an mcpp declaration builds the module") !=
+          std::string::npos);
+
+  // An application has no importer, so doctor says nothing about modules.
+  const auto plain = Invoke(temporary.Path() / "plain", {"doctor", "--json"});
+  REQUIRE(plain.output.find("\"library\"") == std::string::npos);
+  REQUIRE(Invoke(temporary.Path() / "plain", {"doctor"}).output.find("C++ modules") == std::string::npos);
+
+  // A [lib] path that is not the namespace's interface builds no interface at all, which is an error.
+  std::string manifest = Read(meter / "mcpp.toml");
+  const auto lib = manifest.find("path = \"modules/meter.cppm\"");
+  REQUIRE(lib != std::string::npos);
+  manifest.replace(lib, std::string_view("path = \"modules/meter.cppm\"").size(), "path = \"src/meter.cppm\"");
+  {
+    std::ofstream out(meter / "mcpp.toml", std::ios::binary);
+    out << manifest;
+  }
+  const auto misdeclared = Invoke(meter, {"doctor"});
+  REQUIRE(misdeclared.result == 1);
+  REQUIRE(misdeclared.output.find("[error] C++ modules: [lib] path is 'src/meter.cppm', but the interface of module "
+                                  "meter is modules/meter.cppm\n") != std::string::npos);
+  REQUIRE(Invoke(meter, {"doctor", "--json"}).output.find("\"projectErrors\":[\"C++ modules: ") != std::string::npos);
+}
+
 TEST_CASE("HuxerUICliDoctorChecksTheBuildSystemAProjectDispatchesTo") {
   TemporaryDirectory temporary;
   REQUIRE(Invoke(temporary.Path(), {"create", "app", "modular", "--build-system", "mcpp", "--platform", "android",
