@@ -332,6 +332,19 @@ class CreatePromptTests(unittest.TestCase):
         terminal.send(ESCAPE)
         terminal.finish()
 
+    def test_a_dual_project_left_to_the_default_says_so_before_it_can_fail(self):
+        result = subprocess.run([CLI, "create", "app", "dual", "--build-system", "cmake,mcpp", "--agent", "none"],
+                                cwd=self.work, env=dict(environment(), HUXERUI_HOME=str(self.home)),
+                                stdin=subprocess.DEVNULL, capture_output=True, timeout=TIMEOUT)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.work = self.work / "dual"
+        # The empty SDK home stops the CMake path, after the note has named the other choice.
+        terminal = self.start(environment(), arguments=("build", "linux"))
+        self.assertNotEqual(terminal.finish(), 0)
+        rows = [row for row in terminal.rows() if row]
+        self.assertEqual(rows[0], "│  Using cmake, the default (or --build-system mcpp)", terminal.text())
+        self.assertTrue(rows[1].startswith("huxerui: "), terminal.text())
+
     def test_without_a_terminal_create_applies_defaults_and_writes_no_escapes(self):
         result = subprocess.run([CLI, "create", "app", "plain", "--agent", "none"], cwd=self.work,
                                 env=dict(environment(), HUXERUI_HOME=str(self.home)), stdin=subprocess.DEVNULL,
