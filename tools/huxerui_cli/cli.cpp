@@ -777,8 +777,13 @@ int RunCreate(std::span<const std::string_view> arguments, const std::filesystem
     const std::string directory = kind == ProjectKind::App ? *name : *name + "/examples/preview";
     std::vector<std::pair<std::string, prompt::Line>> details{
         {"next", {{"cd " + directory + " && huxerui run " + first, Role::Accent}}},
-        {"same as", {{command, Role::Muted}}},
     };
+    if (selection.build_systems.size() > 1) {
+      // The default for a project declaring both is CMake, which needs an SDK and system packages; mcpp does not.
+      details.push_back({"or", {{"huxerui run " + first + " --build-system mcpp", Role::Accent},
+                                {"  (fetches its own toolchain)", Role::Muted}}});
+    }
+    details.push_back({"same as", {{command, Role::Muted}}});
     if (const auto* library = std::get_if<LibraryTemplateContext>(&project_template);
         library != nullptr && selection.module_interface) {
       details.push_back({"note", {{"modules/" + ModuleInterfaceName(*library) +
@@ -1894,6 +1899,35 @@ int RunSdk(std::span<const std::string_view> arguments, const SdkLocation& sdk, 
   return RunSdkInstaller(sdk, command, target_version, check, yes, output);
 }
 
+/// After a failed build of a project that declares both build systems and was left to the default, CMake: the same
+/// command with mcpp, which fetches its own toolchain. Nothing when `--build-system` chose the integration. `--sdk`
+/// and `--generator` steer only the CMake driver, so the suggestion leaves them out.
+void SuggestMcpp(std::string_view command, std::span<const std::string_view> arguments,
+                 const std::filesystem::path& working_directory, std::ostream& error) {
+  std::string suggestion = "huxerui " + std::string(command);
+  for (std::size_t index = 1; index < arguments.size(); ++index) {
+    if (arguments[index] == "--build-system") {
+      return;
+    }
+    if (arguments[index] == "--sdk" || arguments[index] == "--generator") {
+      ++index;
+      continue;
+    }
+    suggestion += ' ' + std::string(arguments[index]);
+  }
+  std::optional<Project> project;
+  try {
+    project = TryDiscoverProject(working_directory);
+  } catch (const std::exception&) {
+    return;
+  }
+  if (!project || !project->Declares(BuildSystem::CMake) || !project->Declares(BuildSystem::Mcpp)) {
+    return;
+  }
+  error << "tip: this project also declares mcpp, which fetches its own toolchain: " << suggestion
+        << " --build-system mcpp\n";
+}
+
 } // namespace
 
 int Run(std::span<const std::string_view> arguments, const std::filesystem::path& working_directory,
@@ -1938,14 +1972,21 @@ int Run(std::span<const std::string_view> arguments, const std::filesystem::path
     if (command == "devices") {
       return RunDevices(arguments, output);
     }
-    if (command == "build") {
-      return RunBuild(arguments, working_directory, sdk.home, output, error);
-    }
-    if (command == "run") {
-      return RunApplication(arguments, working_directory, sdk.home, output, error);
-    }
-    if (command == "package") {
-      return RunPackage(arguments, working_directory, sdk.home, output, error);
+    if (command == "build" || command == "run" || command == "package") {
+      int status = 1;
+      try {
+        status = command == "build" ? RunBuild(arguments, working_directory, sdk.home, output, error)
+                 : command == "run" ? RunApplication(arguments, working_directory, sdk.home, output, error)
+                                    : RunPackage(arguments, working_directory, sdk.home, output, error);
+      } catch (const UsageError&) {
+        throw;
+      } catch (const std::exception& exception) {
+        error << "huxerui: " << exception.what() << '\n';
+      }
+      if (status != 0) {
+        SuggestMcpp(command, arguments, working_directory, error);
+      }
+      return status;
     }
     if (command == "open") {
       return RunOpen(arguments, working_directory, sdk.home, output);

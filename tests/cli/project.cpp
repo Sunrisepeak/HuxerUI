@@ -316,6 +316,7 @@ TEST_CASE("HuxerUICliPromptsForMissingCreateSelections") {
                                "navigation --platform " + std::string(platforms[0]) + "," +
                                std::string(platforms[1]) + " --agent none\n";
   REQUIRE(prompts.str().find(expected) != std::string::npos);
+  REQUIRE(prompts.str().find("   or ") == std::string::npos);
   REQUIRE(prompts.str().find("+  HuxerUI - create a project\n") != std::string::npos);
   REQUIRE(output.str().empty());
   REQUIRE(Read(temporary.Path() / "Asked/src/app.cppm").find("NavigationStack") != std::string::npos);
@@ -352,6 +353,55 @@ TEST_CASE("HuxerUICliYesAppliesCreateDefaultsWithoutPrompting") {
   REQUIRE(huxerui::cli::Run(arguments, temporary.Path(), sdk, input, output, error, &prompter) == 0);
   REQUIRE(prompts.str().empty());
   REQUIRE(output.str().find("Build systems: cmake, mcpp") != std::string::npos);
+}
+
+TEST_CASE("HuxerUICliOffersMcppForAProjectDeclaringBoth") {
+  TemporaryDirectory temporary;
+  // Kind: app; name: Dual; build systems: both; platforms: every one; then the confirmation's default, yes.
+  std::istringstream answers("1\nDual\n3\n\n\n");
+  std::ostringstream prompts;
+  huxerui::cli::prompt::LinePrompter prompter(answers, prompts);
+  std::ostringstream output;
+  std::ostringstream error;
+  std::istringstream input;
+  const huxerui::cli::SdkLocation sdk{HUXERUI_TEST_SOURCE_DIRECTORY, huxerui::cli::SdkLocationSource::Executable};
+  const std::vector<std::string_view> create{"create", "--agent", "none"};
+  REQUIRE(huxerui::cli::Run(create, temporary.Path(), sdk, input, output, error, &prompter) == 0);
+  // The default, CMake, needs an SDK and system packages, so the outcome also names the mcpp command.
+  REQUIRE(prompts.str().find("   or       huxerui run ") != std::string::npos);
+  REQUIRE(prompts.str().find(" --build-system mcpp  (fetches its own toolchain)\n") != std::string::npos);
+
+  const std::vector<std::string_view> cmake_only{"create", "app", "Single", "--build-system", "cmake", "--agent",
+                                                 "none", "--yes"};
+  REQUIRE(huxerui::cli::Run(cmake_only, temporary.Path(), sdk, input, output, error, nullptr) == 0);
+
+  const huxerui::cli::SdkLocation no_sdk{};
+  const auto build = [&](const std::filesystem::path& directory, std::vector<std::string_view> arguments) {
+    std::ostringstream build_output;
+    std::ostringstream build_error;
+    const int status = huxerui::cli::Run(arguments, directory, no_sdk, input, build_output, build_error, nullptr);
+    return std::pair{status, build_error.str()};
+  };
+  constexpr std::string_view tip = "tip: this project also declares mcpp, which fetches its own toolchain: ";
+
+  // A failed build left to the default suggests the same command with mcpp, without the CMake-only --sdk.
+  const auto [failed, failed_error] = build(temporary.Path() / "Dual", {"build", "linux", "--sdk", "missing"});
+  REQUIRE(failed == 1);
+  REQUIRE(failed_error.find(std::string(tip) + "huxerui build linux --build-system mcpp\n") != std::string::npos);
+  const auto [run, run_error] = build(temporary.Path() / "Dual", {"run", "linux"});
+  REQUIRE(run == 1);
+  REQUIRE(run_error.find(std::string(tip) + "huxerui run linux --build-system mcpp\n") != std::string::npos);
+
+  // An explicit choice, a project declaring one build system, and invalid usage get no suggestion.
+  const auto [chosen, chosen_error] = build(temporary.Path() / "Dual", {"build", "linux", "--build-system", "cmake"});
+  REQUIRE(chosen == 1);
+  REQUIRE(chosen_error.find("tip:") == std::string::npos);
+  const auto [single, single_error] = build(temporary.Path() / "Single", {"build", "linux"});
+  REQUIRE(single == 1);
+  REQUIRE(single_error.find("tip:") == std::string::npos);
+  const auto [usage, usage_error] = build(temporary.Path() / "Dual", {"build", "linux", "--lto", "maybe"});
+  REQUIRE(usage == 2);
+  REQUIRE(usage_error.find("tip:") == std::string::npos);
 }
 
 TEST_CASE("HuxerUICliPackageTemplatesCarryTheShellEntries") {
