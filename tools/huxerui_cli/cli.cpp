@@ -236,11 +236,9 @@ std::optional<Project> TryDiscoverProject(const std::filesystem::path& start) {
   }
 }
 
-/// The engine checks of the build system an operation dispatches to. CMake builds against a HuxerUI SDK with the
-/// host's CMake; mcpp takes the framework from its manifest and needs only itself, installed through xlings. Outside a
-/// project the CMake checks apply, as they always have, and mcpp and xlings are reported without being required.
-std::vector<EnvironmentDiagnostic> DiagnoseCommonEnvironment(const SdkLocation& sdk, bool explicit_sdk,
-                                                             std::optional<BuildSystem> build_system) {
+/// What a build system takes from the host to run at all. CMake builds against a HuxerUI SDK with the host's CMake;
+/// mcpp takes the framework from its manifest and needs only itself, installed through xlings.
+std::vector<EnvironmentDiagnostic> EngineChecks(BuildSystem build_system, const SdkLocation& sdk, bool explicit_sdk) {
   if (build_system == BuildSystem::Mcpp) {
     return {detail::ResolveMcpp(), detail::ResolveXlings()};
   }
@@ -268,13 +266,26 @@ std::vector<EnvironmentDiagnostic> DiagnoseCommonEnvironment(const SdkLocation& 
         std::move(detail),
     });
   }
-
   diagnostics.push_back(detail::ResolveCMake());
-  if (!build_system) {
-    auto mcpp = detail::ResolveMcpp();
-    mcpp.required = false;
-    diagnostics.push_back(std::move(mcpp));
-    diagnostics.push_back(detail::ResolveXlings());
+  return diagnostics;
+}
+
+/// The engine checks of the build system an operation reaches without --build-system, which are required, followed
+/// by those of the other build systems the root declares, which are reported as optional with how to select them.
+/// Outside a project the default is CMake and every other build system is the alternative.
+std::vector<EnvironmentDiagnostic> DiagnoseCommonEnvironment(const SdkLocation& sdk, bool explicit_sdk,
+                                                             BuildSystem build_system,
+                                                             std::span<const BuildSystem> alternatives) {
+  std::vector<EnvironmentDiagnostic> diagnostics = EngineChecks(build_system, sdk, explicit_sdk);
+  for (const BuildSystem alternative : alternatives) {
+    for (EnvironmentDiagnostic& check : EngineChecks(alternative, sdk, explicit_sdk)) {
+      if (check.required) {
+        check.detail += std::string(check.detail.empty() ? "" : "  ") + "(for --build-system " +
+                        std::string(BuildSystemName(alternative)) + ")";
+        check.required = false;
+      }
+      diagnostics.push_back(std::move(check));
+    }
   }
   return diagnostics;
 }
@@ -715,6 +726,8 @@ struct EnvironmentOptions {
   bool yes = false;
   /// The build system the project's operations dispatch to by default; empty outside a project.
   std::optional<BuildSystem> build_system;
+  /// The build systems the project's root declares.
+  std::vector<BuildSystem> declared;
 };
 
 constexpr std::array operation_names{"build", "run", "package", "devices"};
@@ -813,10 +826,12 @@ std::vector<const PlatformDriver*> EnvironmentPlatforms(const EnvironmentOptions
   return platforms;
 }
 
-/// The plan for an operation dispatched to `build_system`, or outside a project when it is empty.
+/// The plan for an operation dispatched to `build_system`, or outside a project when it is empty; `declared` are the
+/// root's build systems, whose others are reported as alternatives.
 EnvironmentPlan CreateEnvironmentPlan(const SdkLocation& sdk, EnvironmentRequest request,
                                       std::span<const PlatformDriver* const> platforms, bool explicit_sdk,
-                                      std::optional<BuildSystem> build_system) {
+                                      std::optional<BuildSystem> build_system,
+                                      std::span<const BuildSystem> declared = {}) {
   EnvironmentPlan plan;
   request.provisioned_toolchain = build_system && ProvisionsToolchain(*build_system);
   if (request.provisioned_toolchain) {
@@ -826,8 +841,20 @@ EnvironmentPlan CreateEnvironmentPlan(const SdkLocation& sdk, EnvironmentRequest
                             return platform->SupportsCurrentHost();
                           });
   if (applicable && request.operation != EnvironmentOperation::Devices) {
-    plan.common = DiagnoseCommonEnvironment(sdk, explicit_sdk, build_system);
-    if (detail::NeedsSetup(plan.common, "huxerui_home")) {
+    const BuildSystem engine = build_system.value_or(BuildSystem::CMake);
+    std::vector<BuildSystem> alternatives;
+    for (const BuildSystem candidate : {BuildSystem::CMake, BuildSystem::Mcpp}) {
+      const bool declared_here = !build_system || std::ranges::find(declared, candidate) != declared.end();
+      if (candidate != engine && declared_here) {
+        alternatives.push_back(candidate);
+      }
+    }
+    plan.common = DiagnoseCommonEnvironment(sdk, explicit_sdk, engine, alternatives);
+    // Only a required check is set up; an alternative build system's engine is reported, never installed.
+    const bool sdk_required = std::ranges::any_of(plan.common, [](const EnvironmentDiagnostic& check) {
+      return check.id == "huxerui_home" && check.required;
+    });
+    if (sdk_required && detail::NeedsSetup(plan.common, "huxerui_home")) {
       plan.actions.push_back(
           {"Install the HuxerUI SDK or set HUXERUI_HOME", std::nullopt, "install_huxerui_sdk", {}, {"huxerui_home"}});
     }
@@ -1037,8 +1064,9 @@ void PrintStyledEnvironmentPlan(const EnvironmentPlan& plan, std::ostream& outpu
                         : !check.required || check.status == EnvironmentDiagnosticStatus::Unavailable ? Mark::Optional
                         : check.status == EnvironmentDiagnosticStatus::Blocked ? Mark::Blocked
                                                                                : Mark::Missing;
+      // Optional matters only for what is not ready; a ready optional tool reads as any ready tool.
       std::string detail = check.detail;
-      if (!check.required) {
+      if (!check.required && !ready) {
         detail += detail.empty() ? "(optional)" : "  (optional)";
       }
       console.Item(output, mark, check.label, detail, width);
@@ -1145,7 +1173,8 @@ int ApplyEnvironmentPlan(EnvironmentPlan plan, const SdkLocation& sdk, const Env
     }
 
     // Rebuild the remaining actions with the tool paths and environment discovered after this installation.
-    plan = CreateEnvironmentPlan(sdk, options.request, platforms, options.sdk.has_value(), options.build_system);
+    plan = CreateEnvironmentPlan(sdk, options.request, platforms, options.sdk.has_value(), options.build_system,
+                                  options.declared);
     const auto unsatisfied =
         std::ranges::find_if(action.provides, [&](const auto& id) { return !PlanCheckReady(plan, id); });
     if (unsatisfied != action.provides.end()) {
@@ -1172,6 +1201,7 @@ int RunEnvironment(std::span<const std::string_view> arguments, const std::files
     project = ResolveApplicationProject(*project);
     options.request.project_root = project->root;
     options.build_system = project->DefaultBuildSystem();
+    options.declared = project->build_systems;
   }
   if (options.sdk) {
     sdk = {std::filesystem::absolute(directory / *options.sdk), SdkLocationSource::Environment};
@@ -1208,7 +1238,8 @@ int RunEnvironment(std::span<const std::string_view> arguments, const std::files
     throw UsageError("no selected platforms are available on this host");
   }
 
-  auto plan = CreateEnvironmentPlan(sdk, options.request, platforms, options.sdk.has_value(), options.build_system);
+  auto plan = CreateEnvironmentPlan(sdk, options.request, platforms, options.sdk.has_value(), options.build_system,
+                                    options.declared);
   if (setup) {
     PrintEnvironmentPlan(plan, output);
     return ApplyEnvironmentPlan(std::move(plan), sdk, options, platforms, input, output);

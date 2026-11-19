@@ -563,9 +563,13 @@ TEST_CASE("HuxerUICliDoctorChecksTheBuildSystemAProjectDispatchesTo") {
   const auto dual = Invoke(temporary.Path() / "dual", {"doctor", "--json"});
   REQUIRE(dual.output.find("\"id\":\"huxerui_home\"") != std::string::npos);
   REQUIRE(dual.output.find("\"id\":\"android.android_ndk\"") != std::string::npos);
-  REQUIRE(dual.output.find("\"id\":\"mcpp\"") == std::string::npos);
-  REQUIRE(Invoke(temporary.Path() / "dual", {"doctor"}).output.find(
-              "Build systems: cmake, mcpp (checking cmake, the default)\n") != std::string::npos);
+  const auto dual_report = Invoke(temporary.Path() / "dual", {"doctor"}).output;
+  REQUIRE(dual_report.find("Build systems: cmake, mcpp (checking cmake, the default)\n") != std::string::npos);
+  // The other build system the root declares is reported with how to select it, and is never set up.
+  REQUIRE(dual.output.find("\"id\":\"mcpp\"") != std::string::npos);
+  REQUIRE(dual_report.find("mcpp (optional)") != std::string::npos);
+  REQUIRE(dual_report.find("(for --build-system mcpp)") != std::string::npos);
+  REQUIRE(dual_report.find("Install mcpp") == std::string::npos);
 
   // Without mcpp or xlings the plan installs xlings first, then mcpp, by hand; an mcpp command stops before it prints
   // anything and names doctor.

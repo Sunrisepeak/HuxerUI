@@ -793,9 +793,9 @@ void Console::Item(std::ostream& output, Mark mark, std::string_view label, std:
   // One column each, so that labels line up whichever symbols the terminal draws.
   static constexpr std::array<Shape, 5> shapes{{
       {"✔", "+", "ok", Role::Success},
-      {"▲", "!", "missing", Role::Error},
+      {"✗", "x", "missing", Role::Error},
       {"○", "-", "optional", Role::Muted},
-      {"■", "x", "blocked", Role::Error},
+      {"■", "#", "blocked", Role::Error},
       {"›", ">", "action", Role::Accent},
   }};
   const Shape& shape = shapes[static_cast<std::size_t>(mark)];

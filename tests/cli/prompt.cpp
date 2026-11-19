@@ -328,7 +328,7 @@ TEST_CASE("HuxerUICliConsoleListsItemsAlignedOnATerminal") {
   terminal.Item(styled, Mark::Ready, "provided", "9 checks: pkg-config, C++ compiler", 8, true);
   terminal.Item(styled, Mark::Action, "manual", "Install mcpp: xlings install mcpp -y", 9);
   REQUIRE(styled.str() == "   + cmake    /usr/local/bin/cmake-with-a-long-path\n"
-                          "   ! JDK 17\n"
+                          "   x JDK 17\n"
                           "   - sdkmanager  (optional)\n"
                           "   + provided  9 checks: p...\n"
                           "   > manual     Install mcpp: xlings install mcpp -y\n");
