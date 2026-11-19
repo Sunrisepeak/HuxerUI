@@ -25,6 +25,7 @@ using huxerui::rules::sources::strip_noncode;
 using huxerui::rules::sources::umbrella_includes;
 using huxerui::rules::sources::without_entry;
 using huxerui::rules::sources::defined_macros;
+using huxerui::rules::sources::names_identifier;
 using huxerui::rules::sources::render_library_module;
 using huxerui::rules::sources::unexported_names;
 
@@ -322,6 +323,29 @@ void library_module_exports_the_scanned_names() {
     const std::vector<std::string> more{"Gauge", "Install", "Meter"};
     check(unexported_names(module, "acme::widgets", more) == std::vector<std::string>{"Meter"},
           "a name a hand-written interface lacks is reported");
+    check(module.find("export import acme.widgets.macros;") == std::string::npos,
+          "without a macros unit the interface re-exports none");
+    const std::string with_macros =
+        render_library_module("acme.widgets", "acme::widgets", includes, names, "acme.widgets.macros");
+    check(with_macros.find("export import huxerui;\nexport import acme.widgets.macros;\n") != std::string::npos,
+          "the author's macros unit is re-exported after huxerui");
+}
+
+void macros_a_header_undefines_are_its_own() {
+    const auto macros = defined_macros(
+        "#pragma once\n"
+        "#define ACME_VERSION 3\n"
+        "#define ACME_JOIN(a, b) a##b\n"
+        "#undef ACME_JOIN\n");
+    check(macros.size() == 1 && macros[0].name == "ACME_VERSION", "an undefined helper is not reported");
+}
+
+void a_macros_unit_names_whole_identifiers() {
+    const std::string unit = "inline constexpr auto ACME_VERSION = capture::value_ACME_VERSION;\n";
+    check(names_identifier(unit, "ACME_VERSION"), "a mapped macro is found");
+    check(!names_identifier(unit, "ACME_VERS"), "a prefix is not a name");
+    check(!names_identifier(unit, "VERSION"), "a suffix is not a name");
+    check(!names_identifier("", "ACME_VERSION"), "an absent unit maps nothing");
 }
 
 void macros_are_found_apart_from_the_include_guard() {
@@ -340,6 +364,8 @@ int main() {
     header_scan_reads_a_library_namespace();
     library_module_exports_the_scanned_names();
     macros_are_found_apart_from_the_include_guard();
+    macros_a_header_undefines_are_its_own();
+    a_macros_unit_names_whole_identifiers();
     header_scan_finds_namespace_scope_declarations();
     header_scan_sees_past_an_attribute();
     header_scan_ignores_the_detail_namespace();

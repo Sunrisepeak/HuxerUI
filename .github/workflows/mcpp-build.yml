@@ -144,10 +144,10 @@ jobs:
       - name: Build the framework
         run: mcpp build
 
-      # Three applications on top of it. Each mcpp.toml names one dependency
-      # and each build.mcpp is one call; everything else -- GTK on the link
-      # line, the composable transform, the resource packages -- arrives
-      # through the dependency edge.
+      # Four applications on top of it. Each build.mcpp is one call; everything
+      # else -- GTK on the link line, the composable transform, the resource
+      # packages, a library's generated module interface -- arrives through the
+      # dependency edges.
       - name: Build the examples
         run: |
           for example in buildtools/mcpp/examples/0*/; do

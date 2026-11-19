@@ -1204,6 +1204,8 @@ inline bool plan_packages(const options& opt, const std::string& program, const 
 // declare, so `import <module>;` and `#include` reach the same entities. With `cpp_modules_gen` absent or true the
 // file is generated from the headers on every build that changes them; with `false` it is the author's, and the
 // names it leaves out are reported. The interface is added to the package's sources, which the rules own.
+// A module carries no macro; the author maps the macros importers need to constants by hand in
+// `modules/<module>.macros.cppm`, which, when present, is compiled and re-exported by the interface.
 // Returns whether the package has such an interface.
 inline bool plan_module_interface() {
     namespace sources = huxerui::rules::sources;
@@ -1223,8 +1225,18 @@ inline bool plan_module_interface() {
     if (!std::filesystem::is_regular_file(file)) return false;
     mcpp::source(file.string().c_str());
 
-    // The interface file itself is the author's when it is not generated.
+    // The interface file itself is the author's when it is not generated, and the macros unit names the macros
+    // the warnings below leave out.
     mcpp::rerun_if_changed(file.string().c_str());
+    const std::string macros_module = module + ".macros";
+    const std::filesystem::path macros_file = root / "modules" / (macros_module + ".cppm");
+    const bool has_macros = std::filesystem::is_regular_file(macros_file);
+    std::string macros_text;
+    if (has_macros) {
+        mcpp::source(macros_file.string().c_str());
+        mcpp::rerun_if_changed(macros_file.string().c_str());
+        macros_text = detail::read_text(macros_file);
+    }
     std::vector<std::string> headers;
     detail::collect(root, "include/**/*.h", headers);
     detail::collect(root, "include/**/*.hpp", headers);
@@ -1237,9 +1249,12 @@ inline bool plan_module_interface() {
         const std::vector<std::string> found = sources::public_names(text, name_space);
         names.insert(names.end(), found.begin(), found.end());
         for (const sources::defined_macro& macro : sources::defined_macros(text)) {
+            if (sources::names_identifier(macros_text, macro.name)) continue;
             const std::string where = header + ":" + std::to_string(macro.line);
             const std::string message = "the macro " + macro.name + " (" + where + ") does not reach `import " + module + ";`";
-            const std::string hint = "a translation unit that uses it includes " + includes.back() + " as well";
+            const std::string hint = "declare it as a constant or function in " + name_space + ", map it in modules/" +
+                                     macros_module + ".cppm, or #undef it if it is the header's own; a translation "
+                                     "unit that uses the macro includes " + includes.back() + " as well";
             mcpp::report({.severity = "warning", .message = message.c_str(), .hint = hint.c_str()});
         }
     }
@@ -1248,7 +1263,8 @@ inline bool plan_module_interface() {
 
     const std::string relative = "modules/" + module + ".cppm";
     if (detail::own_flag("cpp_modules_gen").value_or(true)) {
-        const std::string content = sources::render_library_module(module, name_space, includes, names);
+        const std::string content = sources::render_library_module(module, name_space, includes, names,
+                                                                   has_macros ? macros_module : std::string());
         if (detail::read_text(file) != content) {
             detail::write_if_changed(file, content);
             const std::string message = "generated " + relative + " from the public headers (" +
@@ -1256,7 +1272,13 @@ inline bool plan_module_interface() {
             mcpp::report({.severity = "note", .message = message.c_str()});
         }
     } else {
-        const std::vector<std::string> missing = sources::unexported_names(detail::read_text(file), name_space, names);
+        const std::string interface_text = detail::read_text(file);
+        if (has_macros && interface_text.find("export import " + macros_module + ";") == std::string::npos) {
+            const std::string message = relative + " does not re-export " + macros_module;
+            const std::string hint = "add `export import " + macros_module + ";` after `export import huxerui;`";
+            mcpp::report({.severity = "warning", .message = message.c_str(), .hint = hint.c_str()});
+        }
+        const std::vector<std::string> missing = sources::unexported_names(interface_text, name_space, names);
         if (!missing.empty()) {
             std::string list;
             for (const std::string& name : missing) list += (list.empty() ? "" : ", ") + name;

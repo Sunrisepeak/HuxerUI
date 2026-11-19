@@ -1,6 +1,6 @@
 # mcpp examples
 
-Three applications, built by `mcpp build` in their own directory. Each one is
+Four applications, built by `mcpp build` in their own directory. Each one is
 about `import` and module units rather than about HuxerUI's widgets — the
 framework's feature examples live in [`../../../examples`](../../../examples) and are
 built by CMake.
@@ -10,6 +10,7 @@ built by CMake.
 | [`01-import`](01-import/) | The smallest form: `import huxerui;`, one composable, **no headers anywhere** |
 | [`02-module-units`](02-module-units/) | One application across four module units, a scope written by hand without the macro, and a Windows MSI |
 | [`03-library`](03-library/) | `import` crossing a package boundary: a library package and the application that consumes it |
+| [`04-headers-library`](04-headers-library/) | A headers library that is a module too: the interface generated from its headers, and the macros it maps by hand to constants in `gauge.macros` |
 
 ```bash
 cd 01-import && mcpp build && mcpp run
@@ -50,7 +51,9 @@ C++20 is enough for every implementation here, but mcpp's clang-on-Windows path
 hardcodes a c++23 floor for `import std;` rather than probing the STL it found
 ([mcpp#603](https://github.com/mcpp-community/mcpp/issues/603)).
 
-There is no exception. `02-module-units/src/banner.cppm` writes a scope by hand
+There is one deliberate exception. `04-headers-library/src/main.cpp` includes `<gauge/version.h>`, because a version tested with `#if` has to stay a macro and only a header carries one; its module units import `gauge` and read the same version from `gauge::macros`.
+
+`02-module-units/src/banner.cppm` writes a scope by hand
 without the `HUXERUI_SCOPE` macro, because the macro expands to
 `return Scope([=]() -> View { … })` and `Scope` and `View` are both exported —
 the macro was only hiding them. Macros do not cross a module boundary, and

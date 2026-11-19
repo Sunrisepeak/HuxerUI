@@ -121,6 +121,10 @@ The interface has the shape of `modules/huxerui.cppm`: the headers in the global
 
 Either way the rules add the interface to the package's sources, rerun when a header, the interface, or the manifest changes, and warn about a macro a header defines, which no module exports. A name declared `static` has internal linkage and is not exported.
 They watch the manifest, the set of headers, and the set of files below `modules/` before they decide whether the package is a module, so a headers library made a module later, by adding the `namespace` or the interface file after a build, runs them again.
+A module carries no macro, and the rules map none: which macros importers need is the author's choice, and whether a macro is a constant, a type, or syntax is not decidable from the header's text.
+The author maps the chosen ones to constants in `modules/<module>.macros.cppm`, under their own names in `<namespace>::macros`; when that file exists the rules add it to the sources and the generated interface writes `export import <module>.macros;`.
+A macro the unit names, and one its header undefines again, is not reported; with `cpp_modules_gen = false` the rules report an interface that does not re-export the unit.
+`buildtools/mcpp/examples/04-headers-library` builds this shape.
 The key matters only to such a library: a CMake-only library has no mcpp build, and a C++ modules library's interface is its source.
 
 ## 4. The module surface
