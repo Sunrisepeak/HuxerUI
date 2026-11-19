@@ -31,6 +31,9 @@ public:
 };
 
 constexpr std::string_view version = HUXERUI_CLI_VERSION;
+
+// How the current command writes its own lines; `Run` styles it when a terminal shows them.
+prompt::Console console;
 constexpr std::array<std::pair<std::string_view, std::string_view>, 3> command_aliases{{
     {"b", "build"},
     {"r", "run"},
@@ -1271,9 +1274,9 @@ std::vector<PlatformCommandContext> MakeBuildContexts(const Project& project, co
 
 void ExecuteCommands(std::span<const ProcessCommand> commands, std::ostream& output) {
   for (const ProcessCommand& command : commands) {
-    output << "> " << DescribeProcess(command) << '\n';
-    output.flush();
+    console.Command(output, DescribeProcess(command), true);
     const int result = RunProcess(command);
+    console.CommandEnded(output);
     if (result != 0) {
       throw std::runtime_error(
           "command failed with exit code " + std::to_string(result) + ": " + DescribeProcess(command)
@@ -1284,19 +1287,19 @@ void ExecuteCommands(std::span<const ProcessCommand> commands, std::ostream& out
 
 void BuildPlatform(const PlatformDriver& platform, const PlatformCommandContext& context,
                    const BuildOptions& options, std::ostream& output) {
-  output << "Building " << platform.Id() << " (" << context.profile;
+  std::string step = "Building " + std::string(platform.Id()) + " (" + context.profile;
   if (!context.abis.empty()) {
-    output << ", " << detail::JoinTargetAbis(context.abis, ',');
+    step += ", " + detail::JoinTargetAbis(context.abis, ',');
   }
   // The integration the command dispatched to, as the mcpp-only paths already state it.
-  output << ") with " << BuildSystemName(context.build_system) << '\n';
+  console.Step(output, step + ") with " + std::string(BuildSystemName(context.build_system)));
   platform.PrepareBuildEnvironment();
   auto library_graph = platform.LibraryGraphCommands(context);
   if (options.watch && library_graph.empty()) library_graph = detail::LibraryGraphConfigureCommands(context);
   ExecuteCommands(library_graph, output);
   platform.UpdateProjectIntegration(context);
   if (platform.Id() == "android" && options.java_home) {
-    output << "Java home: " << options.java_home->string() << '\n';
+    console.Note(output, "Java home: " + options.java_home->string());
     SetProcessEnvironmentVariable("JAVA_HOME", options.java_home->string());
   }
   ExecuteCommands(platform.BuildCommands(context), output);
@@ -1360,14 +1363,20 @@ BuildSystem SelectBuildSystem(const Project& project, const BuildOptions& option
 }
 
 /// The project a build command dispatches to mcpp, or nothing when CMake builds it or no project is found;
-/// the CMake path then reports a missing project after resolving the SDK, as it always has.
-std::optional<Project> FindMcppProject(const std::filesystem::path& working_directory, const BuildOptions& options) {
+/// the CMake path then reports a missing project after resolving the SDK, as it always has. A project declaring both
+/// that is left to the default says so first, with the other choice, before the CMake path can stop on its SDK or
+/// its dependencies.
+std::optional<Project> FindMcppProject(const std::filesystem::path& working_directory, const BuildOptions& options,
+                                       std::ostream& output) {
   std::optional<Project> project = TryDiscoverProject(working_directory);
   if (!project) {
     return std::nullopt;
   }
   project = ResolveApplicationProject(*project);
   if (SelectBuildSystem(*project, options) != BuildSystem::Mcpp) {
+    if (!options.build_system && project->Declares(BuildSystem::Mcpp)) {
+      console.Note(output, "Using cmake, the default (or --build-system mcpp)");
+    }
     return std::nullopt;
   }
   return project;
@@ -1494,8 +1503,7 @@ void BuildMcppProgram(const PlatformCommandContext& context, const mcpp::Command
                       std::ostream& output) {
   ProcessCommand command = mcpp::BuildCommand(options);
   command.arguments.insert(command.arguments.end(), {"--message-format", "json"});
-  output << "> " << DescribeProcess(command) << '\n';
-  output.flush();
+  console.Command(output, DescribeProcess(command), false);
   const ProcessResult result = RunProcessCapture(command);
   if (result.exit_code != 0) {
     throw std::runtime_error("command failed with exit code " + std::to_string(result.exit_code) + ": " +
@@ -1542,7 +1550,7 @@ int RunMcppCommand(const Project& project, BuildOptions& options, std::string_vi
       const PlatformCommandContext context = McppShellContext(project, *platform, options);
       BuildPlatform(*platform, context, options, output);
       if (command == "run") {
-        output << "Running " << platform->Id() << '\n';
+        console.Step(output, "Running " + std::string(platform->Id()));
         ExecuteCommands(platform->RunCommands(context), output);
       }
       continue;
@@ -1550,15 +1558,15 @@ int RunMcppCommand(const Project& project, BuildOptions& options, std::string_vi
     const mcpp::CommandOptions mcpp_options = McppOptions(project, platform->Id(), options);
     if (command == "run") {
       if (!options.device.empty()) {
-        output << "Device: " << options.device << '\n';
+        console.Note(output, "Device: " + options.device);
         SetProcessEnvironmentVariable("ANDROID_SERIAL", options.device);
       }
-      output << "Running " << platform->Id() << " (" << options.profile << ") with mcpp\n";
+      console.Step(output, "Running " + std::string(platform->Id()) + " (" + options.profile + ") with mcpp");
       const ProcessCommand run = mcpp::RunCommand(mcpp_options);
       ExecuteCommands(std::span(&run, 1), output);
       continue;
     }
-    output << "Building " << platform->Id() << " (" << options.profile << ") with mcpp\n";
+    console.Step(output, "Building " + std::string(platform->Id()) + " (" + options.profile + ") with mcpp");
     const ProcessCommand build = mcpp::BuildCommand(mcpp_options);
     ExecuteCommands(std::span(&build, 1), output);
   }
@@ -1590,9 +1598,9 @@ int RunMcppPackage(const Project& project, BuildOptions& options, const std::fil
     const std::string format = mcpp::PackageFormat(platform->Id(), options.package_format.value_or(""));
     const mcpp::CommandOptions mcpp_options = McppOptions(project, platform->Id(), options);
     const ProcessCommand command = mcpp::PackCommand(mcpp_options, format);
-    output << "Packaging " << platform->Id() << " (" << options.profile << ", " << format << ") with mcpp\n"
-           << "> " << DescribeProcess(command) << '\n';
-    output.flush();
+    console.Step(output, "Packaging " + std::string(platform->Id()) + " (" + options.profile + ", " + format +
+                             ") with mcpp");
+    console.Command(output, DescribeProcess(command), false);
     const ProcessResult result = RunProcessCapture(command);
     if (result.exit_code != 0) {
       throw std::runtime_error("command failed with exit code " + std::to_string(result.exit_code) + ": " +
@@ -1630,7 +1638,7 @@ void RefuseCMakeWithoutShell(const BuildOptions& options) {
 int RunBuild(std::span<const std::string_view> arguments, const std::filesystem::path& working_directory,
              const std::filesystem::path& sdk_home, std::ostream& output, std::ostream& error) {
   BuildOptions options = ParseBuildOptions(arguments, {});
-  if (const std::optional<Project> project = FindMcppProject(working_directory, options)) {
+  if (const std::optional<Project> project = FindMcppProject(working_directory, options, output)) {
     return RunMcppCommand(*project, options, "build", working_directory, output, error);
   }
   RefuseCMakeWithoutShell(options);
@@ -1655,7 +1663,7 @@ int RunBuild(std::span<const std::string_view> arguments, const std::filesystem:
 int RunApplication(std::span<const std::string_view> arguments, const std::filesystem::path& working_directory,
                    const std::filesystem::path& sdk_home, std::ostream& output, std::ostream& error) {
   BuildOptions options = ParseBuildOptions(arguments, "run");
-  if (const std::optional<Project> project = FindMcppProject(working_directory, options)) {
+  if (const std::optional<Project> project = FindMcppProject(working_directory, options, output)) {
     return RunMcppCommand(*project, options, "run", working_directory, output, error);
   }
   RefuseCMakeWithoutShell(options);
@@ -1683,7 +1691,7 @@ int RunApplication(std::span<const std::string_view> arguments, const std::files
   }
   BuildPlatform(platform, context, options, output);
 
-  output << "Running " << platform.Id() << '\n';
+  console.Step(output, "Running " + std::string(platform.Id()));
   const std::vector<ProcessCommand> commands = platform.RunCommands(context);
   ExecuteCommands(commands, output);
   return 0;
@@ -1767,14 +1775,14 @@ void PublishPackageArtifacts(std::span<const PackageArtifact> artifacts, const s
     }
   }
   for (const PackageArtifact& artifact : artifacts) {
-    output << "Packaged " << (destination / artifact.destination).string() << '\n';
+    console.Done(output, "Packaged " + (destination / artifact.destination).string());
   }
 }
 
 int RunPackage(std::span<const std::string_view> arguments, const std::filesystem::path& working_directory,
                const std::filesystem::path& sdk_home, std::ostream& output, std::ostream& error) {
   BuildOptions options = ParseBuildOptions(arguments, "package");
-  if (const std::optional<Project> project = FindMcppProject(working_directory, options)) {
+  if (const std::optional<Project> project = FindMcppProject(working_directory, options, output)) {
     return RunMcppPackage(*project, options, working_directory, output, error);
   }
   RefuseCMakeWithoutShell(options);
@@ -1823,7 +1831,7 @@ int RunOpen(std::span<const std::string_view> arguments, const std::filesystem::
       options.optimization || options.lto || !options.abis.empty()) {
     throw UsageError("open accepts only --sdk <path> and --build-system");
   }
-  if (const std::optional<Project> project = FindMcppProject(working_directory, options)) {
+  if (const std::optional<Project> project = FindMcppProject(working_directory, options, output)) {
     // The Xcode shell builds an mcpp core as it builds a CMake one; the framework is the one mcpp resolves.
     if (options.sdk_override) {
       throw UsageError("--sdk does not apply to an mcpp project: it takes HuxerUI from the huxerui dependency in "
@@ -1831,7 +1839,7 @@ int RunOpen(std::span<const std::string_view> arguments, const std::filesystem::
     }
     const std::vector<const PlatformDriver*> platforms = ResolveBuildPlatforms(*project, options, "open");
     const PlatformDriver& platform = *platforms.front();
-    output << "Opening ios Xcode project\n";
+    console.Step(output, "Opening ios Xcode project");
     const PlatformCommandContext context = McppShellContext(*project, platform, options);
     ExecuteCommands(platform.LibraryGraphCommands(context), output);
     platform.UpdateProjectIntegration(context);
@@ -1848,7 +1856,7 @@ int RunOpen(std::span<const std::string_view> arguments, const std::filesystem::
   if (platform.Id() != "ios") {
     throw UsageError("open currently supports ios only");
   }
-  output << "Opening ios Xcode project\n";
+  console.Step(output, "Opening ios Xcode project");
   const PlatformCommandContext context = MakeCommandContext(project, platform, huxerui_home, options);
   ExecuteCommands(platform.LibraryGraphCommands(context), output);
   platform.UpdateProjectIntegration(context);
@@ -1899,41 +1907,13 @@ int RunSdk(std::span<const std::string_view> arguments, const SdkLocation& sdk, 
   return RunSdkInstaller(sdk, command, target_version, check, yes, output);
 }
 
-/// After a failed build of a project that declares both build systems and was left to the default, CMake: the same
-/// command with mcpp, which fetches its own toolchain. Nothing when `--build-system` chose the integration. `--sdk`
-/// and `--generator` steer only the CMake driver, so the suggestion leaves them out.
-void SuggestMcpp(std::string_view command, std::span<const std::string_view> arguments,
-                 const std::filesystem::path& working_directory, std::ostream& error) {
-  std::string suggestion = "huxerui " + std::string(command);
-  for (std::size_t index = 1; index < arguments.size(); ++index) {
-    if (arguments[index] == "--build-system") {
-      return;
-    }
-    if (arguments[index] == "--sdk" || arguments[index] == "--generator") {
-      ++index;
-      continue;
-    }
-    suggestion += ' ' + std::string(arguments[index]);
-  }
-  std::optional<Project> project;
-  try {
-    project = TryDiscoverProject(working_directory);
-  } catch (const std::exception&) {
-    return;
-  }
-  if (!project || !project->Declares(BuildSystem::CMake) || !project->Declares(BuildSystem::Mcpp)) {
-    return;
-  }
-  error << "tip: this project also declares mcpp, which fetches its own toolchain: " << suggestion
-        << " --build-system mcpp\n";
-}
-
 } // namespace
 
 int Run(std::span<const std::string_view> arguments, const std::filesystem::path& working_directory,
         const SdkLocation& sdk, std::istream& input, std::ostream& output, std::ostream& error,
         prompt::Prompter* prompter) {
   try {
+    console = prompter != nullptr ? prompt::Console(prompter->OutputStyle()) : prompt::Console();
     if (arguments.empty() || arguments[0] == "--help" || arguments[0] == "-h") {
       PrintHelp(output);
       return 0;
@@ -1972,21 +1952,14 @@ int Run(std::span<const std::string_view> arguments, const std::filesystem::path
     if (command == "devices") {
       return RunDevices(arguments, output);
     }
-    if (command == "build" || command == "run" || command == "package") {
-      int status = 1;
-      try {
-        status = command == "build" ? RunBuild(arguments, working_directory, sdk.home, output, error)
-                 : command == "run" ? RunApplication(arguments, working_directory, sdk.home, output, error)
-                                    : RunPackage(arguments, working_directory, sdk.home, output, error);
-      } catch (const UsageError&) {
-        throw;
-      } catch (const std::exception& exception) {
-        error << "huxerui: " << exception.what() << '\n';
-      }
-      if (status != 0) {
-        SuggestMcpp(command, arguments, working_directory, error);
-      }
-      return status;
+    if (command == "build") {
+      return RunBuild(arguments, working_directory, sdk.home, output, error);
+    }
+    if (command == "run") {
+      return RunApplication(arguments, working_directory, sdk.home, output, error);
+    }
+    if (command == "package") {
+      return RunPackage(arguments, working_directory, sdk.home, output, error);
     }
     if (command == "open") {
       return RunOpen(arguments, working_directory, sdk.home, output);

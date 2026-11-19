@@ -738,4 +738,53 @@ Style LinePrompter::OutputStyle() const {
   return {};
 }
 
+void Console::Step(std::ostream& output, std::string_view text) const {
+  if (!style_) {
+    output << text << '\n';
+    return;
+  }
+  output << Paint({{std::string(GlyphsFor(*style_).active) + "  ", Role::Brand}, {std::string(text), Role::Strong}},
+                  *style_)
+         << '\n';
+}
+
+void Console::Note(std::ostream& output, std::string_view text) const {
+  if (!style_) {
+    output << text << '\n';
+    return;
+  }
+  output << Paint({Rail(GlyphsFor(*style_)), {std::string(text), Role::Muted}}, *style_) << '\n';
+}
+
+void Console::Done(std::ostream& output, std::string_view text) const {
+  if (!style_) {
+    output << text << '\n';
+    return;
+  }
+  output << Paint({{std::string(GlyphsFor(*style_).success) + "  ", Role::Success}, {std::string(text), Role::Plain}},
+                  *style_)
+         << '\n';
+}
+
+void Console::Command(std::ostream& output, std::string_view command, bool streams) const {
+  if (!style_) {
+    output << "> " << command << '\n';
+    output.flush();
+    return;
+  }
+  // A command is shown whole, however wide, so that it can be copied and run again.
+  Style whole = *style_;
+  whole.width = 0;
+  output << Paint({{"   " + std::string(GlyphsFor(whole).field) + ' ', Role::Muted}, {std::string(command), Role::Muted}},
+                  whole)
+         << (streams ? "\n\n" : "\n");
+  output.flush();
+}
+
+void Console::CommandEnded(std::ostream& output) const {
+  if (style_) {
+    output << '\n';
+  }
+}
+
 } // namespace huxerui::cli::prompt

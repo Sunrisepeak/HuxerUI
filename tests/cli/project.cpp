@@ -380,28 +380,25 @@ TEST_CASE("HuxerUICliOffersMcppForAProjectDeclaringBoth") {
     std::ostringstream build_output;
     std::ostringstream build_error;
     const int status = huxerui::cli::Run(arguments, directory, no_sdk, input, build_output, build_error, nullptr);
-    return std::pair{status, build_error.str()};
+    return std::pair{status, build_output.str()};
   };
-  constexpr std::string_view tip = "tip: this project also declares mcpp, which fetches its own toolchain: ";
+  constexpr std::string_view note = "Using cmake, the default (or --build-system mcpp)\n";
 
-  // A failed build left to the default suggests the same command with mcpp, without the CMake-only --sdk.
-  const auto [failed, failed_error] = build(temporary.Path() / "Dual", {"build", "linux", "--sdk", "missing"});
+  // Left to the default, a project declaring both states it before the CMake path stops on the missing SDK.
+  const auto [failed, failed_output] = build(temporary.Path() / "Dual", {"build", "linux"});
   REQUIRE(failed == 1);
-  REQUIRE(failed_error.find(std::string(tip) + "huxerui build linux --build-system mcpp\n") != std::string::npos);
-  const auto [run, run_error] = build(temporary.Path() / "Dual", {"run", "linux"});
+  REQUIRE(failed_output.starts_with(note));
+  const auto [run, run_output] = build(temporary.Path() / "Dual", {"run", "linux", "--sdk", "missing"});
   REQUIRE(run == 1);
-  REQUIRE(run_error.find(std::string(tip) + "huxerui run linux --build-system mcpp\n") != std::string::npos);
+  REQUIRE(run_output.starts_with(note));
 
-  // An explicit choice, a project declaring one build system, and invalid usage get no suggestion.
-  const auto [chosen, chosen_error] = build(temporary.Path() / "Dual", {"build", "linux", "--build-system", "cmake"});
+  // An explicit choice and a project declaring one build system have nothing to choose between.
+  const auto [chosen, chosen_output] = build(temporary.Path() / "Dual", {"build", "linux", "--build-system", "cmake"});
   REQUIRE(chosen == 1);
-  REQUIRE(chosen_error.find("tip:") == std::string::npos);
-  const auto [single, single_error] = build(temporary.Path() / "Single", {"build", "linux"});
+  REQUIRE(chosen_output.find("Using cmake") == std::string::npos);
+  const auto [single, single_output] = build(temporary.Path() / "Single", {"build", "linux"});
   REQUIRE(single == 1);
-  REQUIRE(single_error.find("tip:") == std::string::npos);
-  const auto [usage, usage_error] = build(temporary.Path() / "Dual", {"build", "linux", "--lto", "maybe"});
-  REQUIRE(usage == 2);
-  REQUIRE(usage_error.find("tip:") == std::string::npos);
+  REQUIRE(single_output.find("Using cmake") == std::string::npos);
 }
 
 TEST_CASE("HuxerUICliPackageTemplatesCarryTheShellEntries") {

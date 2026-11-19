@@ -276,3 +276,38 @@ TEST_CASE("HuxerUICliLinePrompterConfirmsAndAllowsAnEmptySelection") {
   const std::vector<Choice> choices = BuildSystems();
   REQUIRE(prompter.MultiSelect("Agents", choices, {}, 0) == std::optional<std::vector<std::size_t>>(std::vector<std::size_t>{}));
 }
+
+TEST_CASE("HuxerUICliConsoleSetsToolOutputApartOnlyOnATerminal") {
+  // Without a style the lines are the plain text scripts and the conformance suite read.
+  std::ostringstream plain;
+  const Console unstyled;
+  unstyled.Note(plain, "Using cmake, the default (or --build-system mcpp)");
+  unstyled.Step(plain, "Building linux (debug) with cmake");
+  unstyled.Command(plain, "cmake --build build", true);
+  unstyled.CommandEnded(plain);
+  unstyled.Done(plain, "Packaged dist/linux/app");
+  REQUIRE(plain.str() == "Using cmake, the default (or --build-system mcpp)\n"
+                         "Building linux (debug) with cmake\n"
+                         "> cmake --build build\n"
+                         "Packaged dist/linux/app\n");
+
+  // On a terminal the prompt's symbols mark the CLI's lines, a blank line encloses a tool's output, and a command
+  // is never cut, so that it can be copied.
+  std::ostringstream styled;
+  const Console terminal(Style{.color = ColorDepth::None, .unicode = false, .width = 20});
+  terminal.Note(styled, "Using cmake");
+  terminal.Step(styled, "Building linux");
+  terminal.Command(styled, "cmake --build a-long-build-directory", true);
+  styled << "[tool output]\n";
+  terminal.CommandEnded(styled);
+  terminal.Command(styled, "mcpp pack", false);
+  terminal.Done(styled, "Packaged app");
+  REQUIRE(styled.str() == "|  Using cmake\n"
+                          "*  Building linux\n"
+                          "   > cmake --build a-long-build-directory\n"
+                          "\n"
+                          "[tool output]\n"
+                          "\n"
+                          "   > mcpp pack\n"
+                          "ok  Packaged app\n");
+}

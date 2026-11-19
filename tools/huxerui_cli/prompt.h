@@ -155,6 +155,29 @@ struct Frame {
 /// A line for the terminal: each role's color where `style` has colors, cut to `style.width` with an ellipsis.
 [[nodiscard]] std::string Paint(const Line& line, const Style& style);
 
+/// The CLI's own lines among the output of the tools it runs. With a style, as on a terminal, they carry the
+/// prompt's symbols and colors and a blank line sets each tool's output apart; without one they are the plain text
+/// that scripts and the conformance suite read, unchanged.
+class Console {
+public:
+  Console() = default;
+  explicit Console(Style style) : style_(style) {}
+
+  /// What the CLI is doing, such as `Building linux (debug) with mcpp`.
+  void Step(std::ostream& output, std::string_view text) const;
+  /// A remark beside a step, such as which build system a default chose.
+  void Note(std::ostream& output, std::string_view text) const;
+  /// A result, such as a published package.
+  void Done(std::ostream& output, std::string_view text) const;
+  /// A command about to run; `streams` is true when its output follows on the terminal.
+  void Command(std::ostream& output, std::string_view command, bool streams) const;
+  /// Closes the output of a command that streamed it.
+  void CommandEnded(std::ostream& output) const;
+
+private:
+  std::optional<Style> style_;
+};
+
 /// The submitted answer as text: the chosen labels separated by ", ", or the entered text.
 [[nodiscard]] std::string Answer(const State& state);
 
