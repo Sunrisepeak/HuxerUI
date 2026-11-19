@@ -226,13 +226,15 @@ jobs:
         run: |
           grep -q '^import huxerui;' src/main.cpp \
             || { echo "01 no longer imports the module"; exit 1; }
-          # No headers in ANY example, in any unit: `import std;` covers
-          # std::type_info and `import huxerui;` covers everything else.
-          ! grep -rn '^[[:space:]]*#include' ../0*/src ../0*/widgets/src \
-            || { echo "an example gained a header"; exit 1; }
+          # No HuxerUI or standard-library header in any example's units:
+          # `import std;` covers std::type_info and `import huxerui;` covers
+          # everything else. A library's own header stays legitimate where a
+          # unit needs its macros, as 04's version test with `#if` does.
+          ! grep -rnE '^[[:space:]]*#include[[:space:]]*<(huxerui/|[A-Za-z_]+>)' ../0*/src ../0*/widgets/src \
+            || { echo "an example gained a HuxerUI or standard-library header"; exit 1; }
           # Anchored: the file's own comment explains what `import` replaces,
           # and an unanchored pattern matches that sentence.
-          echo "01 builds against import huxerui;, with no headers"
+          echo "01 builds against import huxerui;, with no HuxerUI or standard-library header"
 
       # The umbrella header is the CMake build's contract, and this PR must not
       # touch it. Compile it standalone with the SYSTEM compiler -- the one
