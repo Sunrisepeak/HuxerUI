@@ -476,8 +476,8 @@ std::vector<GeneratedFile> McppLibraryDeclaration(const LibraryTemplateContext& 
   const LibraryTargetProjection target = DeriveLibraryTargetProjection(library.public_target);
   const std::string dependencies = McppDependencies(huxerui_home);
   // The module interface is what huxerui.rules generates from the template's one header, so the first build
-  // finds it current. The package is named after the resource namespace.
-  const std::string module_name = PackageModuleName(target.resource_namespace);
+  // finds it current. The package is named after the project, as a C++ modules library's is.
+  const std::string module_name = PackageModuleName(library.project.project_name);
   const std::string primary_header = target.include_directory + "/" + target.header_name + ".h";
   const std::array replacements{
       TemplateReplacement{"@LIBRARY_PUBLIC_TARGET@", library.public_target},
@@ -490,12 +490,11 @@ std::vector<GeneratedFile> McppLibraryDeclaration(const LibraryTemplateContext& 
   return RenderTemplateTree("project/mcpp_library", library.project, replacements);
 }
 
-/// The Preview's mcpp declaration depends on the library two directories up.
+/// The Preview's mcpp declaration depends on the library two directories up, by its package name.
 std::vector<GeneratedFile> McppPreviewDeclaration(const LibraryTemplateContext& library,
                                                   const std::filesystem::path& huxerui_home) {
-  const LibraryTargetProjection target = DeriveLibraryTargetProjection(library.public_target);
   return McppApplicationDeclaration(PreviewContext(library), huxerui_home,
-                                    target.resource_namespace + " = { path = \"../..\" }\n");
+                                    library.project.project_name + " = { path = \"../..\" }\n");
 }
 
 GeneratedFile& FindGeneratedFile(std::vector<GeneratedFile>& files, std::string_view path, std::string_view origin) {
@@ -927,7 +926,7 @@ std::string_view CreateStyleName(const CreateSelection& selection) noexcept {
 }
 
 std::string ModuleInterfaceName(const LibraryTemplateContext& library) {
-  return PackageModuleName(DeriveLibraryTargetProjection(library.public_target).resource_namespace);
+  return PackageModuleName(library.project.project_name);
 }
 
 CreateSelection ResolveCreateSelection(ProjectKind kind, std::span<const BuildSystem> build_systems) {

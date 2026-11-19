@@ -1,5 +1,5 @@
 [package]
-name     = "@LIBRARY_RESOURCE_NAMESPACE@"
+name     = "@PROJECT_NAME@"
 version  = "0.1.0"
 standard = "c++23"
 

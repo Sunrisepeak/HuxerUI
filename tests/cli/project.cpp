@@ -189,21 +189,22 @@ TEST_CASE("HuxerUICliCreatesLibrariesForEveryBuildSystemByDefault") {
   const std::filesystem::path project = temporary.Path() / "data-grid";
   REQUIRE(std::filesystem::is_regular_file(project / "CMakeLists.txt"));
   const std::string manifest = Read(project / "mcpp.toml");
-  REQUIRE(manifest.find("name     = \"datagrid\"") != std::string::npos);
+  // The package is named after the project, whichever build systems the library declares.
+  REQUIRE(manifest.find("name     = \"data-grid\"") != std::string::npos);
   REQUIRE(manifest.find("library   = \"DataGrid::DataGrid\"") != std::string::npos);
   REQUIRE(manifest.find("kind = \"lib\"") != std::string::npos);
   REQUIRE(manifest.find("include_dirs = [\"include\"]") != std::string::npos);
-  // The headers are also a module named after the package, `datagrid`, whose interface mcpp's build regenerates
-  // from the names they declare in the C++ namespace `data_grid`.
-  REQUIRE(manifest.find("[lib]\npath = \"modules/datagrid.cppm\"") != std::string::npos);
-  const std::string interface = Read(project / "modules/datagrid.cppm");
+  // The headers are also a module named after the package, `data_grid` with the dash a module name cannot hold,
+  // whose interface mcpp's build regenerates from the names they declare in the C++ namespace `data_grid`.
+  REQUIRE(manifest.find("[lib]\npath = \"modules/data_grid.cppm\"") != std::string::npos);
+  const std::string interface = Read(project / "modules/data_grid.cppm");
   REQUIRE(interface.find("#include <datagrid/datagrid.h>\n") != std::string::npos);
-  REQUIRE(interface.find("export module datagrid;\n") != std::string::npos);
+  REQUIRE(interface.find("export module data_grid;\n") != std::string::npos);
   REQUIRE(interface.find("    using data_grid::Install;\n") != std::string::npos);
   REQUIRE(interface.find("@") == std::string::npos);
   REQUIRE(std::filesystem::is_regular_file(project / "examples/preview/CMakeLists.txt"));
   const std::string preview = Read(project / "examples/preview/mcpp.toml");
-  REQUIRE(preview.find("datagrid = { path = \"../..\" }") != std::string::npos);
+  REQUIRE(preview.find("data-grid = { path = \"../..\" }") != std::string::npos);
   REQUIRE(preview.find("[targets.example_data_grid]") != std::string::npos);
 }
 
