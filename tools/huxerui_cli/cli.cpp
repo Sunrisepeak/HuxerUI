@@ -1029,41 +1029,33 @@ std::string_view LibraryModulesStateName(LibraryModules::State state) {
   return "none";
 }
 
-/// The doctor line of a library's C++ modules state, or none for an application. It never fails the diagnosis: a
-/// library that is not a module yet still builds and is still included, and a module named otherwise than the
-/// documentation recommends still works.
-std::optional<EnvironmentDiagnostic> LibraryModulesDiagnostic(const LibraryModules& modules) {
-  EnvironmentDiagnostic line;
-  line.id = "cpp-modules";
-  line.label = "C++ modules";
-  line.status = EnvironmentDiagnosticStatus::Missing;
-  line.required = false;
+/// What doctor's header says of a library's C++ modules, or nothing for an application. It never fails the
+/// diagnosis: a library that is not a module yet still builds and is still included, and a module named otherwise
+/// than the documentation recommends still works.
+std::optional<std::string> LibraryModulesNote(const LibraryModules& modules) {
   switch (modules.state) {
   case LibraryModules::State::NotLibrary:
     return std::nullopt;
-  case LibraryModules::State::Module:
-    line.status = EnvironmentDiagnosticStatus::Ready;
-    line.required = true;
-    line.detail = "import " + modules.module;
+  case LibraryModules::State::Module: {
+    std::string note = "import " + modules.module;
     if (!modules.reexports.empty()) {
       std::string units;
       for (const std::string& unit : modules.reexports) {
         units += (units.empty() ? "" : ", ") + unit;
       }
-      line.detail += " (re-exports " + units + ")";
+      note += " (re-exports " + units + ")";
     }
     if (!modules.recommended.empty()) {
-      line.detail += "; recommended name: " + modules.recommended + ", the package";
+      note += "; recommended name: " + modules.recommended + ", the package";
     }
-    break;
-  case LibraryModules::State::NotExported:
-    line.detail = "not exported; " + modules.reason;
-    break;
-  case LibraryModules::State::NoMcpp:
-    line.detail = "not exported; an mcpp declaration builds the module from the headers";
-    break;
+    return note;
   }
-  return line;
+  case LibraryModules::State::NotExported:
+    return "not exported; " + modules.reason;
+  case LibraryModules::State::NoMcpp:
+    return "not exported; an mcpp declaration builds the module from the headers";
+  }
+  return std::nullopt;
 }
 
 void PrintEnvironmentJson(const EnvironmentPlan& plan, EnvironmentOperation operation,
@@ -1361,10 +1353,8 @@ int RunEnvironment(std::span<const std::string_view> arguments, const std::files
   std::vector<std::string> project_errors;
   // A library's C++ modules state, whatever build system the operation reaches: what an importer can name.
   LibraryModules modules;
-  std::optional<EnvironmentDiagnostic> modules_line;
   if (project && options.request.operation != EnvironmentOperation::Devices) {
     modules = DescribeLibraryModules(*discovered);
-    modules_line = LibraryModulesDiagnostic(modules);
     if (!std::filesystem::is_directory(project->root / "src"))
       project_errors.push_back("missing src directory");
     for (const auto& id : project->unknown_platforms)
@@ -1397,11 +1387,16 @@ int RunEnvironment(std::span<const std::string_view> arguments, const std::files
         build_systems += " (checking " + std::string(BuildSystemName(*options.build_system)) + ", the default)";
       }
     }
+    // A library's C++ modules are part of what the project is, so they are stated with its build systems.
+    const std::optional<std::string> modules_note = LibraryModulesNote(modules);
     if (console.Styled()) {
       console.Step(output, "HuxerUI CLI " + std::string(version) + " on " + std::string(CurrentHostId()));
       console.Note(output, "Project        " + (project ? project->root.string() : std::string("not found")));
       if (project) {
         console.Note(output, "Build systems  " + build_systems);
+      }
+      if (modules_note) {
+        console.Note(output, "C++ modules    " + *modules_note);
       }
     } else {
       output << "HuxerUI CLI " << version << "\nHost: " << CurrentHostId()
@@ -1409,25 +1404,17 @@ int RunEnvironment(std::span<const std::string_view> arguments, const std::files
       if (project) {
         output << "Build systems: " << build_systems << '\n';
       }
+      if (modules_note) {
+        output << "C++ modules: " << *modules_note << '\n';
+      }
     }
     PrintEnvironmentPlan(plan, output);
-    if ((modules_line || !project_errors.empty()) && console.Styled()) {
+    if (!project_errors.empty() && console.Styled()) {
       console.Gap(output);
       console.Step(output, "Project");
-      if (modules_line) {
-        const bool ready = modules_line->status == EnvironmentDiagnosticStatus::Ready;
-        const prompt::Console::Mark mark = ready ? prompt::Console::Mark::Ready
-                                           : modules_line->required ? prompt::Console::Mark::Missing
-                                                                    : prompt::Console::Mark::Optional;
-        console.Item(output, mark, modules_line->label,
-                     modules_line->detail + (modules_line->required || ready ? "" : "  (optional)"),
-                     modules_line->label.size());
-      }
       for (const auto& error : project_errors)
         console.Item(output, prompt::Console::Mark::Missing, error, {});
     } else {
-      if (modules_line)
-        PrintEnvironmentDiagnostics(std::span(&*modules_line, 1), "", output);
       for (const auto& error : project_errors)
         output << "[error] " << error << '\n';
     }

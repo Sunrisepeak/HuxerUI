@@ -371,10 +371,10 @@ class CreatePromptTests(unittest.TestCase):
         terminal = self.start(environment(), arguments=("doctor",))
         terminal.finish()
         rows = terminal.rows()
-        self.assertIn("◆  Project", rows)
-        line = next(row for row in rows if "C++ modules" in row)
-        self.assertTrue(line.lstrip("│ ").startswith("✔"), line)
-        self.assertIn("C++ modules  import meter", line)
+        # Stated with the project's build systems, not as a group of its own.
+        self.assertNotIn("◆  Project", rows)
+        systems = next(index for index, row in enumerate(rows) if "Build systems" in row)
+        self.assertIn("C++ modules    import meter", rows[systems + 1])
 
     def test_help_is_colored_and_reads_as_without_a_terminal(self):
         plain = subprocess.run([CLI, "--help"], capture_output=True, text=True, encoding="utf-8",

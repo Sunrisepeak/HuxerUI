@@ -549,7 +549,7 @@ TEST_CASE("HuxerUICliDoctorStatesWhatALibraryOffersImporters") {
   const std::filesystem::path meter = temporary.Path() / "meter";
 
   // A library declaring both is a module, whichever build system doctor checks, named as its [lib] unit declares.
-  REQUIRE(Invoke(meter, {"doctor"}).output.find("[ok] C++ modules: import meter\n") != std::string::npos);
+  REQUIRE(Invoke(meter, {"doctor"}).output.find("C++ modules: import meter\n") != std::string::npos);
   REQUIRE(Invoke(meter, {"doctor", "--json"}).output.find(
               "\"library\":{\"modules\":\"module\",\"module\":\"meter\",\"reexports\":[]}") != std::string::npos);
   const auto rewrite = [](const std::filesystem::path& path, std::string_view from, std::string_view to) {
@@ -562,7 +562,7 @@ TEST_CASE("HuxerUICliDoctorStatesWhatALibraryOffersImporters") {
   // What the interface re-exports under the module's name is named, as importers reach it.
   rewrite(meter / "modules/meter.cppm", "export import huxerui;\n",
           "export import huxerui;\nexport import meter.macros;\n");
-  REQUIRE(Invoke(meter, {"doctor"}).output.find("[ok] C++ modules: import meter (re-exports meter.macros)\n") !=
+  REQUIRE(Invoke(meter, {"doctor"}).output.find("C++ modules: import meter (re-exports meter.macros)\n") !=
           std::string::npos);
   // A module named otherwise still works; doctor recommends the package's name and fails nothing for it.
   rewrite(meter / "modules/meter.cppm", "export module meter;", "export module gauges;");
@@ -570,21 +570,21 @@ TEST_CASE("HuxerUICliDoctorStatesWhatALibraryOffersImporters") {
   REQUIRE(renamed.output.find("\"module\":\"gauges\",\"reexports\":[],\"recommended\":\"meter\"") !=
           std::string::npos);
   REQUIRE(Invoke(meter, {"doctor"}).output.find(
-              "[ok] C++ modules: import gauges; recommended name: meter, the package\n") != std::string::npos);
+              "C++ modules: import gauges; recommended name: meter, the package\n") != std::string::npos);
 
   // A headers library without mcpp still builds and is still included: the line is optional and fails nothing.
   const auto headers = Invoke(temporary.Path() / "headers", {"doctor", "--json"});
   REQUIRE(headers.output.find("\"library\":{\"modules\":\"no-mcpp\"}") != std::string::npos);
   REQUIRE(headers.output.find("C++ modules: ") == std::string::npos);
   REQUIRE(Invoke(temporary.Path() / "headers", {"doctor"}).output.find(
-              "[missing] C++ modules (optional): not exported; an mcpp declaration builds the module") !=
+              "C++ modules: not exported; an mcpp declaration builds the module") !=
           std::string::npos);
 
   // A headers library that declares mcpp without a module is told what it still lacks.
   rewrite(meter / "mcpp.toml", "namespace = \"meter\"\n", "");
   rewrite(meter / "mcpp.toml", "[lib]\npath = \"modules/meter.cppm\"\n", "");
   const auto unnamed = Invoke(meter, {"doctor"}).output;
-  REQUIRE(unnamed.find("[missing] C++ modules (optional): not exported; name the C++ namespace to export") !=
+  REQUIRE(unnamed.find("C++ modules: not exported; name the C++ namespace to export") !=
           std::string::npos);
 
   // An application has no importer, so doctor says nothing about modules.
