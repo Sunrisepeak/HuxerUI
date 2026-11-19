@@ -2,7 +2,7 @@
 
 Use this reference for a C++ modules project: its sources are module units that write `import huxerui;`, its `mcpp.toml` depends on `huxerui`, and its `build.mcpp` imports `huxerui.rules`. `import huxerui;` exposes the same public entities as the umbrella header. Preserve the dependency version and build setup selected by the project.
 
-A headers project that also carries an mcpp declaration (`--build-system cmake,mcpp`) builds with the same rules; its sources stay as described in the other references. Such a library, which is a library's default and the recommended form, is also the module named by its C++ namespace: the mcpp build generates `modules/<module>.cppm` from its public headers, so do not edit that file; to keep a hand-written one, set `cpp_modules_gen = false` under `[package.metadata.huxerui]` and export every public name it reports. An existing headers library gains that interface as [Add C++ modules to an existing headers library](#add-c-modules-to-an-existing-headers-library) describes.
+A headers project that also carries an mcpp declaration (`--build-system cmake,mcpp`) builds with the same rules; its sources stay as described in the other references. Such a library, which is a library's default and the recommended form, is also a module named after its package: the mcpp build generates the interface its `[lib]` path names from its public headers, so do not edit that file; to keep a hand-written one, set `cpp_modules_gen = false` under `[package.metadata.huxerui]` and export every public name it reports. An existing headers library gains that interface as [Add C++ modules to an existing headers library](#add-c-modules-to-an-existing-headers-library) describes.
 
 Drive the project with the HuxerUI CLI, which dispatches to mcpp:
 
@@ -28,7 +28,17 @@ resources/              optional resource input
 
 Create a C++ modules application with `huxerui create app <name> --build-system mcpp`; `huxerui create library <name> --build-system mcpp` creates a C++ modules library. mcpp alone selects C++ modules, and a build-system list that names `cmake` selects headers. `--template` selects the application content (`app` or `navigation`), and `--platform` selects the platform shells as for any other project. Inspect the generated manifest rather than copying a fixed dependency version into an existing project.
 
-A C++ modules library exports a module named after its C++ namespace, records its identity in `[package.metadata.huxerui]`, and carries an `examples/preview` application that imports it; `huxerui run <platform>` from the library tree runs that Preview. Its Android platform package under `platform/android` reaches an application's package without further declaration; state `[package.metadata.dist-apk]` only to replace that inference, for example to add Maven coordinates.
+A C++ modules library exports a module named after its package, records its identity in `[package.metadata.huxerui]`, and carries an `examples/preview` application that imports it; `huxerui run <platform>` from the library tree runs that Preview. Its Android platform package under `platform/android` reaches an application's package without further declaration; state `[package.metadata.dist-apk]` only to replace that inference, for example to add Maven coordinates.
+
+Name a library's module after its package identity, `<package namespace>.<package name>` or the name alone, with `-` written as `_`: a module name is global to a program, and a package identity is unique where packages are published, while one C++ namespace may be shared by several libraries.
+Give a library meant for publication its package namespace from the start, because adding it later renames the module for every importer.
+The root interface of a C++ modules library is `src/<package name>.cppm`, its `[lib]` path. As the library grows, its other units follow the module name with one directory per segment below the root:
+
+```text
+src/widgets.cppm        export module acme.widgets;
+src/widgets/meter.cppm  export module acme.widgets.meter;
+src/widgets/dial.cppm   export module acme.widgets.dial;
+```
 
 The build program imports the HuxerUI rules:
 
@@ -76,28 +86,38 @@ Macros do not cross module boundaries. Prefer `[[huxerui::composable]]`; when ex
 ## Add C++ modules to an existing headers library
 
 A headers library becomes importable as a C++ module without changing its sources or its CMake declaration: the mcpp build generates the module interface from its public headers.
-It needs its public headers below `include/` and its public names in one C++ namespace.
-The module is named after that namespace with `::` written as `.`, such as `acme.widgets` for `acme::widgets`.
+It needs its public headers below `include/` and its public names in one C++ namespace, which `namespace` names; the module is named after the package.
+A headers library has one interface, and at most a macros unit beside it, both directly below `modules/`:
+
+```text
+modules/widgets.cppm   export module acme.widgets;         generated from the headers
+modules/macros.cppm    export module acme.widgets.macros;  optional, written by hand
+```
 
 1. Without an mcpp declaration, take `build.mcpp` and `mcpp.toml` from a library `huxerui create library <name> --build-system cmake,mcpp --target <public-cmake-target> --namespace <cpp-namespace>` writes with the same SDK, so the dependency on HuxerUI matches it, and add each library dependency to `[dependencies]` as a path or package entry.
-2. In `mcpp.toml`, name the namespace and the interface:
+2. In `mcpp.toml`, name the C++ namespace whose names the module exports, and the interface file:
 
    ```toml
+   [package]
+   namespace = "acme"
+   name      = "widgets"
+
    [package.metadata.huxerui]
    namespace = "acme::widgets"
 
    [lib]
-   path = "modules/acme.widgets.cppm"
+   path = "modules/widgets.cppm"
    ```
 
-3. Create `modules/acme.widgets.cppm` as an empty file; mcpp requires the `[lib]` path to exist before the build writes it.
-4. Build in the library root with `mcpp build`. The first build reports `generated modules/acme.widgets.cppm from the public headers (<n> names)`. Commit the file and do not edit it: later builds rewrite it whenever the headers change.
+3. Create `modules/widgets.cppm` as an empty file; mcpp requires the `[lib]` path to exist before the build writes it.
+4. Build in the library root with `mcpp build`. The first build reports `generated modules/widgets.cppm from the public headers (<n> names)`. Commit the file and do not edit it: later builds rewrite it whenever the headers change.
 5. Resolve the build's macro warnings as [Macros in the public headers](#macros-in-the-public-headers) describes.
 
 The interface exports the names declared directly in the namespace: functions, classes, templates, enumerations, aliases, and variables.
 Names in a nested namespace, such as `detail`, and names declared `static` are not exported; move a name a consumer needs into the namespace itself.
 A consumer built with mcpp depends on the library and writes `import acme.widgets;`, and a consumer built with CMake keeps including the headers; both reach the same entities, so the library needs no second binary.
 To write the interface by hand instead, set `cpp_modules_gen = false` under `[package.metadata.huxerui]`; the build then reports each public name the file does not export.
+`huxerui doctor` in the library states the module an importer names.
 
 ### Macros in the public headers
 
@@ -106,7 +126,7 @@ These rules cover the macros of the public headers, which are part of the librar
 
 - Prefer a language entity to a macro in the interface: a constant as `inline constexpr`, a type as `using`, a computation as a `constexpr` function, and a scope or similar syntax through `[[huxerui::composable]]` or a lambda. Declared in the namespace, it is exported like any other name.
 - Keep a macro only where a macro is required, such as a version or feature test that consumers evaluate with `#if`.
-- To offer such a macro to importers, map it by hand in `modules/<module>.macros.cppm`: a constant with the macro's own name in `<namespace>::macros`. Map only the macros importers need; there is no generated mapping. When the file exists, the build compiles it and the generated interface re-exports it, so `import <module>;` reaches the constants.
+- To offer such a macro to importers, map it by hand in `modules/macros.cppm`, the unit `<module>.macros`: a constant with the macro's own name in `<namespace>::macros`. Map only the macros importers need; there is no generated mapping. The build compiles the units below `modules/`, and the generated interface re-exports those named under the module, so `import <module>;` reaches the constants.
 - `#undef` a helper macro at the end of the header that defines it; the build does not report it.
 - In a translation unit that both includes the header and imports the module, write the macro, not `<namespace>::macros::<name>`: the defined macro expands inside the qualified name.
 
