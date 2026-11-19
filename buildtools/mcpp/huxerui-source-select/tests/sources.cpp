@@ -26,6 +26,8 @@ using huxerui::rules::sources::umbrella_includes;
 using huxerui::rules::sources::without_entry;
 using huxerui::rules::sources::defined_macros;
 using huxerui::rules::sources::names_identifier;
+using huxerui::rules::sources::package_module_name;
+using huxerui::rules::sources::reexported_modules;
 using huxerui::rules::sources::render_library_module;
 using huxerui::rules::sources::unexported_names;
 
@@ -325,10 +327,21 @@ void library_module_exports_the_scanned_names() {
           "a name a hand-written interface lacks is reported");
     check(module.find("export import acme.widgets.macros;") == std::string::npos,
           "without a macros unit the interface re-exports none");
-    const std::string with_macros =
-        render_library_module("acme.widgets", "acme::widgets", includes, names, "acme.widgets.macros");
+    const std::vector<std::string> units{"acme.widgets.macros"};
+    const std::string with_macros = render_library_module("acme.widgets", "acme::widgets", includes, names, units);
     check(with_macros.find("export import huxerui;\nexport import acme.widgets.macros;\n") != std::string::npos,
           "the author's macros unit is re-exported after huxerui");
+    check(reexported_modules(with_macros) == std::vector<std::string>{"huxerui", "acme.widgets.macros"},
+          "the re-exported modules are read back");
+    check(reexported_modules("// export import gone;\nexport import kept;\n") == std::vector<std::string>{"kept"},
+          "a commented re-export is not one");
+}
+
+void a_module_is_named_after_its_package() {
+    check(package_module_name("acme", "gauge") == "acme.gauge", "the package namespace prefixes the name");
+    check(package_module_name("", "gauge") == "gauge", "a package without a namespace is its name");
+    check(package_module_name("mcpplibs.mwrap", "zlib") == "mcpplibs.mwrap.zlib", "a dotted namespace is kept");
+    check(package_module_name("", "example-widgets") == "example_widgets", "a dash is no module-name character");
 }
 
 void macros_a_header_undefines_are_its_own() {
@@ -366,6 +379,7 @@ int main() {
     macros_are_found_apart_from_the_include_guard();
     macros_a_header_undefines_are_its_own();
     a_macros_unit_names_whole_identifiers();
+    a_module_is_named_after_its_package();
     header_scan_finds_namespace_scope_declarations();
     header_scan_sees_past_an_attribute();
     header_scan_ignores_the_detail_namespace();

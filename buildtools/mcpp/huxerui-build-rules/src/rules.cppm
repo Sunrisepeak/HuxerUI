@@ -421,12 +421,13 @@ inline std::optional<bool> own_flag(std::string_view key) {
     return std::nullopt;
 }
 
-// One value of this package's own `[package.metadata.huxerui]` table. A
-// dependency's build program is not handed the resolved graph, so a library
-// reads what it states about itself from its own manifest.
-inline std::string own_metadata(std::string_view key) {
+// One value of a table of this package's own manifest. A dependency's build
+// program is not handed the resolved graph, so a package reads what it states
+// about itself from its own manifest.
+inline std::string own_value(std::string_view table, std::string_view key) {
     const std::string manifest =
         read_text(std::filesystem::path(mcpp::manifest_dir()) / "mcpp.toml");
+    const std::string header = "[" + std::string(table) + "]";
     std::istringstream lines(manifest);
     std::string line;
     bool inside = false;
@@ -434,7 +435,7 @@ inline std::string own_metadata(std::string_view key) {
         const std::size_t first = line.find_first_not_of(" \t");
         if (first == std::string::npos || line[first] == '#') continue;
         if (line[first] == '[') {
-            inside = line.find("[package.metadata.huxerui]") != std::string::npos;
+            inside = line.compare(first, header.size(), header) == 0;
             continue;
         }
         if (!inside) continue;
@@ -449,6 +450,11 @@ inline std::string own_metadata(std::string_view key) {
         return line.substr(open + 1, close - open - 1);
     }
     return {};
+}
+
+// One value of this package's own `[package.metadata.huxerui]` table.
+inline std::string own_metadata(std::string_view key) {
+    return own_value("package.metadata.huxerui", key);
 }
 
 } // namespace detail
@@ -1199,44 +1205,54 @@ inline bool plan_packages(const options& opt, const std::string& program, const 
 // -------------------------------------------------------------- configure --
 // One call for the common case. Returns false only on a condition that should
 // stop the build; a missing optional input is reported and tolerated.
-// A library that keeps its public headers and declares mcpp exports them as a module too: its `[lib]` path is
-// `modules/<module>.cppm`, whose global module fragment includes the headers and whose purview names what they
-// declare, so `import <module>;` and `#include` reach the same entities. With `cpp_modules_gen` absent or true the
-// file is generated from the headers on every build that changes them; with `false` it is the author's, and the
-// names it leaves out are reported. The interface is added to the package's sources, which the rules own.
-// A module carries no macro; the author maps the macros importers need to constants by hand in
-// `modules/<module>.macros.cppm`, which, when present, is compiled and re-exported by the interface.
-// Returns whether the package has such an interface.
+// A library that keeps its public headers and declares mcpp exports them as a module too. Its `[lib]` path, wherever
+// the author puts it, holds the interface: the headers in its global module fragment and a `using` declaration for
+// each name the headers declare in the library's C++ `namespace`, so `import <module>;` and `#include` reach the same
+// entities. The module is named after the package identity. With `cpp_modules_gen` absent or true the file is
+// generated from the headers on every build that changes them; with `false` it is the author's, and the names it
+// leaves out are reported. A module carries no macro: the author maps the macros importers need to constants in a
+// unit named `<module>.macros`, conventionally modules/macros.cppm. The units below modules/ are compiled, and the
+// interface re-exports those named under the module. Returns whether the package has such an interface.
 inline bool plan_module_interface() {
     namespace sources = huxerui::rules::sources;
     const std::filesystem::path root = mcpp::manifest_dir();
-    // Whether the package is a module at all follows the manifest's `namespace`, its headers, and its interface
-    // file, and the rules may run first while one of them is still missing, as when a headers library is being made
-    // a module: watched only once the package is one, adding the last of them would never run the rules again. The
-    // set of headers decides the interface too, and `cpp_modules_gen` is read from the manifest.
+    // Whether the package is a module at all follows the manifest, its headers, and its module units, and the rules
+    // may run first while one of them is still missing, as when a headers library is being made a module: watched
+    // only once the package is one, adding the last of them would never run the rules again. The set of headers
+    // decides the interface too, and `cpp_modules_gen` is read from the manifest.
     mcpp::rerun_if_changed((root / "mcpp.toml").string().c_str());
     mcpp::rerun_if_changed_glob("include/**");
-    mcpp::rerun_if_changed_glob("modules/*.cppm");
+    mcpp::rerun_if_changed_glob("modules/**/*.cppm");
     const std::string name_space = detail::own_metadata("namespace");
-    if (name_space.empty() || !std::filesystem::is_directory(root / "include")) return false;
-    std::string module = name_space;
-    for (std::size_t at = module.find("::"); at != std::string::npos; at = module.find("::", at)) module.replace(at, 2, ".");
-    const std::filesystem::path file = root / "modules" / (module + ".cppm");
+    const std::string lib_path = detail::own_value("lib", "path");
+    if (name_space.empty() || lib_path.empty() || !std::filesystem::is_directory(root / "include")) return false;
+    const std::filesystem::path file = root / lib_path;
     if (!std::filesystem::is_regular_file(file)) return false;
     mcpp::source(file.string().c_str());
-
-    // The interface file itself is the author's when it is not generated, and the macros unit names the macros
-    // the warnings below leave out.
     mcpp::rerun_if_changed(file.string().c_str());
-    const std::string macros_module = module + ".macros";
-    const std::filesystem::path macros_file = root / "modules" / (macros_module + ".cppm");
-    const bool has_macros = std::filesystem::is_regular_file(macros_file);
-    std::string macros_text;
-    if (has_macros) {
-        mcpp::source(macros_file.string().c_str());
-        mcpp::rerun_if_changed(macros_file.string().c_str());
-        macros_text = detail::read_text(macros_file);
+    const std::string module =
+        sources::package_module_name(detail::own_value("package", "namespace"), detail::own_value("package", "name"));
+
+    // The package's other units below modules/, such as `<module>.macros`. Each is compiled; those named under the
+    // module are re-exported, and the macros they name are mapped rather than missing.
+    std::vector<std::string> units;
+    detail::collect(root, "modules/**/*.cppm", units);
+    std::vector<std::string> reexports;
+    std::string mapped;
+    for (const std::string& unit : units) {
+        std::error_code same;
+        if (std::filesystem::equivalent(root / unit, file, same)) continue;
+        mcpp::source((root / unit).string().c_str());
+        mcpp::rerun_if_changed((root / unit).string().c_str());
+        const std::string text = detail::read_text(root / unit);
+        const std::string name = sources::scan_module_interface(text).name;
+        if (name.starts_with(module + ".")) {
+            reexports.push_back(name);
+            mapped += text;
+        }
     }
+    std::ranges::sort(reexports);
+
     std::vector<std::string> headers;
     detail::collect(root, "include/**/*.h", headers);
     detail::collect(root, "include/**/*.hpp", headers);
@@ -1249,40 +1265,43 @@ inline bool plan_module_interface() {
         const std::vector<std::string> found = sources::public_names(text, name_space);
         names.insert(names.end(), found.begin(), found.end());
         for (const sources::defined_macro& macro : sources::defined_macros(text)) {
-            if (sources::names_identifier(macros_text, macro.name)) continue;
+            if (sources::names_identifier(mapped, macro.name)) continue;
             const std::string where = header + ":" + std::to_string(macro.line);
             const std::string message = "the macro " + macro.name + " (" + where + ") does not reach `import " + module + ";`";
-            const std::string hint = "declare it as a constant or function in " + name_space + ", map it in modules/" +
-                                     macros_module + ".cppm, or #undef it if it is the header's own; a translation "
-                                     "unit that uses the macro includes " + includes.back() + " as well";
+            // No line of this unit may start with the word `module`: dependency scanners read it as a declaration.
+            const std::string macros_unit = module + ".macros";
+            const std::string hint = "declare it as a constant or function in " + name_space + ", map it in a " +
+                                     macros_unit + " unit such as modules/macros.cppm, or #undef it if it is the "
+                                     "header's own; a translation unit that uses the macro includes " +
+                                     includes.back() + " as well";
             mcpp::report({.severity = "warning", .message = message.c_str(), .hint = hint.c_str()});
         }
     }
     std::ranges::sort(names);
     names.erase(std::ranges::unique(names).begin(), names.end());
 
-    const std::string relative = "modules/" + module + ".cppm";
     if (detail::own_flag("cpp_modules_gen").value_or(true)) {
-        const std::string content = sources::render_library_module(module, name_space, includes, names,
-                                                                   has_macros ? macros_module : std::string());
+        const std::string content = sources::render_library_module(module, name_space, includes, names, reexports);
         if (detail::read_text(file) != content) {
             detail::write_if_changed(file, content);
-            const std::string message = "generated " + relative + " from the public headers (" +
+            const std::string message = "generated " + lib_path + " from the public headers (" +
                                         std::to_string(names.size()) + " names)";
             mcpp::report({.severity = "note", .message = message.c_str()});
         }
     } else {
         const std::string interface_text = detail::read_text(file);
-        if (has_macros && interface_text.find("export import " + macros_module + ";") == std::string::npos) {
-            const std::string message = relative + " does not re-export " + macros_module;
-            const std::string hint = "add `export import " + macros_module + ";` after `export import huxerui;`";
+        const std::vector<std::string> declared = sources::reexported_modules(interface_text);
+        for (const std::string& unit : reexports) {
+            if (std::ranges::find(declared, unit) != declared.end()) continue;
+            const std::string message = lib_path + " does not re-export " + unit;
+            const std::string hint = "add `export import " + unit + ";` after `export import huxerui;`";
             mcpp::report({.severity = "warning", .message = message.c_str(), .hint = hint.c_str()});
         }
         const std::vector<std::string> missing = sources::unexported_names(interface_text, name_space, names);
         if (!missing.empty()) {
             std::string list;
             for (const std::string& name : missing) list += (list.empty() ? "" : ", ") + name;
-            const std::string message = relative + " does not export " + list;
+            const std::string message = lib_path + " does not export " + list;
             const std::string impact = "`import " + module + ";` cannot name " + (missing.size() == 1 ? "it" : "them");
             const std::string hint = "add `using " + name_space + "::<name>;` for each, or remove "
                                      "`cpp_modules_gen = false` to have the file generated";

@@ -1,5 +1,5 @@
-// The same build program as any HuxerUI package: the rules generate
-// modules/gauge.cppm from the headers and compile modules/gauge.macros.cppm.
+// The same build program as any HuxerUI package: the rules generate the
+// interface the [lib] path names from the headers and compile modules/macros.cppm.
 
 import mcpp;
 import huxerui.rules;

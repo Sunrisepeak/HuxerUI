@@ -111,8 +111,10 @@ It compiles each library's root under the namespace its identity projects to, me
 A library's own build program reads the same table from its own manifest to generate its resource header.
 A package that has module interface units also gets a generated `<namespace>.resources` module, so module code writes `import app.resources;` instead of including the header.
 
-A library with public headers under `include/` that declares mcpp is also a module: its `[lib]` path is `modules/<module>.cppm`, where the module is the `namespace` of `[package.metadata.huxerui]` with `::` written as `.`.
-The interface has the shape of `modules/huxerui.cppm`: the headers in the global module fragment, `export import huxerui;`, and a `using` declaration for each namespace-scope name the headers declare, so `import <module>;` and `#include` reach the same entities and the library needs no second binary.
+A library with public headers under `include/` that declares mcpp, names the C++ `namespace` of `[package.metadata.huxerui]`, and states a `[lib]` path is also a module.
+Its interface is the `[lib]` unit, wherever the author puts it, and its module is named after the package identity: `<package namespace>.<package name>`, or the name alone, with `-` written as `_`.
+The package identity rather than the C++ namespace names the module because a module name is global to a program and a package identity is unique where packages are published, while one C++ namespace may be shared by several libraries; the C++ namespace still decides which names the interface exports.
+The interface has the shape of `modules/huxerui.cppm`: the headers in the global module fragment, `export import huxerui;`, and a `using` declaration for each name the headers declare directly in the namespace, so `import <module>;` and `#include` reach the same entities and the library needs no second binary.
 
 | `cpp_modules_gen` | The interface |
 | --- | --- |
@@ -120,10 +122,11 @@ The interface has the shape of `modules/huxerui.cppm`: the headers in the global
 | `false` | the author writes it; `configure()` reports the names the headers declare and the interface does not export |
 
 Either way the rules add the interface to the package's sources, rerun when a header, the interface, or the manifest changes, and warn about a macro a header defines, which no module exports. A name declared `static` has internal linkage and is not exported.
-They watch the manifest, the set of headers, and the set of files below `modules/` before they decide whether the package is a module, so a headers library made a module later, by adding the `namespace` or the interface file after a build, runs them again.
+They watch the manifest, the set of headers, and the set of units below `modules/` before they decide whether the package is a module, so a headers library made a module later, by adding the `namespace` or the interface file after a build, runs them again.
 A module carries no macro, and the rules map none: which macros importers need is the author's choice, and whether a macro is a constant, a type, or syntax is not decidable from the header's text.
-The author maps the chosen ones to constants in `modules/<module>.macros.cppm`, under their own names in `<namespace>::macros`; when that file exists the rules add it to the sources and the generated interface writes `export import <module>.macros;`.
-A macro the unit names, and one its header undefines again, is not reported; with `cpp_modules_gen = false` the rules report an interface that does not re-export the unit.
+The author maps the chosen ones to constants in a unit named `<module>.macros`, under their own names in `<namespace>::macros`.
+The rules compile every unit below `modules/` and the generated interface re-exports those named under the module, so the unit is found by its name, not its file; the documentation recommends `modules/macros.cppm` beside a `modules/<package name>.cppm` interface, and no layout is checked.
+A macro such a unit names, and one its header undefines again, is not reported; with `cpp_modules_gen = false` the rules report an interface that does not re-export such a unit.
 `buildtools/mcpp/examples/04-headers-library` builds this shape.
 The key matters only to such a library: a CMake-only library has no mcpp build, and a C++ modules library's interface is its source.
 
