@@ -19,6 +19,8 @@ Identify the project style first, then its build system:
 
 Keep the project's build system and compatible toolchain. Report build and run results for the host and affected platforms actually validated.
 
+Create a library with both declarations, `--build-system cmake,mcpp`, which is a library's default. Other libraries and applications consume a library, and both declarations let each of them include its headers or import it as a C++ module, while only the headers are maintained: the mcpp build generates the module interface from them. An application has no consumer, so it keeps its single build system, headers with CMake by default.
+
 ## Shared rules
 
 - Compose ordinary functions returning `View` by value. Mark reusable functions that call composition-bound hooks or need their own recomposition scope with `[[huxerui::composable]]`. Leave the application root unannotated.

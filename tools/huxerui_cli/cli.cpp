@@ -524,13 +524,14 @@ int RunCreate(std::span<const std::string_view> arguments, const std::filesystem
 
   if (prompter != nullptr && build_systems.empty()) {
     // One question selects both the build systems and, through them, the source style. A library declaring both
-    // keeps its headers and gains a module interface over them; an application has no importer, so it stays headers.
+    // keeps its headers and gains a module interface over them, so every consumer can use it, which is why it is the
+    // library's recommendation; an application has no importer, so it stays headers.
     using prompt::Role;
     const prompt::Span headers{"headers", Role::Headers};
     const prompt::Span modules{"C++ modules", Role::Modules};
     const prompt::Line both = kind == ProjectKind::Library
                                   ? prompt::Line{headers, {" & ", Role::Plain}, modules,
-                                                 {"  (#include & import)", Role::Muted}}
+                                                 {"  (#include & import, recommended)", Role::Muted}}
                                   : prompt::Line{headers, {"  (#include <huxerui/huxerui.h>)", Role::Muted}};
     const std::array<prompt::Choice, 3> choices{{
         {"cmake", prompt::Line{headers, {"  (#include <huxerui/huxerui.h>)", Role::Muted}}},

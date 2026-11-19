@@ -265,7 +265,7 @@ class CreatePromptTests(unittest.TestCase):
         terminal.wait_for("Build system")
         selected = next(row for row in terminal.rows() if "cmake + mcpp" in row)
         self.assertIn("headers & C++ modules", selected)
-        self.assertIn("(#include & import)", selected)
+        self.assertIn("(#include & import, recommended)", selected)
         self.assertTrue(all(cell.fg == VIOLET for cell in self.cells(terminal, "cmake + mcpp")),
                         "the initial choice is the library's dual declaration")
         terminal.send(ESCAPE)
