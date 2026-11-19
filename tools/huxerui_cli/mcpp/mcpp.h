@@ -69,6 +69,14 @@ struct CommandOptions {
 /// target triple the package its format writes, through that format's runner.
 [[nodiscard]] ProcessCommand RunCommand(const CommandOptions& options);
 
+/// The `mcpp run --print-launch` command that builds the program and reports, as JSON, how the named runner the
+/// project's packages supply would start it, without starting it.
+[[nodiscard]] ProcessCommand LaunchCommand(const CommandOptions& options, std::string_view runner);
+
+/// The program the `mcpp.launch` envelope of `mcpp run --print-launch --message-format json` starts.
+/// @throws std::runtime_error when the output carries no launch envelope.
+[[nodiscard]] std::filesystem::path ParseLaunchProgram(std::string_view output);
+
 /// The mcpp package format a platform's distributable is written in.
 /// @param platform HuxerUI platform identifier.
 /// @param requested The `--format` the caller selected, or empty for the platform's default.

@@ -374,4 +374,23 @@ ProcessCommand RunCommand(const CommandOptions& options) {
   return {"mcpp", std::move(arguments), options.project_root};
 }
 
+ProcessCommand LaunchCommand(const CommandOptions& options, std::string_view runner) {
+  std::vector<std::string> arguments = CommonArguments("run", options);
+  arguments.insert(arguments.end(), {"--runner", std::string(runner), "--print-launch", "--message-format", "json"});
+  return {"mcpp", std::move(arguments), options.project_root};
+}
+
+std::filesystem::path ParseLaunchProgram(std::string_view output) {
+  // The envelope is the last line; the build's events before it carry an `argv` of their own.
+  const std::size_t envelope = output.rfind("\"kind\":\"mcpp.launch\"");
+  const std::size_t start = envelope == std::string_view::npos ? envelope : output.rfind('\n', envelope);
+  const std::size_t argv = envelope == std::string_view::npos
+                               ? envelope
+                               : output.find("\"argv\":[\"", start == std::string_view::npos ? 0 : start);
+  if (argv == std::string_view::npos) {
+    throw std::runtime_error("mcpp run --print-launch reported no program");
+  }
+  return JsonStringAfter(output, "argv", argv, output.size()).first;
+}
+
 } // namespace huxerui::cli::mcpp

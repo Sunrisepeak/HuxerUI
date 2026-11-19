@@ -1187,6 +1187,12 @@ inline bool plan_packages(const options& opt, const std::string& program, const 
             web.template_file = directory + "/" + program + ".index.html.in";
             detail::write_if_changed(web.template_file, rendered);
             mcpp::rerun_if_changed(page.c_str());
+            // The CMake build lays the page beside the module under the program's name, where `huxerui run web
+            // --watch` serves it from; so does this one. mcpp pack stages it with the module, so a web package
+            // carries it beside dist-web's `index.html`.
+            const std::string beside = directory + "/" + program + ".html";
+            detail::write_if_changed(beside, rendered);
+            mcpp::deploy(beside.c_str(), ".");
         }
         ok = mcpp::dist::web::generate(web) && ok;
     } else if (android) {

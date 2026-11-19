@@ -1760,7 +1760,10 @@ PlatformCommandContext MakeCommandContext(const Project& project, const Platform
   request.java_home = options.java_home.value_or(std::filesystem::path{});
   request.generator = options.cmake_generator;
   request.package_format = options.package_format.value_or("");
-  auto environment = platform.ResolveEnvironment(request);
+  // The platform's toolchain builds for CMake and the standard shells; mcpp provisions its own for the programs it
+  // builds, such as MSVC on Windows and Emscripten on the Web.
+  auto environment = build_system == BuildSystem::CMake || HasCoreShell(platform) ? platform.ResolveEnvironment(request)
+                                                                                  : ProcessEnvironment{};
   if (build_system == BuildSystem::CMake) {
     environment.emplace_back("HUXERUI_HOME", huxerui_home.string());
     const auto cmake =
@@ -1950,10 +1953,6 @@ void ApplyMcppOptionRules(BuildOptions& options, bool through_shell, std::ostrea
   if (!options.device.empty() && !through_shell && !(options.no_shell && options.platforms == "android")) {
     refuse("--device", "is not available without the standard shell");
   }
-  // The watcher stages the Web page the CMake build writes beside the module; `mcpp build` writes the module only.
-  if (options.watch && options.platforms == "web") {
-    refuse("--watch", "is not available for the Web yet");
-  }
   if (options.watch && options.no_shell) {
     refuse("--watch", "is not available without the standard shell");
   }
@@ -2037,17 +2036,27 @@ PlatformCommandContext McppShellContext(const Project& project, const PlatformDr
   return context;
 }
 
-/// Builds a host program with mcpp and writes the application-integration record the CMake build writes, which the
-/// watcher stages the program from: the program, or on macOS the bundle the rules assemble beside it.
-void BuildMcppProgram(const PlatformCommandContext& context, const mcpp::CommandOptions& options,
-                      std::ostream& output) {
-  ProcessCommand command = mcpp::BuildCommand(options);
-  command.arguments.insert(command.arguments.end(), {"--message-format", "json"});
+/// Builds a program with mcpp and writes the application-integration record the CMake build writes, which the
+/// watcher stages the program from: the program, or on macOS the bundle the rules assemble beside it. On the Web the
+/// watcher serves the page beside the module with emrun, so the build also asks mcpp for the emrun of the
+/// Emscripten toolchain it builds with, the program of its `web` runner, and puts its directory on `context`'s PATH.
+void BuildMcppProgram(PlatformCommandContext& context, const mcpp::CommandOptions& options, std::ostream& output) {
+  const bool web = options.platform == "web";
+  ProcessCommand command = web ? mcpp::LaunchCommand(options, "web") : mcpp::BuildCommand(options);
+  if (!web) {
+    command.arguments.insert(command.arguments.end(), {"--message-format", "json"});
+  }
   console.Command(output, DescribeProcess(command), false);
   const ProcessResult result = RunProcessCapture(command);
   if (result.exit_code != 0) {
     throw std::runtime_error("command failed with exit code " + std::to_string(result.exit_code) + ": " +
                              DescribeProcess(command));
+  }
+  if (web) {
+    const std::filesystem::path toolchain = mcpp::ParseLaunchProgram(result.output).parent_path();
+    if (detail::EnvironmentValue(context.environment, "PATH").find(toolchain.string()) != 0) {
+      detail::PrependPath(context.environment, toolchain);
+    }
   }
   std::string name;
   std::filesystem::path artifact = mcpp::ParseBuiltProgram(result.output, name).path;
@@ -2086,7 +2095,7 @@ int RunMcppCommand(const Project& project, BuildOptions& options, std::string_vi
       return WatchApplication(platform, context, [&] { BuildPlatform(platform, context, options, output); }, output,
                               error);
     }
-    const PlatformCommandContext context =
+    PlatformCommandContext context =
         MakeCommandContext(project, platform, project.root, options, {}, BuildSystem::Mcpp);
     const mcpp::CommandOptions mcpp_options = McppOptions(project, platform.Id(), options);
     return WatchApplication(platform, context, [&] { BuildMcppProgram(context, mcpp_options, output); }, output,

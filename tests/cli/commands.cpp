@@ -103,6 +103,21 @@ TEST_CASE("HuxerUICliReadsMcppPackResults") {
   REQUIRE(artifacts[1].type == "dir");
   REQUIRE_THROWS(huxerui::cli::mcpp::ParsePackArtifacts(R"({"kind": "mcpp.pack", "data": {"artifacts": []}})"));
   REQUIRE_THROWS(huxerui::cli::mcpp::ParsePackArtifacts("not json"));
+
+  // The launch envelope is the last line; an artifact event before it has an empty `argv` of its own.
+  const std::string launch =
+      R"({"artifact":{"kind":"bin","launch":{"argv":[],"cwd":"/p","via":"runner"},"name":"app","path":"/o/bin/app.js"},)"
+      R"("event":"artifact","kind":"mcpp.event"})"
+      "\n"
+      R"({"data":{"argv":["/emsdk/emscripten/emrun","--hostname","localhost","/o/bin/app.js"],"cwd":"/p"},)"
+      R"("kind":"mcpp.launch","schemaVersion":1})"
+      "\n";
+  REQUIRE(huxerui::cli::mcpp::ParseLaunchProgram(launch) == std::filesystem::path("/emsdk/emscripten/emrun"));
+  REQUIRE_THROWS(huxerui::cli::mcpp::ParseLaunchProgram(launch.substr(0, launch.find('\n'))));
+  const huxerui::cli::ProcessCommand command =
+      huxerui::cli::mcpp::LaunchCommand({.project_root = "/p", .platform = "web"}, "web");
+  REQUIRE(command.arguments == std::vector<std::string>{"run", "--target", "wasm32-emscripten", "--runner", "web",
+                                                        "--print-launch", "--message-format", "json"});
 }
 
 TEST_CASE("HuxerUICliHasNoCommandNamedAfterABuildSystem") {
@@ -125,7 +140,7 @@ TEST_CASE("HuxerUICliDispatchesToTheProjectsBuildSystem") {
   for (const std::initializer_list<std::string_view> arguments : {
            std::initializer_list<std::string_view>{"build", "linux", "--abi", foreign_abi},
            std::initializer_list<std::string_view>{"build", "linux", "--sdk", "."},
-           std::initializer_list<std::string_view>{"run", "web", "--watch"},
+           std::initializer_list<std::string_view>{"run", "android", "--watch", "--no-shell"},
        }) {
     const Invocation invocation = Invoke(modules / "src", arguments);
     INFO(invocation.error);

@@ -275,7 +275,8 @@ A library that states `[package.metadata.dist-apk]` is not inferred; its table r
 A library's iOS Swift package reaches the application through the Xcode shell; `rules-swift` compiles only the Swift sources a package names in its own manifest, so packaging for iOS without the shell warns that the package is not included.
 Android applications state `cxx_runtime = "self-contained"` for their Android triples, so the application's shared library links the C++ runtime statically, as the CMake integration's `c++_static`.
 
-`mcpp pack` reports the Web page as the distributable; the CLI publishes the page's directory, which holds the module, its WebAssembly, and the preloaded data.
+A Web build also lays the rendered page beside the module as `<program>.html`, the name the CMake build gives it, so the CLI serves and watches either integration's build the same way.
+`mcpp pack` reports the Web page as the distributable; the CLI publishes the page's directory, which holds the module, its WebAssembly, the preloaded data, and that page beside dist-web's `index.html`.
 
 ## 8. Verification
 

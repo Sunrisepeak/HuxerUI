@@ -458,8 +458,8 @@ def find_browser() -> str | None:
     return None
 
 
-def web_launch_facts(record: dict, expected: dict, project: Path, work: Path, timeout: float) -> dict:
-    """Serves the Web build with the project's own page and reads the probe from a headless browser's console."""
+def web_launch_facts(record: dict, expected: dict, work: Path, timeout: float) -> dict:
+    """Serves the Web build's own page and reads the probe from a headless browser's console."""
     import http.server
     import re
     import threading
@@ -468,14 +468,9 @@ def web_launch_facts(record: dict, expected: dict, project: Path, work: Path, ti
     if browser is None:
         raise Unavailable("no Chrome or Chromium is available; set HUXERUI_CTS_BROWSER")
     artifact = Path(record["artifact"])
-    page = project / "platform" / "web" / "index.html.in"
+    page = artifact.with_suffix(".html")
     if not page.is_file():
-        raise RuntimeError(f"the project has no Web page: {page}")
-    values = {"HUXERUI_WEB_MODULE_FILE": artifact.name, "HUXERUI_WEB_STORAGE_KEY": "org.huxerui.cts.launch",
-              "HUXERUI_WEB_FAVICON_FILE": "favicon.svg", "HUXERUI_WEB_APPLE_TOUCH_ICON_FILE": "apple-touch-icon.png"}
-    html = re.sub(r"@([A-Z0-9_]+)@", lambda match: values.get(match.group(1), match.group(0)),
-                  page.read_text(encoding="utf-8"))
-    (artifact.parent / "cts-launch.html").write_text(html, encoding="utf-8")
+        raise RuntimeError(f"the build laid no page beside the module: {page}")
 
     class Handler(http.server.SimpleHTTPRequestHandler):
         extensions_map = {**http.server.SimpleHTTPRequestHandler.extensions_map, ".wasm": "application/wasm",
@@ -489,7 +484,7 @@ def web_launch_facts(record: dict, expected: dict, project: Path, work: Path, ti
 
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    url = f"http://127.0.0.1:{server.server_address[1]}/cts-launch.html"
+    url = f"http://127.0.0.1:{server.server_address[1]}/{page.name}"
     profile = work / "browser-profile"
     shutil.rmtree(profile, ignore_errors=True)
     command = [browser, "--headless=new", "--no-sandbox", "--no-first-run", "--disable-gpu",
@@ -1178,7 +1173,7 @@ def check_project(check: str, integration: str, target: str, host: str, project:
         work = out / "work" / f"{integration}-{target}" / name
         try:
             if target == "web":
-                result["facts"].update(web_launch_facts(result["record"], launch, project, work, arguments.launch_timeout))
+                result["facts"].update(web_launch_facts(result["record"], launch, work, arguments.launch_timeout))
             elif target == "android":
                 if android_device_abi() is None:
                     raise Unavailable("no Android device or emulator is attached")
