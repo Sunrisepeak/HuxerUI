@@ -885,3 +885,21 @@ TEST_CASE("HuxerUICliAddsMissingPlatformsFromNestedProjectDirectories") {
   );
   REQUIRE(Invoke(nested, {"platform", "add", "all"}).result == 1);
 }
+
+TEST_CASE("HuxerUICliHelpReadsTheSameWithAndWithoutATerminal") {
+  // A terminal without colors still gets the help's exact text: styling only ever adds color.
+  for (const std::vector<std::string_view>& arguments :
+       {std::vector<std::string_view>{"--help"}, std::vector<std::string_view>{"build", "--help"}}) {
+    std::istringstream answers;
+    std::ostringstream prompts;
+    huxerui::cli::prompt::LinePrompter prompter(answers, prompts);
+    std::ostringstream styled;
+    std::ostringstream plain;
+    std::ostringstream error;
+    std::istringstream input;
+    REQUIRE(huxerui::cli::Run(arguments, ".", {}, input, styled, error, &prompter) == 0);
+    REQUIRE(huxerui::cli::Run(arguments, ".", {}, input, plain, error, nullptr) == 0);
+    REQUIRE(styled.str() == plain.str());
+    REQUIRE(plain.str().find("Usage:\n") != std::string::npos);
+  }
+}

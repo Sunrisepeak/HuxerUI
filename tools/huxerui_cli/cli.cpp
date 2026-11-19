@@ -9,6 +9,7 @@
 #include <iterator>
 #include <optional>
 #include <ostream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -103,6 +104,53 @@ void PrintBuildHelp(std::ostream& output, std::string_view command) {
     PrintPackageOptions(output);
   } else if (command == "run") {
     output << watch_option_help;
+  }
+}
+
+/// The help as written, colored on a terminal only: the title, the headings, and each usage line's command, with its
+/// arguments muted. The text itself is the same everywhere, so what a script or an agent reads does not change.
+void WriteHelp(std::string_view text, std::ostream& output) {
+  if (!console.Styled()) {
+    output << text;
+    return;
+  }
+  using prompt::Role;
+  bool first = true;
+  bool aliases = false;
+  std::size_t start = 0;
+  while (start < text.size()) {
+    const std::size_t end = text.find('\n', start);
+    const std::string line(text.substr(start, end == std::string_view::npos ? std::string_view::npos : end - start));
+    start = end == std::string_view::npos ? text.size() : end + 1;
+    prompt::Line painted{{line, Role::Plain}};
+    if (line.empty()) {
+      aliases = false;
+    } else if (first && !line.starts_with(' ') && !line.ends_with(':')) {
+      painted = {{line, Role::Brand}};
+    } else if (!line.starts_with(' ') && line.ends_with(':')) {
+      painted = {{line, Role::Strong}};
+      aliases = line == "Command aliases:";
+    } else if (line.starts_with("  huxerui ")) {
+      // The command is the words before the first argument, option, or placeholder.
+      std::size_t command_end = 2;
+      while (command_end < line.size()) {
+        const std::size_t word = line.find_first_not_of(' ', command_end);
+        if (word == std::string::npos || line[word] == '[' || line[word] == '<' || line[word] == '-') {
+          break;
+        }
+        command_end = line.find(' ', word);
+        if (command_end == std::string::npos) {
+          command_end = line.size();
+        }
+      }
+      painted = {{"  ", Role::Plain}, {line.substr(2, command_end - 2), Role::Accent},
+                 {line.substr(command_end), Role::Muted}};
+    } else if (aliases && line.starts_with("  ")) {
+      const std::size_t alias_end = line.find(' ', 2);
+      painted = {{"  ", Role::Plain}, {line.substr(2, alias_end - 2), Role::Accent}, {line.substr(alias_end), Role::Plain}};
+    }
+    console.Write(output, painted);
+    first = false;
   }
 }
 
@@ -2351,7 +2399,9 @@ int Run(std::span<const std::string_view> arguments, const std::filesystem::path
   try {
     console = prompter != nullptr ? prompt::Console(prompter->OutputStyle()) : prompt::Console();
     if (arguments.empty() || arguments[0] == "--help" || arguments[0] == "-h") {
-      PrintHelp(output);
+      std::ostringstream help;
+      PrintHelp(help);
+      WriteHelp(help.str(), output);
       return 0;
     }
     if (arguments[0] == "--version") {
@@ -2367,7 +2417,9 @@ int Run(std::span<const std::string_view> arguments, const std::filesystem::path
     }
     if (arguments.size() == 2 && (arguments[1] == "--help" || arguments[1] == "-h") &&
         (command == "build" || command == "run" || command == "package" || command == "open")) {
-      PrintBuildHelp(output, command);
+      std::ostringstream help;
+      PrintBuildHelp(help, command);
+      WriteHelp(help.str(), output);
       return 0;
     }
     if (command == "create") {

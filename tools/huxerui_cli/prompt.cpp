@@ -814,6 +814,16 @@ void Console::Item(std::ostream& output, Mark mark, std::string_view label, std:
          << '\n';
 }
 
+void Console::Write(std::ostream& output, const Line& line) const {
+  if (!style_) {
+    output << PlainText(line) << '\n';
+    return;
+  }
+  Style whole = *style_;
+  whole.width = 0;
+  output << Paint(line, whole) << '\n';
+}
+
 void Console::Gap(std::ostream& output) const {
   if (style_) {
     output << '\n';

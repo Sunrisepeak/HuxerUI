@@ -183,6 +183,8 @@ public:
             std::size_t label_width = 0, bool cut_to_width = false) const;
   /// A blank line between groups, on a terminal only.
   void Gap(std::ostream& output) const;
+  /// A line the caller composed from roles: painted whole on a terminal, its plain text elsewhere.
+  void Write(std::ostream& output, const Line& line) const;
   /// Whether the lines carry the prompt's symbols and colors; output elsewhere keeps its plain format.
   [[nodiscard]] bool Styled() const noexcept {
     return style_.has_value();

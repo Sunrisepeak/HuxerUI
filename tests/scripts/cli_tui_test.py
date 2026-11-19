@@ -361,6 +361,17 @@ class CreatePromptTests(unittest.TestCase):
         self.assertIn("Android NDK", provided)
         self.assertTrue(all(cell.fg == VIOLET for cell in self.cells(terminal, "◆")))
 
+    def test_help_is_colored_and_reads_as_without_a_terminal(self):
+        plain = subprocess.run([CLI, "--help"], capture_output=True, text=True, encoding="utf-8",
+                               timeout=TIMEOUT).stdout
+        terminal = self.start(environment(), columns=300, rows=60, arguments=("--help",))
+        terminal.finish()
+        self.assertEqual("\n".join(terminal.rows()).rstrip(), plain.rstrip())
+        self.assertTrue(all(cell.fg == VIOLET and cell.bold for cell in self.cells(terminal, "HuxerUI project")))
+        self.assertTrue(all(cell.bold for cell in self.cells(terminal, "Usage:")))
+        self.assertTrue(all(cell.fg == VIOLET for cell in self.cells(terminal, "huxerui build")))
+        self.assertTrue(all(cell.fg == "808080" for cell in self.cells(terminal, "[platform-list]")))
+
     def test_without_a_terminal_create_applies_defaults_and_writes_no_escapes(self):
         result = subprocess.run([CLI, "create", "app", "plain", "--agent", "none"], cwd=self.work,
                                 env=dict(environment(), HUXERUI_HOME=str(self.home)), stdin=subprocess.DEVNULL,
