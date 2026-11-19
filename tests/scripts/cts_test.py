@@ -283,14 +283,18 @@ class CreatedFactTests(unittest.TestCase):
 
 
 class ImportCheckTests(unittest.TestCase):
-    def test_the_preview_imports_the_library_module(self):
+    def test_the_preview_imports_the_module_the_library_declares(self):
         with tempfile.TemporaryDirectory() as directory:
             library = Path(directory) / "acme"
             (library / "examples/preview/src").mkdir(parents=True)
-            (library / "mcpp.toml").write_text('[package.metadata.huxerui]\nnamespace = "acme::widgets"\n', encoding="utf-8")
+            (library / "modules").mkdir()
+            (library / "mcpp.toml").write_text('[package.metadata.huxerui]\nnamespace = "acme::widgets"\n\n'
+                                               '[lib]\npath = "modules/widgets.cppm"\n', encoding="utf-8")
+            (library / "modules/widgets.cppm").write_text("module;\n\nexport module acme.gauges;\n", encoding="utf-8")
             cts.write_import_check(library, library / "examples/preview")
             unit = (library / "examples/preview/src/cts_import_check.cppm").read_text(encoding="utf-8")
-        self.assertIn("import acme.widgets;", unit)
+        # The module is the unit's own, not one the runner derives from the C++ namespace.
+        self.assertIn("import acme.gauges;", unit)
         self.assertIn("acme::widgets::Install(context);", unit)
 
 

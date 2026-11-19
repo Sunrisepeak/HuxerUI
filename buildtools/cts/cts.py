@@ -1021,7 +1021,13 @@ def write_import_check(library: Path, preview: Path) -> None:
     if not match:
         raise SystemExit(f"{library}: the mcpp declaration states no namespace")
     name_space = match.group(1)
-    module = name_space.replace("::", ".")
+    # The module is the one the library's [lib] unit declares, as an importer reads it.
+    unit = re.search(r'^\[lib\][^\[]*?^path\s*=\s*"([^"]+)"', manifest, re.MULTILINE | re.DOTALL)
+    declared = re.search(r'^\s*export\s+module\s+([\w.]+)\s*;',
+                         (library / unit.group(1)).read_text(encoding="utf-8") if unit else "", re.MULTILINE)
+    if not declared:
+        raise SystemExit(f"{library}: the mcpp declaration's [lib] unit declares no module")
+    module = declared.group(1)
     (preview / "src" / "cts_import_check.cppm").write_text(
         "// Written by cts.py create: the Preview reaches the library through `import`, which only mcpp builds.\n"
         "export module cts_import_check;\n\n"
