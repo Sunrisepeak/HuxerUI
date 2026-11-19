@@ -92,12 +92,45 @@ The module is named after that namespace with `::` written as `.`, such as `acme
 
 3. Create `modules/acme.widgets.cppm` as an empty file; mcpp requires the `[lib]` path to exist before the build writes it.
 4. Build in the library root with `mcpp build`. The first build reports `generated modules/acme.widgets.cppm from the public headers (<n> names)`. Commit the file and do not edit it: later builds rewrite it whenever the headers change.
-5. Resolve the build's warnings. A macro a header defines does not reach `import`, so a translation unit that uses it also includes that header.
+5. Resolve the build's macro warnings as [Macros in the public headers](#macros-in-the-public-headers) describes.
 
 The interface exports the names declared directly in the namespace: functions, classes, templates, enumerations, aliases, and variables.
 Names in a nested namespace, such as `detail`, and names declared `static` are not exported; move a name a consumer needs into the namespace itself.
 A consumer built with mcpp depends on the library and writes `import acme.widgets;`, and a consumer built with CMake keeps including the headers; both reach the same entities, so the library needs no second binary.
 To write the interface by hand instead, set `cpp_modules_gen = false` under `[package.metadata.huxerui]`; the build then reports each public name the file does not export.
+
+### Macros in the public headers
+
+A module carries no macro, so a macro reaches only the translation units that include the header defining it.
+These rules cover the macros of the public headers, which are part of the library's interface; macros in the library's own sources, private headers, and module units are unrestricted.
+
+- Prefer a language entity to a macro in the interface: a constant as `inline constexpr`, a type as `using`, a computation as a `constexpr` function, and a scope or similar syntax through `[[huxerui::composable]]` or a lambda. Declared in the namespace, it is exported like any other name.
+- Keep a macro only where a macro is required, such as a version or feature test that consumers evaluate with `#if`.
+- To offer such a macro to importers, map it by hand in `modules/<module>.macros.cppm`: a constant with the macro's own name in `<namespace>::macros`. Map only the macros importers need; there is no generated mapping. When the file exists, the build compiles it and the generated interface re-exports it, so `import <module>;` reaches the constants.
+- `#undef` a helper macro at the end of the header that defines it; the build does not report it.
+- In a translation unit that both includes the header and imports the module, write the macro, not `<namespace>::macros::<name>`: the defined macro expands inside the qualified name.
+
+The macros unit reads the values while the macros are defined, then undefines them, because a macro defined in the global module fragment stays defined to the end of the unit:
+
+```cpp
+module;
+
+#include <acme/widgets/version.h>
+
+namespace acme_widgets_macros_capture {
+inline constexpr auto value_ACME_WIDGETS_VERSION = ACME_WIDGETS_VERSION;
+} // namespace acme_widgets_macros_capture
+
+#undef ACME_WIDGETS_VERSION
+
+export module acme.widgets.macros;
+
+export namespace acme::widgets::macros {
+inline constexpr auto ACME_WIDGETS_VERSION = acme_widgets_macros_capture::value_ACME_WIDGETS_VERSION;
+} // namespace acme::widgets::macros
+```
+
+A macro the unit names is no longer reported. With `cpp_modules_gen = false`, the hand-written interface writes `export import <module>.macros;` itself, and the build reports its absence.
 
 ## Build and verification
 
