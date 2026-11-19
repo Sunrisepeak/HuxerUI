@@ -103,6 +103,7 @@ jobs:
       run_sequence: ${{ steps.select.outputs.run_sequence }}
       compare: ${{ steps.select.outputs.compare }}
       compare_macos: ${{ steps.select.outputs.compare_macos }}
+      emscripten: ${{ steps.toolchains.outputs.emscripten }}
     steps:
       # The pull request's merge commit and its first parent, the base it is compared with.
       - uses: actions/checkout@v5
@@ -113,6 +114,14 @@ jobs:
         run: |
           python3 -I tests/scripts/cts_test.py
           python3 -I tests/scripts/conformance_plan_test.py
+
+      # The CLI requires the Emscripten version the framework is released with, so the jobs install that one.
+      - name: Read the pinned toolchain versions
+        id: toolchains
+        run: |
+          version=$(sed -n 's/^set(HUXERUI_WEB_EMSCRIPTEN_VERSION "\(.*\)")$/\1/p' cmake/HuxerUISdk.cmake)
+          test -n "$version"
+          echo "emscripten=$version" >> "$GITHUB_OUTPUT"
 
       # The pull request's head commit is the merge commit's second parent.
       - name: Select the jobs
@@ -149,8 +158,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # The CMake integration builds with the host's MSVC; mcpp provisions its own toolchain, so its rows run without
+      # it, which is what `huxerui doctor` reports for an mcpp project. The CLI's own build finds MSVC through the
+      # Visual Studio generator.
       - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
-        if: matrix.row.host == 'windows'
+        if: matrix.row.host == 'windows' && matrix.integration == 'cmake'
 
       # The mcpp integration takes its GTK stack from the xlings payloads the
       # manifest declares; only the virtual display comes from the machine.
@@ -192,6 +204,8 @@ jobs:
       - name: Install Emscripten
         if: matrix.row.target == 'web' && matrix.integration == 'cmake'
         uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: ${{ needs.plan.outputs.emscripten }}
 
       # The NDK the HuxerUI CLI and its Android shell pin; an older one lacks parts of the C++20 library.
       - name: Install the Android NDK
@@ -474,6 +488,8 @@ jobs:
       - name: Install Emscripten
         if: matrix.integration == 'cmake'
         uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: ${{ needs.plan.outputs.emscripten }}
 
       - name: Install the Android NDK
         if: matrix.integration == 'cmake'
@@ -571,8 +587,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # The CMake integration builds with the host's MSVC; mcpp provisions its own toolchain, so its rows run without
+      # it, which is what `huxerui doctor` reports for an mcpp project. The CLI's own build finds MSVC through the
+      # Visual Studio generator.
       - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
-        if: matrix.row.host == 'windows'
+        if: matrix.row.host == 'windows' && matrix.integration == 'cmake'
 
       # The mcpp integration takes its GTK stack from the xlings payloads the
       # manifest declares; only the virtual display comes from the machine.
@@ -614,6 +633,8 @@ jobs:
       - name: Install Emscripten
         if: matrix.row.target == 'web' && matrix.integration == 'cmake'
         uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: ${{ needs.plan.outputs.emscripten }}
 
       # The NDK the HuxerUI CLI and its Android shell pin; an older one lacks parts of the C++20 library.
       - name: Install the Android NDK
