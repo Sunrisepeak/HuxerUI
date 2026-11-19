@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=CTS App Modules
+Exec=cts_app_modules
+Icon=cts_app_modules
+Categories=Utility;
+Terminal=false
