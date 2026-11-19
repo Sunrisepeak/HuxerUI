@@ -73,9 +73,10 @@ class RebuildTests(unittest.TestCase):
         adapter = mock.Mock()
         adapter.build.return_value = record(target="cts_app_minimal")
         with mock.patch.object(cts, "collect_facts", return_value={"profile": "debug"}), \
-                mock.patch.object(cts, "target_support", return_value=({"capabilities": []}, "")):
+                mock.patch.object(cts, "target_support", return_value=({"capabilities": []}, "")), \
+                mock.patch.object(cts, "ensure_shell"):
             with tempfile.TemporaryDirectory() as out:
-                result = cts.build_project("x", adapter, "linux", "linux", project, Path(out))
+                result = cts.build_project("x", adapter, "linux", "linux", project, Path(out), None)
         self.assertEqual(adapter.build.call_count, 2)
         self.assertEqual(result["status"], "built")
         self.assertEqual(result["facts"]["rebuild"], "succeeded")
@@ -84,9 +85,10 @@ class RebuildTests(unittest.TestCase):
         project = cts.PROJECTS / "app_minimal"
         adapter = mock.Mock()
         adapter.build.side_effect = [record(), RuntimeError("boom")]
-        with mock.patch.object(cts, "target_support", return_value=({"capabilities": []}, "")):
+        with mock.patch.object(cts, "target_support", return_value=({"capabilities": []}, "")), \
+                mock.patch.object(cts, "ensure_shell"):
             with tempfile.TemporaryDirectory() as out:
-                result = cts.build_project("x", adapter, "linux", "linux", project, Path(out))
+                result = cts.build_project("x", adapter, "linux", "linux", project, Path(out), None)
         self.assertEqual(result["status"], "failed")
         self.assertIn("second build of unchanged inputs", result["reason"])
 
@@ -277,9 +279,46 @@ class CreatedFactTests(unittest.TestCase):
             cts.write_json(project / "expected.json", {"project": "created_x", "facts": {}})
             cts.write_json(project / "created.json", {"facts": {"create.declarations": cts.CREATED_DECLARATIONS}})
             with mock.patch.object(cts, "collect_facts", return_value={"profile": "debug"}), \
-                    mock.patch.object(cts, "target_support", return_value=({"capabilities": []}, "")):
-                result = cts.build_project("x", adapter, "linux", "linux", project, Path(directory) / "out")
+                    mock.patch.object(cts, "target_support", return_value=({"capabilities": []}, "")), \
+                    mock.patch.object(cts, "ensure_shell"):
+                result = cts.build_project("x", adapter, "linux", "linux", project, Path(directory) / "out", None)
         self.assertEqual(result["facts"]["create.declarations"], cts.CREATED_DECLARATIONS)
+
+
+class ShellTests(unittest.TestCase):
+    def test_a_project_carrying_the_shell_runs_no_cli(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            (project / "platform/linux").mkdir(parents=True)
+            with mock.patch.object(cts.subprocess, "run") as run:
+                cts.ensure_shell(None, "linux", project, 1.0)
+        run.assert_not_called()
+
+    def test_a_missing_shell_needs_the_cli(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(cts.Unavailable):
+                cts.ensure_shell(None, "linux", Path(directory), 1.0)
+
+    def test_the_cli_adds_the_shell_in_the_project(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            with mock.patch.object(cts.subprocess, "run", return_value=mock.Mock(returncode=0)) as run:
+                cts.ensure_shell("huxerui", "web", project, 1.0)
+        self.assertEqual(run.call_args.args[0], ["huxerui", "platform", "add", "web"])
+        self.assertEqual(run.call_args.kwargs["cwd"], project)
+
+    def test_a_failed_add_leaves_no_partial_shell(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+
+            def partial(*_, **__):
+                (project / "platform/web").mkdir(parents=True)
+                return mock.Mock(returncode=1, stderr="no")
+
+            with mock.patch.object(cts.subprocess, "run", side_effect=partial):
+                with self.assertRaises(RuntimeError):
+                    cts.ensure_shell("huxerui", "web", project, 1.0)
+            self.assertFalse((project / "platform/web").exists())
 
 
 class ImportCheckTests(unittest.TestCase):
@@ -309,7 +348,8 @@ class SequenceTests(unittest.TestCase):
                 mock.patch.dict(cts.ADAPTERS, {"x": module}), \
                 mock.patch.object(cts, "collect_facts", side_effect=facts), \
                 mock.patch.object(cts, "target_support", return_value=({"capabilities": []}, "")), \
-                mock.patch.object(cts, "check_project", return_value=("pass", "")):
+                mock.patch.object(cts, "check_project", return_value=("pass", "")), \
+                mock.patch.object(cts, "ensure_shell"):
             arguments = argparse.Namespace(integration="x", targets="linux,web", host="linux", out=out,
                                            project=["app_minimal"], cli=None)
             return cts.command_sequence(arguments), adapter.build.call_args_list

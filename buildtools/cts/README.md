@@ -8,7 +8,8 @@ Each project states its expected facts once in `expected.json`, and every integr
 
 ## Projects
 
-Each project has one set of sources, resources, and platform shells, plus one native declaration per build system.
+Each project has one set of sources and resources, plus one native declaration per build system.
+It carries no platform shell: before a project is built for a target, the CLI `--cli` names adds that target's standard shell with `huxerui platform add <platform>`, as a developer does, so the suite checks the shells the CLI ships; the project ignores what it adds.
 
 | Project | Checks |
 | --- | --- |
@@ -107,8 +108,8 @@ Neither is a pass or a failure.
 ```bash
 python3 buildtools/cts/cts.py list
 python3 buildtools/cts/cts.py create --integration cmake --target linux --cli build/cli/huxerui --out /tmp/cts
-python3 buildtools/cts/cts.py build --integration cmake --target linux --out /tmp/cts
-python3 buildtools/cts/cts.py build --integration mcpp --target linux --mcpp-toolchain llvm@22.1.8 --out /tmp/cts
+python3 buildtools/cts/cts.py build --integration cmake --target linux --cli build/cli/huxerui --out /tmp/cts
+python3 buildtools/cts/cts.py build --integration mcpp --target linux --mcpp-toolchain llvm@22.1.8 --cli build/cli/huxerui --out /tmp/cts
 python3 buildtools/cts/cts.py check --integration mcpp --target linux --check resources libraries --out /tmp/cts
 python3 buildtools/cts/cts.py sequence --integration mcpp --targets linux,web,android --cli build/cli/huxerui --out /tmp/cts-sequence
 python3 buildtools/cts/cts.py compare --check resources /tmp/cts/results
@@ -125,7 +126,7 @@ The `launch` checkpoint starts each application with `HUXERUI_CTS_PROBE` set and
 On Android and iOS it starts the distributable the `package` checkpoint published, and packages a project that checks no package facts the same way first: the APK on the one attached device or emulator, whose ABI the package is then built for, reading the `HUXERUI_CTS_PROBE` log tag; and the application bundle, built for the host's architecture, on a booted iOS Simulator, or the first available iPhone Simulator it boots, reading the application's standard output.
 A device launch that records nothing before the timeout, or a host with no device, is reported as `unavailable`, with the device log kept in the work directory.
 The `package` checkpoint runs `huxerui package <platform> --build-system <integration>` in the project, as a developer does, with the CLI `--cli` names, reads the published distributable, including the MSI a WiX setup executable carries, and removes what the command created in the project.
-On Android and iOS the package comes from the standard shell: a project without one gets it from `huxerui platform add <platform>` first, which is removed afterwards, and Android is packaged for `arm64-v8a`.
+On Android and iOS the package comes from the standard shell, and Android is packaged for `arm64-v8a`.
 The `package-shellless` checkpoint adds `--no-shell` and is declared only by an integration that offers it.
 The `usage` checkpoint runs `huxerui build` with what a developer can get wrong and reads only the exit code and, for a driver option, whether the option was reported; it follows `package`, so the release build a driver option repeats has nothing left to do.
 The `doctor` checkpoint is declared for the desktop platforms and the Web; on Android and iOS the diagnosis also asks for SDK components the standard shell installs itself, so it is not yet a statement about the build system.

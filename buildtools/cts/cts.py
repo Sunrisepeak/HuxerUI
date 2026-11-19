@@ -131,6 +131,9 @@ EXIT_MEANINGS = {0: "success", 1: "operation failure", 2: "invalid usage"}
 # The platforms whose standard shell builds and packages the application from the core an integration builds.
 SHELL_TARGETS = ("android", "ios")
 
+# Bounds `huxerui platform add`, which only writes files.
+SHELL_TIMEOUT = 300.0
+
 
 sys.path.insert(0, str(CTS_ROOT))
 from adapter_api import Unavailable, load_json, log, validate_record  # noqa: E402
@@ -227,9 +230,6 @@ def result_path(out: Path, integration: str, target: str, project: str) -> Path:
     return out / "results" / f"{integration}-{target}-on-{current_host()}" / f"{project}.json"
 
 
-# ---------------------------------------------------------------- integrations
-
-
 def discover_integrations() -> dict[str, Path]:
     """Every directory below `buildtools` that declares support is an integration."""
     return {path.parent.name: path.parent for path in sorted(BUILDTOOLS.glob("*/support.json"))}
@@ -273,9 +273,6 @@ class PrefixedOptions:
 
 
 ADAPTERS = load_adapters()
-
-
-# ----------------------------------------------------------------------- facts
 
 
 def dynamic_dependencies(target: str, artifact: Path) -> list[str]:
@@ -731,8 +728,6 @@ def ios_launch_facts(expected: dict, work: Path, timeout: float) -> dict:
     return device_launch_result(observed, expected, log_path, "iOS Simulator")
 
 
-# --------------------------------------------------------------------- package
-
 # What `huxerui package` may create inside a project; each one it creates is removed afterwards.
 PACKAGE_OUTPUTS = ("dist", "build", "target", ".huxerui")
 
@@ -822,11 +817,23 @@ def packaged_resources(kind: str, dist: Path, project: Path, work: Path, timeout
     return resource_digests(unpacked)
 
 
-def shell_project_exists(target: str, shell: Path) -> bool:
-    """Whether a platform's shell directory holds the platform build project, not only an entry source."""
-    if target == "android":
-        return (shell / "settings.gradle").is_file()
-    return any(shell.glob("*.xcodeproj"))
+def ensure_shell(cli: str | None, target: str, project: Path, timeout: float) -> None:
+    """Adds the target's standard platform shell with `huxerui platform add`, as a developer does, unless the project
+    carries one.
+
+    A suite project carries no shell: the CLI writes the current one from its templates, so the suite checks the shells
+    the CLI ships rather than copies of them. The shell stays for the later checkpoints, and the project ignores it."""
+    shell = project / "platform" / target
+    if shell.exists():
+        return
+    if not cli:
+        raise Unavailable(f"the project carries no {target} shell and no HuxerUI CLI was given to add it; pass --cli")
+    add = [cli, "platform", "add", target]
+    log("  $ " + " ".join(add))
+    added = subprocess.run(add, cwd=project, capture_output=True, text=True, timeout=timeout)
+    if added.returncode != 0:
+        shutil.rmtree(shell, ignore_errors=True)
+        raise RuntimeError(f"`huxerui platform add {target}` exited with {added.returncode}\n{added.stderr}")
 
 
 def usage_facts(cli: str | None, integration: str, target: str, project: Path, work: Path,
@@ -909,30 +916,11 @@ def package_facts(cli: str | None, integration: str, target: str, project: Path,
                   timeout: float, shellless: bool = False) -> dict:
     """Runs `huxerui package` the way a developer does and reads what it published.
 
-    On Android and iOS the package comes from the standard shell, which the CLI adds to the project first when the
-    project carries none; `shellless` packages without it instead."""
+    On Android and iOS the package comes from the standard shell; `shellless` packages without it instead."""
     if not cli:
         raise Unavailable("no HuxerUI CLI was given; pass --cli")
+    ensure_shell(cli, target, project, timeout)
     created = [project / name for name in PACKAGE_OUTPUTS if not (project / name).exists()]
-    shell = project / "platform" / target
-    # A project may carry only the entry an integration's own path compiles, such as `platform/ios/App/main.mm`;
-    # it is set aside while the CLI writes the complete shell, and restored afterwards.
-    set_aside = work / "shell-set-aside"
-    shutil.rmtree(set_aside, ignore_errors=True)
-    if target in SHELL_TARGETS and not shellless:
-        if shell.exists() and not shell_project_exists(target, shell):
-            set_aside.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(shell), str(set_aside))
-        if not shell.exists():
-            created.append(shell)
-            add = [cli, "platform", "add", target]
-            log("  $ " + " ".join(add))
-            added = subprocess.run(add, cwd=project, capture_output=True, text=True, timeout=timeout)
-            if added.returncode != 0:
-                shutil.rmtree(shell, ignore_errors=True)
-                if set_aside.exists():
-                    shutil.move(str(set_aside), str(shell))
-                raise RuntimeError(f"`huxerui platform add {target}` exited with {added.returncode}\n{added.stderr}")
     # The integration is reached the way a developer reaches it, so the dispatch is checked with the package.
     command = [cli, "package", target, *dispatch_selection(integration, project), *cli_arguments(integration)]
     if shellless:
@@ -978,11 +966,6 @@ def package_facts(cli: str | None, integration: str, target: str, project: Path,
     finally:
         for directory in created:
             shutil.rmtree(directory, ignore_errors=True)
-        if set_aside.exists():
-            shutil.move(str(set_aside), str(shell))
-
-
-# ---------------------------------------------------------------------- create
 
 
 def created_style(build_systems: list[str], kind: str = "app") -> str:
@@ -1098,10 +1081,7 @@ def ensure_published(arguments, integration: str, target: str, project: Path, bu
     package_facts(arguments.cli, integration, target, project, built, work, arguments.package_timeout)
 
 
-# ----------------------------------------------------------------------- build
-
-
-def build_project(name: str, adapter, target: str, host: str, project: Path, out: Path) -> dict:
+def build_project(name: str, adapter, target: str, host: str, project: Path, out: Path, cli: str | None) -> dict:
     expected = expected_for(project, target)
     result: dict = {"project": project_name(project), "integration": name, "target": target, "host": host,
                     "status": "built", "reason": "", "record": {}, "facts": {}}
@@ -1119,6 +1099,7 @@ def build_project(name: str, adapter, target: str, host: str, project: Path, out
     work = out / "work" / f"{name}-{target}" / project_name(project)
     work.mkdir(parents=True, exist_ok=True)
     try:
+        ensure_shell(cli, target, project, SHELL_TIMEOUT)
         validate_record(name, adapter.build(project, work, target))
         # A second build of unchanged inputs must also succeed; its record is the one checked.
         try:
@@ -1142,14 +1123,12 @@ def command_build(arguments) -> int:
     failed = False
     for project in selected_projects(arguments.project, out, arguments.integration, arguments.target):
         log(f"== build  {arguments.integration} / {arguments.target} / {project_name(project)}")
-        result = build_project(arguments.integration, adapter, arguments.target, arguments.host, project, out)
+        result = build_project(arguments.integration, adapter, arguments.target, arguments.host, project, out,
+                               arguments.cli)
         write_json(result_path(out, arguments.integration, arguments.target, project_name(project)), result)
         log(f"   {result['status'].upper()}" + (f": {result['reason']}" if result["reason"] else ""))
         failed = failed or result["status"] == "failed"
     return 1 if failed else 0
-
-
-# ----------------------------------------------------------------------- check
 
 
 def allowed_reason(integration: str, project: str, fact: str) -> str | None:
@@ -1323,7 +1302,7 @@ def command_sequence(arguments) -> int:
     for target in targets:
         for project in projects:
             log(f"== sequence  build {arguments.integration} / {target} / {project_name(project)}")
-            result = build_project(arguments.integration, adapter, target, arguments.host, project, out)
+            result = build_project(arguments.integration, adapter, target, arguments.host, project, out, arguments.cli)
             write_json(result_path(out, arguments.integration, target, project_name(project)), result)
             log(f"   {result['status'].upper()}" + (f": {result['reason']}" if result["reason"] else ""))
             failed = failed or result["status"] == "failed"
@@ -1357,7 +1336,7 @@ def command_sequence(arguments) -> int:
             continue
         log(f"== sequence  rebuild {arguments.integration} / {targets[0]} / {name} after {', '.join(targets[1:])}")
         # The same work directory, so a build directory outside the project is reused as well.
-        again = build_project(arguments.integration, adapter, targets[0], arguments.host, project, out)
+        again = build_project(arguments.integration, adapter, targets[0], arguments.host, project, out, arguments.cli)
         if again["status"] != "built":
             status, detail = "fail", f"the rebuild failed: {again['reason']}"
         else:
@@ -1370,9 +1349,6 @@ def command_sequence(arguments) -> int:
         failed = failed or status == "fail"
     summarize(f"sequence: after every target ({arguments.integration})", rows)
     return 1 if failed else 0
-
-
-# --------------------------------------------------------------------- compare
 
 
 def command_compare(arguments) -> int:
@@ -1452,9 +1428,6 @@ def command_matrix(arguments) -> int:
             for project in sorted(rows):
                 stream.write(f"| `{project}` | " + " | ".join(rows[project].get(column, "not run") for column in columns) + " |\n")
     return 0
-
-
-# -------------------------------------------------------------------- coverage
 
 
 COVERAGE_BEGIN = "<!-- coverage:begin (generated by `cts.py coverage --write`) -->"
@@ -1576,12 +1549,12 @@ def main() -> int:
         command.add_argument("--host", default=current_host(), help="host platform; defaults to this machine")
         command.add_argument("--out", required=True, help="directory for build output and result files")
         command.add_argument("--project", action="append", help="limit to the named project; repeatable")
+        command.add_argument("--cli", help="the HuxerUI CLI that adds platform shells and runs the CLI checkpoints")
         for name, module in sorted(ADAPTERS.items()):
             module.add_arguments(PrefixedOptions(command.add_argument_group(f"{name} integration"), name))
         if with_checks:
             command.add_argument("--check", nargs="+", choices=[*CHECKS, "all"], help="checkpoints to evaluate")
             command.add_argument("--launch-timeout", type=float, default=30.0)
-            command.add_argument("--cli", help="the HuxerUI CLI the package checkpoint runs")
             command.add_argument("--package-timeout", type=float, default=3600.0)
 
     create = commands.add_parser("create", help="create the declared projects with the CLI for build and check")
@@ -1607,7 +1580,7 @@ def main() -> int:
     sequence.add_argument("--host", default=current_host(), help="host platform; defaults to this machine")
     sequence.add_argument("--out", required=True, help="directory for build output and result files")
     sequence.add_argument("--project", action="append", help="limit to the named project; repeatable")
-    sequence.add_argument("--cli", help="the HuxerUI CLI that builds several targets with one command")
+    sequence.add_argument("--cli", help="the HuxerUI CLI that adds platform shells and builds several targets at once")
     for name, module in sorted(ADAPTERS.items()):
         module.add_arguments(PrefixedOptions(sequence.add_argument_group(f"{name} integration"), name))
     sequence.set_defaults(handler=command_sequence)

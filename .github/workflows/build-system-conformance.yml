@@ -364,7 +364,7 @@ jobs:
       - name: Build the conformance projects
         run: |
           ${{ matrix.row.python }} buildtools/cts/cts.py build --integration ${{ matrix.integration }} \
-            --target ${{ matrix.row.target }} --out "$RUNNER_TEMP/cts" $CTS_PROJECTS
+            --target ${{ matrix.row.target }} --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts" $CTS_PROJECTS
 
       - name: "Check: default build"
         if: ${{ !cancelled() }}
@@ -783,7 +783,7 @@ jobs:
       - name: Build the conformance projects
         run: |
           ${{ matrix.row.python }} buildtools/cts/cts.py build --integration ${{ matrix.integration }} \
-            --target ${{ matrix.row.target }} --out "$RUNNER_TEMP/cts" $CTS_PROJECTS
+            --target ${{ matrix.row.target }} --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts" $CTS_PROJECTS
 
       - name: "Check: default build"
         if: ${{ !cancelled() }}

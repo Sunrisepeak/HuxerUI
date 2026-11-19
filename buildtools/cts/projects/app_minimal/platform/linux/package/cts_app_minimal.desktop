@@ -1,7 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=CTS App Minimal
-Exec=cts_app_minimal
-Icon=cts_app_minimal
-Categories=Utility;
-Terminal=false
