@@ -200,11 +200,12 @@ inline std::vector<edge> plan_codegen(std::span<const std::string> sources) {
             .inputs      = { abs.string(), hcg },
             .outputs     = { gen },
         };
-        if (abs.extension() == ".cppm") {
-            const auto declared = huxerui::rules::sources::scan_module_interface(text);
-            e.provides = declared.name;
-            e.imports  = declared.imports;
-        }
+        // The transformed copy is a new file to the module scanner, so the modules it imports are declared with the
+        // action: an interface unit's own name and imports, and the imports of an ordinary unit that has some, such as
+        // `import <library>;` beside a composable.
+        const auto declared = huxerui::rules::sources::scan_module_interface(text);
+        if (abs.extension() == ".cppm") e.provides = declared.name;
+        e.imports = declared.imports;
         out.push_back(std::move(e));
     }
     return out;
@@ -387,6 +388,37 @@ inline std::string json_escape(std::string_view text) {
         out.push_back(c);
     }
     return out;
+}
+
+// A boolean of this package's own `[package.metadata.huxerui]` table, written
+// bare (`cpp_modules_gen = false`); empty when the key is absent.
+inline std::optional<bool> own_flag(std::string_view key) {
+    const std::string manifest =
+        read_text(std::filesystem::path(mcpp::manifest_dir()) / "mcpp.toml");
+    std::istringstream lines(manifest);
+    std::string line;
+    bool inside = false;
+    while (std::getline(lines, line)) {
+        const std::size_t first = line.find_first_not_of(" \t");
+        if (first == std::string::npos || line[first] == '#') continue;
+        if (line[first] == '[') {
+            inside = line.find("[package.metadata.huxerui]") != std::string::npos;
+            continue;
+        }
+        const std::size_t equals = line.find('=');
+        if (!inside || equals == std::string::npos) continue;
+        std::string name = line.substr(first, equals - first);
+        name.erase(name.find_last_not_of(" \t") + 1);
+        if (name != key) continue;
+        const std::string value(huxerui::rules::sources::detail::trim(
+            std::string_view(line).substr(equals + 1, line.find('#', equals) - equals - 1)));
+        if (value == "true") return true;
+        if (value == "false") return false;
+        mcpp::warning(("huxerui.rules: [package.metadata.huxerui] " + std::string(key) +
+                       " must be true or false; got " + value).c_str());
+        return std::nullopt;
+    }
+    return std::nullopt;
 }
 
 // One value of this package's own `[package.metadata.huxerui]` table. A
@@ -1167,6 +1199,75 @@ inline bool plan_packages(const options& opt, const std::string& program, const 
 // -------------------------------------------------------------- configure --
 // One call for the common case. Returns false only on a condition that should
 // stop the build; a missing optional input is reported and tolerated.
+// A library that keeps its public headers and declares mcpp exports them as a module too: its `[lib]` path is
+// `modules/<module>.cppm`, whose global module fragment includes the headers and whose purview names what they
+// declare, so `import <module>;` and `#include` reach the same entities. With `cpp_modules_gen` absent or true the
+// file is generated from the headers on every build that changes them; with `false` it is the author's, and the
+// names it leaves out are reported. The interface is added to the package's sources, which the rules own.
+// Returns whether the package has such an interface.
+inline bool plan_module_interface() {
+    namespace sources = huxerui::rules::sources;
+    const std::filesystem::path root = mcpp::manifest_dir();
+    const std::string name_space = detail::own_metadata("namespace");
+    if (name_space.empty() || !std::filesystem::is_directory(root / "include")) return false;
+    std::string module = name_space;
+    for (std::size_t at = module.find("::"); at != std::string::npos; at = module.find("::", at)) module.replace(at, 2, ".");
+    const std::filesystem::path file = root / "modules" / (module + ".cppm");
+    if (!std::filesystem::is_regular_file(file)) return false;
+    mcpp::source(file.string().c_str());
+
+    // The set of headers and the content of each decide the interface; the interface file itself is the author's
+    // when it is not generated.
+    mcpp::rerun_if_changed_glob("include/**");
+    mcpp::rerun_if_changed(file.string().c_str());
+    // `cpp_modules_gen` is read from the manifest.
+    mcpp::rerun_if_changed((root / "mcpp.toml").string().c_str());
+    std::vector<std::string> headers;
+    detail::collect(root, "include/**/*.h", headers);
+    detail::collect(root, "include/**/*.hpp", headers);
+    std::vector<std::string> includes;
+    std::vector<std::string> names;
+    for (const std::string& header : headers) {
+        mcpp::rerun_if_changed((root / header).string().c_str());
+        const std::string text = detail::read_text(root / header);
+        includes.push_back(header.substr(std::string_view("include/").size()));
+        const std::vector<std::string> found = sources::public_names(text, name_space);
+        names.insert(names.end(), found.begin(), found.end());
+        for (const sources::defined_macro& macro : sources::defined_macros(text)) {
+            const std::string where = header + ":" + std::to_string(macro.line);
+            const std::string message = "the macro " + macro.name + " (" + where + ") does not reach `import " + module + ";`";
+            const std::string hint = "a translation unit that uses it includes " + includes.back() + " as well";
+            mcpp::report({.severity = "warning", .message = message.c_str(), .hint = hint.c_str()});
+        }
+    }
+    std::ranges::sort(names);
+    names.erase(std::ranges::unique(names).begin(), names.end());
+
+    const std::string relative = "modules/" + module + ".cppm";
+    if (detail::own_flag("cpp_modules_gen").value_or(true)) {
+        const std::string content = sources::render_library_module(module, name_space, includes, names);
+        if (detail::read_text(file) != content) {
+            detail::write_if_changed(file, content);
+            const std::string message = "generated " + relative + " from the public headers (" +
+                                        std::to_string(names.size()) + " names)";
+            mcpp::report({.severity = "note", .message = message.c_str()});
+        }
+    } else {
+        const std::vector<std::string> missing = sources::unexported_names(detail::read_text(file), name_space, names);
+        if (!missing.empty()) {
+            std::string list;
+            for (const std::string& name : missing) list += (list.empty() ? "" : ", ") + name;
+            const std::string message = relative + " does not export " + list;
+            const std::string impact = "`import " + module + ";` cannot name " + (missing.size() == 1 ? "it" : "them");
+            const std::string hint = "add `using " + name_space + "::<name>;` for each, or remove "
+                                     "`cpp_modules_gen = false` to have the file generated";
+            mcpp::report({.severity = "warning", .message = message.c_str(), .impact = impact.c_str(),
+                          .hint = hint.c_str()});
+        }
+    }
+    return true;
+}
+
 inline bool configure(options opt = {}) {
     const std::string root = sdk_root();
     if (root.empty()) {
@@ -1197,7 +1298,9 @@ inline bool configure(options opt = {}) {
         detail::collect(mcpp::manifest_dir(), "src/**/*.cppm", selected);
     }
     selected = huxerui::rules::sources::without_entry(selected, opt.entry);
-    const bool has_module_interface = std::ranges::any_of(
+    // A library's generated interface is a module unit of this package as well, so nothing is forced on it either.
+    const bool generated_interface = plan_module_interface();
+    const bool has_module_interface = generated_interface || std::ranges::any_of(
         selected, [](const std::string& source) { return source.ends_with(".cppm"); });
 
     // `import huxerui;` needs <typeinfo> in the IMPORTING translation unit.

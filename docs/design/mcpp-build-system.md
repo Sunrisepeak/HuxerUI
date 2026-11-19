@@ -111,6 +111,17 @@ It compiles each library's root under the namespace its identity projects to, me
 A library's own build program reads the same table from its own manifest to generate its resource header.
 A package that has module interface units also gets a generated `<namespace>.resources` module, so module code writes `import app.resources;` instead of including the header.
 
+A library with public headers under `include/` that declares mcpp is also a module: its `[lib]` path is `modules/<module>.cppm`, where the module is the `namespace` of `[package.metadata.huxerui]` with `::` written as `.`.
+The interface has the shape of `modules/huxerui.cppm`: the headers in the global module fragment, `export import huxerui;`, and a `using` declaration for each namespace-scope name the headers declare, so `import <module>;` and `#include` reach the same entities and the library needs no second binary.
+
+| `cpp_modules_gen` | The interface |
+| --- | --- |
+| absent or `true` | `configure()` generates it from the headers with the scanner `huxerui-module-gen` uses, writing it only when its content changes and reporting a note when it does |
+| `false` | the author writes it; `configure()` reports the names the headers declare and the interface does not export |
+
+Either way the rules add the interface to the package's sources, rerun when a header, the interface, or the manifest changes, and warn about a macro a header defines, which no module exports. A name declared `static` has internal linkage and is not exported.
+The key matters only to such a library: a CMake-only library has no mcpp build, and a C++ modules library's interface is its source.
+
 ## 4. The module surface
 
 `modules/huxerui.cppm` includes the public headers in its global module

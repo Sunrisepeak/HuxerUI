@@ -24,6 +24,9 @@ using huxerui::rules::sources::scan_module_interface;
 using huxerui::rules::sources::strip_noncode;
 using huxerui::rules::sources::umbrella_includes;
 using huxerui::rules::sources::without_entry;
+using huxerui::rules::sources::defined_macros;
+using huxerui::rules::sources::render_library_module;
+using huxerui::rules::sources::unexported_names;
 
 void glob_single_star_stays_within_one_segment() {
     check(matches("src/*/*.cpp", "src/runtime/view.cpp"), "one directory matches src/*/*.cpp");
@@ -284,7 +287,59 @@ void test_render_at_tokens() {
     check(error.find("NOPE") != std::string::npos, "an unknown token is named, not copied");
 }
 
+void header_scan_reads_a_library_namespace() {
+    const std::string header =
+        "namespace acme {\n"
+        "namespace widgets {\n"
+        "void Install(huxerui::ApplicationContext& context);\n"
+        "static int Helper();\n"
+        "class Gauge {};\n"
+        "}\n"
+        "void Outside();\n"
+        "}\n"
+        "namespace acme::widgets {\n"
+        "enum class Size { Small };\n"
+        "}\n";
+    const auto names = public_names(header, "acme::widgets");
+    check(has(names, "Install") && has(names, "Gauge") && has(names, "Size"),
+          "nested blocks and a qualified namespace are both read");
+    check(!has(names, "Outside"), "an enclosing namespace's name is not the library's");
+    check(!has(names, "Helper"), "a static name has internal linkage and is left out");
+    check(public_names(header).empty(), "the default namespace is still huxerui");
+}
+
+void library_module_exports_the_scanned_names() {
+    const std::vector<std::string> includes{"acme/widgets.h"};
+    const std::vector<std::string> names{"Gauge", "Install"};
+    const std::string module = render_library_module("acme.widgets", "acme::widgets", includes, names);
+    check(module.find("module;\n\n#include <typeinfo>\n#include <acme/widgets.h>\n") != std::string::npos,
+          "the headers are included in the global module fragment");
+    check(module.find("export module acme.widgets;\n\nexport import huxerui;\n") != std::string::npos,
+          "the module is named and re-exports huxerui");
+    check(module.find("    using acme::widgets::Gauge;\n    using acme::widgets::Install;\n") != std::string::npos,
+          "every name is exported");
+    check(unexported_names(module, "acme::widgets", names).empty(), "a generated interface misses nothing");
+    const std::vector<std::string> more{"Gauge", "Install", "Meter"};
+    check(unexported_names(module, "acme::widgets", more) == std::vector<std::string>{"Meter"},
+          "a name a hand-written interface lacks is reported");
+}
+
+void macros_are_found_apart_from_the_include_guard() {
+    const auto macros = defined_macros(
+        "#ifndef ACME_WIDGETS_H\n"
+        "#define ACME_WIDGETS_H\n"
+        "#define ACME_VERSION 3\n"
+        "  #  define ACME_CALL(x) (x)\n"
+        "#endif\n");
+    check(macros.size() == 2, "the guard is not a macro a consumer uses");
+    check(!macros.empty() && macros[0].name == "ACME_VERSION" && macros[0].line == 3, "a macro is named with its line");
+    check(macros.size() == 2 && macros[1].name == "ACME_CALL", "a function-like macro is found");
+}
+
 int main() {
+    header_scan_reads_a_library_namespace();
+    library_module_exports_the_scanned_names();
+    macros_are_found_apart_from_the_include_guard();
     header_scan_finds_namespace_scope_declarations();
     header_scan_sees_past_an_attribute();
     header_scan_ignores_the_detail_namespace();
