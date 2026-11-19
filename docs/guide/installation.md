@@ -44,14 +44,14 @@ Windows:
 
 ```powershell
 Invoke-WebRequest https://github.com/HuxerUI/HuxerUI/releases/latest/download/install.ps1 -OutFile install.ps1
-.\install.ps1 -Version 0.4.0 -Prefix D:\Environment\HuxerUI -Yes
+.\install.ps1 -Version 0.5.0 -Prefix D:\Environment\HuxerUI -Yes
 ```
 
 macOS, Linux, or Android:
 
 ```bash
 curl -fsSLO https://github.com/HuxerUI/HuxerUI/releases/latest/download/install.sh
-sh install.sh --version 0.4.0 --prefix "$HOME/Environment/HuxerUI" --yes
+sh install.sh --version 0.5.0 --prefix "$HOME/Environment/HuxerUI" --yes
 ```
 
 Omitting the version installs the latest GitHub release.
@@ -63,7 +63,7 @@ Manage SDK versions from any directory:
 
 ```bash
 huxerui sdk list
-huxerui sdk use 0.4.0
+huxerui sdk use 0.5.0
 huxerui sdk update --check
 huxerui sdk update
 ```
@@ -83,17 +83,17 @@ Use `--sdk <path>` with a build command to select a different SDK for one invoca
 Install an already downloaded archive without querying a release:
 
 ```powershell
-.\install.ps1 -Archive .\huxerui-sdk-0.4.0-windows-x86_64.zip -Yes
+.\install.ps1 -Archive .\huxerui-sdk-0.5.0-windows-x86_64.zip -Yes
 ```
 
 ```bash
-sh install.sh --archive ./huxerui-sdk-0.4.0-linux-x86_64.tar.gz --yes
+sh install.sh --archive ./huxerui-sdk-0.5.0-linux-x86_64.tar.gz --yes
 ```
 
 For Android arm64-v8a:
 
 ```bash
-sh install.sh --archive ./huxerui-sdk-0.4.0-android-arm64-v8a.tar.gz --yes
+sh install.sh --archive ./huxerui-sdk-0.5.0-android-arm64-v8a.tar.gz --yes
 ```
 
 Place the matching `.sha256` file beside the archive.
@@ -116,5 +116,5 @@ The installer refuses to remove a directory that does not contain a recognizable
 ## Toolchains
 
 Installing HuxerUI does not install platform SDKs, compilers, Android tooling, Emscripten, Xcode, or signing identities.
-Use `huxerui doctor [platform-list]` for read-only diagnostics and `huxerui setup <platform-list>` for prerequisites the CLI can configure.
+Use `huxerui doctor [platform-list]` for read-only diagnostics, add `--json` for a machine-readable installation plan, and use `huxerui setup <platform-list>` to prepare the platform prerequisites. Both commands accept `--operation` to select build, run, device discovery, or packaging requirements. The official Linux SDK installer checks for glibc 2.38 or later before launching the downloaded CLI.
 See [Platform Support](platforms.md) for host-specific requirements.

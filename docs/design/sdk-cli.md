@@ -226,20 +226,19 @@ The CLI never parses `CMakeLists.txt` or `HuxerUIProject.cmake` as source text.
 The implemented command surface is:
 
 ```text
-huxerui create app <name> [--id <reverse-domain-id>] [-p|--platform <platform-list>] [--agent <agent-list>]
-huxerui create library <name> [--namespace <cpp-namespace>] [--target <public-cmake-target>] [--id <reverse-domain-id>] [-p|--platform <platform-list>] [--agent <agent-list>]
+huxerui create [app <name>] [--build-system <build-system-list>] [--template <name>] [--id <reverse-domain-id>] [-p|--platform <platform-list>] [--agent <agent-list>] [--yes]
+huxerui create [library <name>] [--build-system <build-system-list>] [--namespace <cpp-namespace>] [--target <public-cmake-target>] [--id <reverse-domain-id>] [-p|--platform <platform-list>] [--agent <agent-list>] [--yes]
 huxerui platform add <platform-list>
-huxerui doctor [platform-list]
-huxerui setup <platform-list> [--yes]
+huxerui doctor [platform-list] [--operation build|run|package|devices] [--json]
+huxerui setup <platform-list> [--operation build|run|package|devices] [--yes]
 huxerui devices [platform]
-huxerui build [platform-list] [-d|--device <id>] [--config debug|release] [--generator <name>] [--sdk <path>] [--java-home <path>]
-huxerui mcpp build [--project <dir>] [--release] [--locked] [--offline] [--verbose]
-huxerui run <platform> [-d|--device <id>] [--config debug|release] [--generator <name>] [--sdk <path>] [--java-home <path>] [--watch]
-huxerui package <platform-list> [-d|--device <id>] [--config debug|release] [--generator <name>] [--sdk <path>] [--java-home <path>]
-huxerui open ios [--sdk <path>]
+huxerui build [platform-list] [--build-system cmake|mcpp] [-d|--device <id>] [--config debug|release] [--generator <name>] [--sdk <path>] [--java-home <path>] [--no-shell]
+huxerui run <platform> [--build-system cmake|mcpp] [-d|--device <id>] [--config debug|release] [--generator <name>] [--sdk <path>] [--java-home <path>] [--no-shell] [--watch]
+huxerui package <platform-list> [--build-system cmake|mcpp] [-d|--device <id>] [--config debug|release] [--generator <name>] [--sdk <path>] [--java-home <path>] [--no-shell]
+huxerui open ios [--build-system cmake|mcpp] [--sdk <path>]
 ```
 
-The aliases `b`, `r`, and `pkg` share command dispatch and help with `build`, `run`, and `package`. `mcpp build --project` selects the directory containing `mcpp.toml` and defaults to the current directory.
+The aliases `b`, `r`, and `pkg` share command dispatch and help with `build`, `run`, and `package`.
 
 A platform list is comma-separated or `all`.
 `all` means every platform driver known to the current CLI for `create` and every enabled application platform for project commands.
@@ -249,7 +248,25 @@ The accepted identifiers are `codex`, `claude`, `antigravity`, `opencode`, `comm
 The default is `codex`; `all` selects the three distinct directories, and `none` disables Skill creation.
 An explicit list replaces the default, and aliases that share a directory are deduplicated.
 
-`huxerui mcpp build` is an independent generic mcpp frontend. It requires `mcpp.toml` in the selected source directory and invokes the `mcpp` executable directly. It does not participate in HuxerUI project discovery, alter the existing CMake and platform-driver paths, or provide HuxerUI package integration; the mcpp project owns those details.
+Project discovery walks up from the working directory and stops at the nearest directory carrying a native declaration: `CMakeLists.txt` beside `platform/` or `include/`, or `mcpp.toml` beside `build.mcpp`.
+`build`, `run`, and `package` dispatch to the integration that declaration names; a root carrying both builds with CMake, and `--build-system mcpp` selects mcpp for one command. The Gradle and Xcode shells apply the same default, and `-PhuxeruiBuildSystem` or `HUXERUI_BUILD_SYSTEM` overrides it there.
+A root carrying both that is left to the default says so before anything can fail: `Using cmake, the default (or --build-system mcpp)`. `create` names the mcpp command beside `next` for such a project, since mcpp fetches its own toolchain. Neither changes the default, and no failure gains a hint of its own.
+
+On a terminal the CLI's own lines carry the prompt's symbols and colors: `◆` for a step, `│` for a note, `›` for a command, which is never shortened, and `✔` for a result. A blank line sets each tool's streamed output apart. Elsewhere, as in a pipe or the conformance suite, the lines are plain text: the step itself, `> <command>`, and no added blank lines.
+The help is colored on a terminal only, its title and headings in HuxerUI's color and each usage line's command in bold, with the arguments muted, and its text is the same everywhere, so what a script or an agent reads does not depend on where it runs; output is styled when standard input and output are terminals, by the same `NO_COLOR`, `TERM`, and locale rules, never by recognizing who runs the command.
+Android and iOS are built, run, and packaged through their standard shells for every integration, so the dispatch for those platforms is the CMake path's driver flow with the integration as a parameter.
+For an mcpp project, the CLI first runs `mcpp build` for the first ABI (`aarch64-linux-android`, `x86_64-linux-android`) or the destination (`aarch64-ios-sim`, `aarch64-ios`), whose build program writes the library graph and `.huxerui/generated/framework.json`, the root of the framework mcpp resolved; then it runs Gradle with `-PhuxeruiBuildSystem=mcpp`, or `xcodebuild` with `HUXERUI_BUILD_SYSTEM=mcpp`, that framework as `HUXERUI_HOME`, and `ARCHS=arm64` unless `--abi` selects the architectures.
+The Gradle shell builds the core with a task of each variant that runs `mcpp build --target <triple> --message-format json` for every ABI in `huxeruiAbis`, hands each library to the variant as generated native libraries, and writes the application-integration record and resource package where the CMake integration writes them; AGP's `externalNativeBuild` takes only CMake and ndk-build.
+The Xcode shell's `build_huxerui_core.sh` runs `mcpp build` for the destination and links the core mcpp assembled into the location the shell reads a CMake core from. The core archive carries the C++ runtime it was compiled against, and the shell's own entry calls only `huxerui::RunApplication()`, whose signature names no standard-library type, so the shell's C++ runtime and the core's do not meet.
+`huxerui build`, `run`, `package`, and `open ios` write `.huxerui/generated/ios/integration.xcconfig` with the integration, the framework, and for mcpp the engine's path, which the shell's configurations include before `Config/Local.xcconfig`, so a build from Xcode itself matches the CLI's.
+`--no-shell` selects the mcpp integration's own path for Android and iOS, which builds and packages without Gradle or Xcode: the build rules read whichever shell inputs exist and report what they lack. It is a usage error for a CMake project, whose integration offers no such path, and for a platform without a standard shell.
+For the other platforms the mcpp dispatch runs `mcpp build`, with `--target wasm32-emscripten` for the Web and `--release` for the release profile, and `mcpp run` for the host's desktop platform. Without a platform argument, and for `all`, the dispatch uses the platforms the project enables, as the CMake path does.
+`package` runs `mcpp pack --pkg-format <format> --message-format json` for the platform's triple where no shell is involved, `release` unless `--config debug` is given, and publishes the artifacts the pack reports below `dist/<platform>` through the same validated publication as the CMake path; the Web page's whole directory is published. The formats are AppImage on Linux (`--format deb` and `--format rpm` select the others), the setup executable on Windows, a DMG on macOS, and the Web directory; with `--no-shell`, an APK on Android and the application bundle on iOS, written by the official `mcpp:plugins` members ([mcpp build design §7](mcpp-build-system.md#7-packaging-an-application)).
+For an mcpp project, the release overrides select a release profile the generated manifest declares in its `[profile]` table: `--optimization size` or `minsize` selects `release-size` or `release-minsize` (`opt = "s"` or `"z"`), `--lto on` adds `-lto` (`lto = true`), and a manifest without the selected profile is invalid usage; a debug build is mcpp's `dev` profile and, as with CMake, ignores the overrides. `--profile` opens the framework's `profiling` feature, which compiles `src/runtime/profiling.cpp` with `HUXERUI_ENABLE_PROFILING=1`, through the key the manifest gives the framework (`huxerui/profiling`). The CLI resolves the profile and features once and passes them to whichever runs mcpp: `mcpp` itself, the Gradle task (`-PhuxeruiMcppProfile`, `-PhuxeruiMcppFeatures`), or the Xcode build phase (`HUXERUI_MCPP_PROFILE`, `HUXERUI_MCPP_FEATURES`).
+`--abi` and `--device` apply where a standard shell builds; on mcpp's own path `--abi` names the host's ABI on Linux and Windows, `arm64` on macOS and iOS, and several Android ABIs packed into one APK with `--no-shell`, and is invalid usage otherwise, naming why. Whether the host's ABI builds is the build's answer, not the CLI's: Linux needs the GTK packages mcpp takes from xlings for that ABI, which exist for x86_64 today, and mcpp's Apple toolchain has no x86_64 row. `--device` with `--no-shell` reaches Android's `adb-run` as `ANDROID_SERIAL`. `--java-home` applies to the Gradle shell and is otherwise reported with a warning and not applied; `--sdk` is invalid usage, since the framework is the manifest's dependency, and `--generator` only steers the CMake driver and is reported with a warning and not applied.
+`run web` runs `mcpp run --target wasm32-emscripten --pkg-format web`, which serves the page through dist-web's emrun runner, and `run android` or `run ios` with `--no-shell` run the package through the `adb-run` or `simctl-run` runner the generated manifest names. `--watch` rebuilds with `mcpp build --message-format json`, writes the application-integration record the watcher stages a desktop program from, and relaunches it; Android and iOS watch through their shells as for CMake. On the Web the build lays the page beside the module under the program's name, as the CMake build does, and the watcher serves it with the emrun of mcpp's Emscripten toolchain, which `mcpp run --runner web --print-launch` names. Watching without the shell is not offered: CMake has no shell-less path to match, and the shells already watch Android and iOS.
+`platform add` writes the shell only, taking the identity from the CMake project plan or, for a project that declares only mcpp, from the `[package.metadata.huxerui]` table in `mcpp.toml`, whose `name` is the display name and may be any text.
+There is no command named after a build system; a capability only mcpp offers is used through `mcpp` directly.
 Desktop CMake build commands leave concurrency to CMake and its selected build tool, preserving `CMAKE_BUILD_PARALLEL_LEVEL` for callers and CI. They do not force an unnumbered `--parallel`, which becomes unlimited parallelism with Unix Makefiles.
 
 ### Create and platform add
@@ -260,6 +277,47 @@ cd hello_huxer
 huxerui platform add macos
 ```
 
+`create` composes a project from one source set and one native declaration per selected build system; there is no separate template per combination.
+The source set is `headers` (`src/app.cpp` including `<huxerui/huxerui.h>`) or C++ modules (module units rendered from the root `templates/` tree that `mcpp new --template` also instantiates).
+The source style follows the selected build systems: it is the one every selected integration can build, so a list naming CMake, which lacks the `modules` capability, is headers, and mcpp alone is C++ modules. There is no separate style option.
+The CMake declaration is `CMakeLists.txt` with `HuxerUIProject.cmake`; the mcpp declaration is `mcpp.toml` and `build.mcpp` in the contract's standard layout: an `app` target whose process entry is each desktop and Apple platform shell's `main.cpp`, named up front for every platform in `cfg` sections so `platform add` never edits the manifest. On the Web and Android the platform layer starts the application, so those rows select the framework's `platform-entry` target, `main = { from = "huxerui/platform-entry" }`, which defines nothing, as the CMake declaration compiles no entry there; a project without the Linux shell therefore still builds for both.
+Selections resolve as follows:
+
+| Given | Result |
+| --- | --- |
+| Nothing, application | headers, cmake |
+| Nothing, library | headers and a module interface, cmake and mcpp |
+| `--build-system mcpp` | C++ modules, mcpp |
+| `--build-system cmake` | headers, cmake |
+| `--build-system cmake,mcpp`, application | headers, both declarations |
+| `--build-system cmake,mcpp`, library | headers and a module interface, both declarations |
+
+A library declaring both build systems keeps its headers for CMake consumers and is also a module for mcpp consumers, named after its package: `create` states the interface as the `[lib]` path `modules/<package name>.cppm`, the same shape as `modules/huxerui.cppm`, and the mcpp build generates that file from the public headers (see [mcpp build system](mcpp-build-system.md)).
+A C++ modules library's module is named after its package too, in `src/<package name>.cppm`.
+An application declaring both stays headers, since nothing imports an application.
+
+`--template` selects C++ modules content (`app` or `navigation` for an application, `library` for a library) and is a usage error for a list naming cmake.
+A missing selection is prompted for only when standard input and output are terminals; `--yes` suppresses every prompt.
+The prompts ask for the kind, the name (`hello-hui` or `hello-hui-lib` by default), one build-system question whose answers `cmake`, `mcpp`, and `cmake + mcpp` also show the resulting source style, the template for a C++ modules application, the platforms (all, as without `--platform`), and, without `--agent`, the agents whose skill files to add.
+The skill is looked for before that question; when none is found the question starts with no agent checked and says how to make one available.
+A confirmation precedes any file being written; declining creates nothing. The outcome then names the project, the command to run next, and the options that recreate it; without prompts the command prints the plain summary instead.
+The prompt module is a state machine fed by key events. Rendering produces lines of text with roles, such as accent, muted, headers, and C++ modules, and the terminal layer maps each role to the terminal's capabilities:
+
+| Terminal | Shown |
+| --- | --- |
+| 24-bit color (`COLORTERM=truecolor` or `24bit`, or Windows Terminal) | HuxerUI's violet `#5B51E6`, the C++ logo's blue `#659AD2` for modules, `#2AA198` for headers |
+| 256 colors (`TERM` naming 256) | the nearest palette entries |
+| 16 colors | magenta, blue, and cyan, so the brand and modules colors stay apart |
+| `NO_COLOR`, `TERM=dumb`, or a console without VT processing | no colors; `FORCE_COLOR` or `CLICOLOR_FORCE` turns them on |
+| A locale or console without UTF-8, or a classic Windows console font | ASCII symbols in place of `◆ ◇ │ ● ◼ ›` |
+
+Lines are cut to the terminal's width, which is read before every frame, so a frame never wraps and its redraw stays in place. A text prompt shows the terminal's own cursor in its field as a blinking bar; every prompt restores the cursor's shape and visibility when it ends.
+Raw input is termios on POSIX hosts and virtual-terminal console input on Windows, where the console also takes UTF-8 output while the prompter lives; a lone Escape cancels, told apart from an arrow key's sequence by a short wait. Numbered line input is used where raw mode is unavailable.
+A C++ modules library is the `templates/library` package with the identity the CLI knows: its placeholder module `component` takes the library's C++ namespace as its name, since a module name is global to a program, and its manifest gains the `[package.metadata.huxerui]` table with `library`, `name`, `id`, and `namespace`.
+Its `examples/preview` is a C++ modules application whose `src/app.cppm` imports the library's module, with the same platform shells and the same `--platform` packages as a headers library's Preview.
+The `templates/app` and `templates/navigation` trees carry each desktop platform's entry, the iOS entry, and the macOS bundle metadata, because `mcpp new` renders them without the CLI; a CLI test checks that they equal the CLI's shell files rendered in mcpp's template vocabulary.
+`mcpp new` can substitute only the project name, so its macOS bundle identifier is `com.example.<project name>` verbatim, while the CLI normalizes the name as it does for every other platform identifier.
+
 Application creation writes the common CMake project and complete minimal shells for the selected platforms.
 Library creation writes a common CMake library and a normal application under `examples/preview` that consumes it through a local path.
 When no Library platform integration is requested, the Library remains common-only while its Preview receives the same all-platform default as an application.
@@ -269,38 +327,25 @@ The template creates `resources/images`, `resources/raw`, and `resources/strings
 It uses a temporary tree and publishes the project only after every file succeeds.
 `platform add` fills only missing application shells or Library platform packages, never overwrites an existing tree, and rolls back directories created by a failed multi-platform operation.
 
-### Doctor
+### Doctor and setup
 
-`doctor` is read-only.
-Outside a project it reports the SDK, common tools, available drivers, and any explicitly requested platform tools.
-Inside a project it also validates required common files, unknown platform directories, shell contents, current-host support, and required platform tools.
+`doctor` probes the selected SDK, host tools, and platform requirements without installing anything or modifying the project. Inside a project the plan is for the build system a command reaches without `--build-system`, and the report names it. CMake needs a HuxerUI SDK and CMake. mcpp needs only itself, and reports xlings, through which it is installed, without requiring it; a missing mcpp is a manual action, `xlings install mcpp -y`, preceded by xlings' own installer when that is missing too. A build system that provisions its own toolchain, as mcpp does, leaves out the checks a driver marks as the host toolchain — compilers, development packages, Emscripten, the NDK, MSVC, and packaging tools — together with the actions that would only install them; the JDK, the Android SDK, and Xcode remain, since the platform shells use them. The report names what such a build system provides in their place, per platform: `[provided] by mcpp: Android NDK`. On a terminal the report uses the prompt's symbols and colors, a titled group per scope with each requirement marked ready (`✔`), missing (`✗`), optional (`○`), or blocked (`■`); elsewhere, and with `--json`, its format is unchanged. The engines of the other build systems the root declares are reported as optional, with the `--build-system` that selects each, and are never set up; outside a project CMake is the default and mcpp the alternative. A found tool of the wrong version says so, as `found 6.0.9; this SDK requires 4.0.19` for Emscripten. An mcpp command whose engine is missing stops before it starts with `mcpp is unavailable; run 'huxerui doctor <platforms>'`, as a CMake command does without CMake. Outside a project the default scope is the common environment. Inside a project the default environment scope is the enabled platforms available on the host. Project-shell errors are reported separately from tool readiness.
+For a library, the report states under its build systems what an importer can name, whatever build system the operation reaches: `C++ modules: import <module>`, as the `[lib]` unit declares it, with the units it re-exports under that name, such as `<module>.macros`.
+It reads only the declarations and files, without building, and never fails the diagnosis. A headers library that is not a module yet is reported as optional with what it lacks, since it still builds and is still included; a module named otherwise than its package identity, which the documentation recommends, still works and carries that recommendation. An application, which has no importer, has no such line.
 
-Checks are scoped to requested platforms.
-A missing Android toolchain does not make a Windows-only diagnostic fail.
-Host environment diagnosis and project-shell diagnosis remain separate operations even when one `doctor` invocation reports both.
-Environment diagnosis owns tool discovery, versions, executable paths, licenses, and actionable remediation; project diagnosis owns repository structure and generated or source-controlled shell validity.
-The diagnostic result carries one stable requirement identity, status, display label, and optional detail; common and per-driver checks use the same result without introducing an environment-provider hierarchy.
-Checks report SDK selection, host availability, executable paths, versions, licenses, and remediation where applicable.
-The same environment diagnosis is reused by `setup` before and after any installation, so the two commands cannot disagree about readiness.
+The default operation is `build`. `devices` checks whether device discovery can run, even if no device is connected. `run` also checks the requested destination. `package` adds the tools used by the selected package format. Both commands accept the applicable `--sdk`, `--generator`, `--abi`, `--java-home`, `--device`, and `--format` selectors. `all` selects the relevant platforms available from the current host. An explicitly requested unsupported platform reports an unavailable check.
 
-### Setup
+`doctor --json` emits one schema-1 plan. `targets` contains per-platform readiness and references to required checks, `checks` contains stable identifiers, status, and detected values, and `actions` contains the prerequisite and resulting check identifiers for each automatic or manual action. Installation-only prerequisites may appear in the plan without making an otherwise usable target unready. `projectErrors` reports shell validation separately. For a library, `library.modules` is `module`, `not-exported`, or `no-mcpp`; a module adds `module`, `reexports`, and, when it is named otherwise, the `recommended` name. Human-readable labels and details may change.
 
-```text
-huxerui setup <platform-list> [--yes]
-```
+`setup` requires a platform list, prints that same plan, and asks for confirmation unless `--yes` is present. Official license prompts and privilege elevation remain with the vendor or system tools. After each automatic action the CLI re-probes the environment and verifies the action's result before choosing the next step. Repeated runs inspect the installed tools again and reuse compatible components. Exit codes are 0 for ready, 1 for incomplete or failed, and 2 for invalid arguments. Setup additionally returns 3 for cancellation and 4 for a required restart.
 
-`setup` installs or configures missing external prerequisites for an explicitly requested comma-separated platform list.
-It never defaults to every platform; a user who wants that scope must pass `all` explicitly.
-The command first runs the same read-only environment diagnosis as `doctor`, prints the intended changes and their owning package managers or official distribution channels, and requests confirmation unless `--yes` is present.
-It is idempotent: satisfied requirements remain untouched, and a successful run ends by repeating diagnosis for every requested platform.
+Drivers own their platform's tool discovery. The build, device, and setup paths use the selected tool locations and pass environment overrides to child processes. The selected CMake version is passed to generated Gradle shells and its executable path is passed to Xcode build scripts. Android projects with `cmake.dir` use that explicit selection. CMake, JDK, and Emscripten installations managed by HuxerUI are discoverable by subsequent invocations and stored in the host's user data directory. Managed archives are verified before deployment.
 
-Platform prerequisites continue to use their official ownership mechanisms.
-For example, Android SDK and NDK components use Android tooling, Web requirements use the Emscripten toolchain's supported installation path, and Windows requirements use supported Microsoft installers or package sources.
-Dependencies that require manual interaction, account acceptance, platform licensing, or system UI are opened or reported with an actionable official path instead of being simulated by the CLI.
-`setup` reports the environment as incomplete until the corresponding `doctor` checks pass.
+Web checks the compiler against the version recorded in the selected SDK's archive directory. Source builds use the default version of the current CLI. The managed emsdk bootstrap installs the required version from its release catalog, and can reuse an existing matching toolchain.
 
-`setup` does not install, select, upgrade, or remove HuxerUI itself.
-That remains the responsibility of the SDK installer and avoids a recursive dependency in which the installed CLI owns its own installation.
+Windows reuses a compatible Visual Studio instance or installs the x64 C++ tools and Windows SDK with Microsoft's installer. Android uses the project's SDK root and Gradle SDK and NDK settings, with JDK 17 as the managed default for desktop hosts. Google SDK components retain their official license prompts. Ubuntu 24.04 uses apt for system development packages. iOS platform and simulator downloads use the selected Xcode. Termux, mcpp, and native project signing continue to use their own toolchains or configuration.
+
+The SDK installer handles HuxerUI archive publication. Before running a downloaded official Linux SDK binary, it checks the host's glibc 2.38 baseline.
 
 ### SDK versions
 
@@ -381,6 +426,7 @@ The Web shell owns the HTML document and host-element mount code rather than hid
 
 `run` accepts exactly one enabled platform and performs a build before launch.
 Windows starts the executable, macOS opens the application bundle, desktop Web hosts delegate the generated HTML entry point to `emrun`, Android installs and launches the generated APK, and iOS uses `simctl` for a selected booted Simulator and `devicectl` for a paired physical device.
+iOS discovery uses CoreDevice IDs for physical devices and treats `simctl` as authoritative for simulators. Each device ID appears once, with a ready entry preferred among duplicate reports from the same tool.
 On Windows hosts, the Web driver asks `emrun` to open its URL through `explorer.exe` so the operating system selects the default browser without relying on Python browser discovery.
 On Android hosts, the Web driver binds a Python standard-library server to an available loopback port, opens the generated entry URL through `termux-open`, and keeps the server in the foreground until interruption.
 This path never selects Emscripten's ADB-backed Android mode or exposes the server to another network interface.
@@ -393,7 +439,7 @@ For Android on Termux, `run` opens the generated APK through `termux-open` and d
 
 `run <platform> --watch` owns one development session using the selected build, SDK, and device. The CLI tracks changes in the project and its declared local library roots, coalesces saves, and runs the existing incremental build. Changes to generated output do not trigger a new build. After a build failure, the current application keeps running and the next edit can retry.
 
-Desktop sessions launch a copy of the built application from an independent directory, including its bundled or adjacent resources and adjacent shared libraries. A completed build is staged before the CLI stops the application it previously launched. Web publishes versioned copies of the generated entry and its assets to the same loopback server and refreshes the open page. iOS installs each successful build and launches it using the original device selection.
+Desktop sessions launch a copy of the built application from an independent directory, including its bundled or adjacent resources and adjacent shared libraries. A completed build is staged before the CLI stops the application it previously launched. If the replacement cannot start, the CLI relaunches the previous build with its original child environment. Web publishes versioned copies of the generated entry and its assets to the same loopback server and refreshes the open page. iOS installs each successful build and launches it using the original device selection.
 
 For Android Debug watch sessions on desktop hosts, the current shell prepares a fingerprint of the APK outside the application library and HuxerUI resource package. On a compatible device, the first installation records that fingerprint and the installed APK path. A later matching build transfers the selected ABI library and full resource package together through ADB and `run-as`, then restarts the process. Startup loads one version's read-only library and binds its matching resource package. APK shell changes, older generated shells, and devices without private deployment support use the normal install and launch path. Incomplete transfers leave the running application alone. If the staged library cannot load, the session selects the previous valid version again.
 
@@ -745,8 +791,8 @@ CameraKit/
 Project scaffolding distinguishes the application and library shapes explicitly:
 
 ```text
-huxerui create app <name> [--id <reverse-domain-id>] [-p|--platform <platform-list>] [--agent <agent-list>]
-huxerui create library <name> [--namespace <cpp-namespace>] [--target <public-cmake-target>] [--id <reverse-domain-id>] [-p|--platform <platform-list>] [--agent <agent-list>]
+huxerui create [app <name>] [--build-system <build-system-list>] [--template <name>] [--id <reverse-domain-id>] [-p|--platform <platform-list>] [--agent <agent-list>] [--yes]
+huxerui create [library <name>] [--build-system <build-system-list>] [--namespace <cpp-namespace>] [--target <public-cmake-target>] [--id <reverse-domain-id>] [-p|--platform <platform-list>] [--agent <agent-list>] [--yes]
 ```
 
 Library names do not require a `huxerui-` prefix and may use uppercase ASCII letters.

@@ -1,10 +1,13 @@
 #include "platform.h"
 
+#include "toolchain.h"
+
 #include <algorithm>
 #include <array>
 #include <cctype>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -12,6 +15,7 @@
 #include <string_view>
 #include <utility>
 
+#include "mcpp/mcpp.h"
 #include "project.h"
 #include "template.h"
 
@@ -324,6 +328,42 @@ void UpdateIosLibraryIntegration(const std::filesystem::path& project_root) {
   }
 }
 
+/// The profile and features the mcpp integration builds the core with, resolved from the CLI's options.
+mcpp::CommandOptions IosMcppOptions(const PlatformCommandContext& context) {
+  return mcpp::ResolveOptions(context.project_root, "ios", context.profile, context.optimization, context.lto,
+                              context.profiling);
+}
+
+/// The framework the shell compiles its entry against: the SDK for CMake, or for mcpp the framework the build
+/// resolved, which its build program records.
+std::filesystem::path IosFrameworkHome(const PlatformCommandContext& context) {
+  if (context.build_system != BuildSystem::Mcpp) {
+    return context.huxerui_home;
+  }
+  const std::filesystem::path record = context.project_root / ".huxerui/generated/framework.json";
+  std::ifstream input(record, std::ios::binary);
+  if (!input) {
+    throw std::runtime_error("HuxerUI framework record is missing: " + record.string());
+  }
+  const std::string json{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+  return detail::JsonString(json, "sourceRoot");
+}
+
+/// The settings a build from Xcode itself needs to match the CLI's: the integration, the framework, and for mcpp the
+/// engine, which an Xcode build phase does not find on the shell's PATH.
+void WriteIosIntegrationSettings(const PlatformCommandContext& context) {
+  const bool mcpp = context.build_system == BuildSystem::Mcpp;
+  std::string settings = "// Written by the HuxerUI CLI. Config/Local.xcconfig overrides these values.\n"
+                         "HUXERUI_BUILD_SYSTEM = " + std::string(mcpp ? "mcpp" : "cmake") + "\n"
+                         "HUXERUI_HOME = " + IosFrameworkHome(context).generic_string() + "\n";
+  if (mcpp) {
+    if (const std::optional<std::filesystem::path> engine = FindExecutable("mcpp")) {
+      settings += "HUXERUI_MCPP = " + engine->generic_string() + "\n";
+    }
+  }
+  WriteIosIntegrationFile(context.project_root / ".huxerui/generated/ios/integration.xcconfig", settings);
+}
+
 class IosDriver final : public PlatformDriver {
 public:
   std::string_view Id() const noexcept override {
@@ -339,20 +379,127 @@ public:
     return CurrentHostId() == "macos";
   }
 
-  std::span<const std::string_view> RequiredTools() const noexcept override {
-    static constexpr std::array tools{
-        std::string_view{"xcodebuild"},
-        std::string_view{"xcrun"},
-    };
-    return tools;
+  std::vector<EnvironmentDiagnostic> DiagnoseEnvironment(const EnvironmentRequest& request) const override {
+    if (!SupportsCurrentHost())
+      return PlatformDriver::DiagnoseEnvironment(request);
+    const auto xcodebuild = FindExecutable("xcodebuild").value_or(std::filesystem::path{});
+    const auto xcrun = FindExecutable("xcrun").value_or(std::filesystem::path{});
+    std::vector<EnvironmentDiagnostic> checks;
+    auto xcode = detail::CheckTool("xcode", "Selected Xcode", xcodebuild, "15.0", {}, "-version");
+    if (xcode.status != EnvironmentDiagnosticStatus::Ready)
+      return {std::move(xcode)};
+    checks.push_back(std::move(xcode));
+    const auto first_launch = RunProcessCapture({xcodebuild.string(), {"-checkFirstLaunchStatus"}, {}});
+    checks.push_back(
+        {first_launch.exit_code == 0 ? EnvironmentDiagnosticStatus::Ready : EnvironmentDiagnosticStatus::Missing,
+         "xcode_initialization", "Xcode first-launch setup", first_launch.output});
+    if (first_launch.exit_code != 0)
+      return checks;
+    if (xcrun.empty()) {
+      checks.push_back(detail::CheckTool("xcrun", "xcrun", {}));
+      return checks;
+    }
+
+    const bool devices = request.operation == EnvironmentOperation::Devices;
+    const bool run = request.operation == EnvironmentOperation::Run;
+    std::vector<PlatformDevice> destinations;
+    if (devices || run || !request.device.empty()) {
+      try {
+        destinations = DiscoverDevices(request);
+      } catch (const std::runtime_error& error) {
+        checks.push_back({EnvironmentDiagnosticStatus::Missing, "device_tools", "iOS device discovery", error.what()});
+      }
+    }
+    const auto physical = std::ranges::any_of(destinations, [&](const auto& device) {
+      return device.kind == DeviceKind::Physical &&
+             (request.device.empty() ? device.state == DeviceState::Ready : device.id == request.device);
+    });
+    if (!devices) {
+      // Build-only checks default to the simulator SDK unless a physical destination was selected.
+      const auto sdk = physical ? "iphoneos" : "iphonesimulator";
+      const auto result = RunProcessCapture({xcrun.string(), {"--sdk", sdk, "--show-sdk-path"}, {}});
+      const std::filesystem::path path(Trim(result.output));
+      checks.push_back({result.exit_code == 0 && std::filesystem::is_directory(path)
+                            ? EnvironmentDiagnosticStatus::Ready
+                            : EnvironmentDiagnosticStatus::Missing,
+                        "platform_sdk",
+                        std::string(sdk) + " SDK",
+                        path.string(),
+                        {},
+                        {},
+                        path});
+    }
+    if (run && !physical) {
+      const auto runtimes = RunProcessCapture({xcrun.string(), {"simctl", "list", "runtimes", "available"}, {}});
+      std::istringstream lines(runtimes.output);
+      bool runtime = false;
+      for (std::string line; std::getline(lines, line);) {
+        if (Trim(line).starts_with("iOS "))
+          runtime = true;
+      }
+      checks.push_back({runtime ? EnvironmentDiagnosticStatus::Ready : EnvironmentDiagnosticStatus::Missing,
+                        "simulator_runtime",
+                        "iOS Simulator runtime",
+                        {}});
+    }
+    if (run || (!devices && !request.device.empty())) {
+      const auto matches = [&](const auto& device) { return request.device.empty() || request.device == device.id; };
+      const auto ready = std::ranges::count_if(
+          destinations, [&](const auto& device) { return matches(device) && device.state == DeviceState::Ready; });
+      const bool stopped = std::ranges::any_of(destinations, [&](const auto& device) {
+        return matches(device) && device.kind == DeviceKind::Simulator && device.state == DeviceState::Offline;
+      });
+      const std::string diagnostic = ready > 1 ? "Choose a destination with --device"
+                                     : stopped ? "Start the installed iOS simulator"
+                                               : "Create and start a simulator, or connect an iOS device";
+      checks.push_back({ready == 1 ? EnvironmentDiagnosticStatus::Ready : EnvironmentDiagnosticStatus::Missing,
+                        "device", "iOS destination", ready == 1 ? "" : diagnostic});
+    }
+    return checks;
   }
 
-  std::vector<SetupAction> PlanSetup(std::span<const EnvironmentDiagnostic> diagnostics) const override {
-    return std::any_of(diagnostics.begin(), diagnostics.end(), [](const EnvironmentDiagnostic& diagnostic) {
-             return diagnostic.status == EnvironmentDiagnosticStatus::Missing;
-           })
-               ? std::vector<SetupAction>{{"Install Xcode and select it with xcode-select", std::nullopt}}
-               : std::vector<SetupAction>{};
+  std::vector<SetupAction> PlanSetup(std::span<const EnvironmentDiagnostic> checks,
+                                     const EnvironmentRequest&) const override {
+    std::vector<SetupAction> actions;
+    if (detail::NeedsSetup(checks, "xcode") || detail::NeedsSetup(checks, "xcrun")) {
+      actions.push_back({"Install and select Xcode from https://developer.apple.com/xcode/",
+                         std::nullopt,
+                         "select_xcode",
+                         {},
+                         {"xcode"}});
+    }
+    if (detail::NeedsSetup(checks, "xcode_initialization")) {
+      actions.push_back({"Open the selected Xcode and complete its first-launch setup and license",
+                         std::nullopt,
+                         "initialize_xcode",
+                         {},
+                         {"xcode_initialization"}});
+    }
+    const auto sdk = std::ranges::find(checks, std::string_view{"platform_sdk"}, &EnvironmentDiagnostic::id);
+    const bool missing_sdk = sdk != checks.end() && sdk->status == EnvironmentDiagnosticStatus::Missing;
+    if (missing_sdk && sdk->label == "iphoneos SDK") {
+      actions.push_back({"Install iOS platform support from the selected Xcode's Components settings",
+                         std::nullopt,
+                         "select_iphoneos_sdk",
+                         {},
+                         {"platform_sdk"}});
+    } else if (missing_sdk || detail::NeedsSetup(checks, "simulator_runtime")) {
+      std::vector<std::string> provides;
+      if (missing_sdk)
+        provides.push_back("platform_sdk");
+      if (detail::NeedsSetup(checks, "simulator_runtime"))
+        provides.push_back("simulator_runtime");
+      actions.push_back({"Install iOS platform support and the Simulator runtime with Xcode",
+                         ProcessCommand{"xcodebuild", {"-downloadPlatform", "iOS"}, {}},
+                         "download_ios_platform",
+                         {"xcode_initialization"},
+                         std::move(provides)});
+    }
+    if (detail::NeedsSetup(checks, "device")) {
+      const auto check = std::ranges::find(checks, std::string_view{"device"}, &EnvironmentDiagnostic::id);
+      actions.push_back({check->detail, std::nullopt, "select_device", {}, {"device"}});
+    }
+    return actions;
   }
 
   std::vector<GeneratedFile> CreateShell(const ProjectTemplateContext& context) const override {
@@ -406,38 +553,58 @@ public:
     return true;
   }
 
-  std::vector<PlatformDevice> DiscoverDevices() const override {
-    const ProcessCommand physical_command{
-        "xcrun",
-        {
-            "devicectl",
-            "list",
-            "devices",
-            "--hide-default-columns",
-            "--columns",
-            "name",
-            "identifier",
-            "state",
-            "udid",
-            "--hide-headers",
-        },
-        {},
+  std::vector<PlatformDevice> DiscoverDevices(const EnvironmentRequest&) const override {
+    const auto list_physical = [](bool filter_simulators) {
+      ProcessCommand command{
+          "xcrun",
+          {
+              "devicectl",
+              "list",
+              "devices",
+              "--hide-default-columns",
+              "--columns",
+              "name",
+              filter_simulators ? "CoreDevice ID" : "identifier",
+              "state",
+              "udid",
+              "--hide-headers",
+          },
+          {},
+      };
+      if (filter_simulators) {
+        command.arguments.insert(command.arguments.end(), {"--filter", "Reality = 'physical'"});
+      }
+      return RunProcessCapture(command);
     };
-    const ProcessCommand simulator_command{"xcrun", {"simctl", "list", "devices", "booted"}, {}};
-    const ProcessResult physical_result = RunProcessCapture(physical_command);
+    const ProcessCommand simulator_command{"xcrun", {"simctl", "list", "devices", "available"}, {}};
+    ProcessResult physical_result = list_physical(true);
+    if (physical_result.exit_code != 0) {
+      // Older devicectl versions expose the CoreDevice UUID in the Identifier column.
+      physical_result = list_physical(false);
+    }
     const ProcessResult simulator_result = RunProcessCapture(simulator_command);
     if (physical_result.exit_code != 0 && simulator_result.exit_code != 0) {
       throw std::runtime_error("cannot discover iOS devices through devicectl or simctl");
     }
 
     std::vector<PlatformDevice> devices;
+    const auto merge = [&devices](std::vector<PlatformDevice> discovered) {
+      for (PlatformDevice& device : discovered) {
+        const auto existing = std::ranges::find(devices, device.id, &PlatformDevice::id);
+        if (existing == devices.end()) {
+          devices.push_back(std::move(device));
+        } else if (existing->kind != device.kind ||
+                   (device.state == DeviceState::Ready && existing->state != DeviceState::Ready)) {
+          *existing = std::move(device);
+        }
+      }
+    };
     if (physical_result.exit_code == 0) {
-      devices = ParseIosPhysicalDevices(physical_result.output);
+      merge(ParseIosPhysicalDevices(physical_result.output));
     }
     if (simulator_result.exit_code == 0) {
-      std::vector<PlatformDevice> simulators = ParseIosSimulatorDevices(simulator_result.output);
-      devices.insert(devices.end(), std::make_move_iterator(simulators.begin()),
-                     std::make_move_iterator(simulators.end()));
+      // simctl owns the kind and state of simulators, including any also reported by devicectl.
+      merge(ParseIosSimulatorDevices(simulator_result.output));
     }
     return devices;
   }
@@ -446,17 +613,33 @@ public:
     if (!context.cmake_generator.empty()) {
       throw std::invalid_argument("iOS native builds do not use a CMake generator option");
     }
+    if (context.build_system == BuildSystem::Mcpp) {
+      // The build program writes the library graph and the framework record the shell's integration reads, so the
+      // core is built before Xcode runs; the shell's own build then finds it current.
+      std::vector<std::string> arguments{"build", "--target",
+                                         IsIosPhysicalDevice(context) ? "aarch64-ios" : "aarch64-ios-sim"};
+      const std::vector<std::string> profile = mcpp::ProfileArguments(IosMcppOptions(context));
+      arguments.insert(arguments.end(), profile.begin(), profile.end());
+      return {{"mcpp", std::move(arguments), context.project_root}};
+    }
     return detail::LibraryGraphConfigureCommands(context);
   }
 
   void UpdateProjectIntegration(const PlatformCommandContext& context) const override {
     UpdateIosLibraryIntegration(context.project_root);
+    WriteIosIntegrationSettings(context);
   }
 
   void ValidateBuildAbis(const PlatformCommandContext& context) const override {
     if (!context.abis.empty() && IsIosPhysicalDevice(context) &&
         (context.abis.size() != 1 || context.abis.front() != "arm64")) {
       throw std::invalid_argument("HuxerUI iOS device builds only support the arm64 ABI");
+    }
+    // mcpp's Apple toolchain targets arm64 only; an x86_64 Simulator would need an engine row and toolchain
+    // packages for Intel Macs.
+    if (context.build_system == BuildSystem::Mcpp &&
+        std::ranges::any_of(context.abis, [](const std::string& abi) { return abi != "arm64"; })) {
+      throw std::invalid_argument("the mcpp integration builds iOS for the arm64 ABI only");
     }
   }
 
@@ -477,7 +660,8 @@ public:
         (context.build_directory / "DerivedData").string(),
         "-destination",
         IosDestination(context),
-        "HUXERUI_HOME=" + context.huxerui_home.string(),
+        "HUXERUI_HOME=" + IosFrameworkHome(context).string(),
+        std::string("HUXERUI_BUILD_SYSTEM=") + (context.build_system == BuildSystem::Mcpp ? "mcpp" : "cmake"),
         "HUXERUI_INTEGRATION_PLAN=" + (context.build_directory / "huxerui-integration/app.json").string(),
     };
     if (IsIosPhysicalDevice(context)) {
@@ -486,6 +670,21 @@ public:
     if (!context.abis.empty()) {
       build_arguments.push_back("ARCHS=" + detail::JoinTargetAbis(context.abis, ' '));
       build_arguments.push_back("ONLY_ACTIVE_ARCH=NO");
+    } else if (context.build_system == BuildSystem::Mcpp) {
+      // A generic Simulator destination builds every standard architecture; the mcpp core is arm64.
+      build_arguments.push_back("ARCHS=arm64");
+    }
+    if (context.build_system == BuildSystem::Mcpp) {
+      // The shell's build phase builds the core with the profile and features the CLI resolved.
+      const mcpp::CommandOptions options = IosMcppOptions(context);
+      build_arguments.push_back("HUXERUI_MCPP_PROFILE=" + options.profile_name);
+      std::string features;
+      for (const std::string& feature : options.features) {
+        features += (features.empty() ? "" : ",") + feature;
+      }
+      if (!features.empty()) {
+        build_arguments.push_back("HUXERUI_MCPP_FEATURES=" + features);
+      }
     }
     if (context.optimization) {
       build_arguments.push_back("HUXERUI_OPTIMIZATION=" + *context.optimization);
@@ -566,14 +765,22 @@ std::vector<PlatformDevice> ParseIosPhysicalDevices(std::string_view output) {
       continue;
     }
     const std::string_view value(line);
-    const std::string_view name = Trim(value.substr(0, *identifier));
+    std::string_view name = Trim(value.substr(0, *identifier));
     const std::string_view details = Trim(value.substr(*identifier + 36));
-    const std::size_t destination_separator = details.find_last_of(" \t");
-    if (destination_separator == std::string_view::npos) {
-      continue;
+    std::string_view state;
+    std::string_view destination = details;
+    if (const auto separator = details.find_last_of(" \t"); separator != std::string_view::npos) {
+      state = Trim(details.substr(0, separator));
+      destination = details.substr(separator + 1);
+    } else {
+      // The explicit CoreDevice ID column follows State in the newer table.
+      const auto state_separator = name.rfind("  ");
+      if (state_separator == std::string_view::npos) {
+        continue;
+      }
+      state = Trim(name.substr(state_separator + 2));
+      name = Trim(name.substr(0, state_separator));
     }
-    const std::string_view state = Trim(details.substr(0, destination_separator));
-    const std::string_view destination = Trim(details.substr(destination_separator + 1));
     if (destination.empty()) {
       continue;
     }
@@ -600,7 +807,7 @@ std::vector<PlatformDevice> ParseIosSimulatorDevices(std::string_view output) {
       continue;
     }
     const std::optional<std::size_t> identifier = FindUuid(line);
-    if (!identifier || runtime.starts_with("Unavailable")) {
+    if (!identifier || (!runtime.empty() && !runtime.starts_with("iOS "))) {
       continue;
     }
     const std::string_view value(line);

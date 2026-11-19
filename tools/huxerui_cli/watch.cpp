@@ -19,6 +19,7 @@
 
 #include "process_runner.h"
 #include "sdk.h"
+#include "toolchain.h"
 
 namespace huxerui::cli {
 namespace {
@@ -52,8 +53,10 @@ using SourceSnapshot = std::map<fs::path, std::pair<fs::file_time_type, std::uin
 
 bool IgnoreDirectory(const fs::path& path) {
   const auto name = path.filename();
+  // mcpp writes its outputs to `target/` beside the manifest.
   return name == ".git" || name == ".huxerui" || name == ".gradle" || name == ".cxx" ||
-         name == "build" || name == "dist" || name == "DerivedData";
+         name == "build" || name == "dist" || name == "DerivedData" || name == ".mcpp" ||
+         (name == "target" && fs::is_regular_file(path.parent_path() / "mcpp.toml"));
 }
 
 std::set<fs::path> SourceRoots(const PlatformCommandContext& context) {
@@ -297,7 +300,7 @@ private:
   ProcessCommand Adb(std::initializer_list<std::string> arguments) const {
     auto values = detail::DeviceArguments(context_.device);
     values.insert(values.end(), arguments.begin(), arguments.end());
-    return {adb_, std::move(values), context_.project_root};
+    return detail::WithEnvironment({adb_, std::move(values), context_.project_root}, context_.environment);
   }
 
   ProcessCommand DeviceShell(std::string script) const {
@@ -373,16 +376,18 @@ public:
     const auto revision = std::to_string(++revision_);
     const auto next = staging_.path / revision;
     if (id == "windows" || id == "macos" || id == "linux") {
-      auto command = StageDesktop(context_, next);
-      const auto previous = current_;
+      auto command = detail::WithEnvironment(StageDesktop(context_, next), context_.environment);
       process_.Stop();
       try {
         PrintCommand(command, output_);
         process_.Start(command);
       } catch (...) {
-        if (previous) process_.Start(*previous);
+        std::error_code error;
+        fs::remove_all(next, error);
+        if (current_) process_.Start(*current_);
         throw;
       }
+      // Keep the resolved command so a rollback uses the same child environment.
       current_ = std::move(command);
     } else if (id == "web") {
       StageWeb(context_, next, revision);
@@ -400,7 +405,7 @@ public:
         WriteFile(staging_.path / "index.html", "<script>fetch('watch-version',{cache:'no-store'}).then(r=>r.text())"
             ".then(v=>location.replace('/'+v+'/index.html'));</script>");
         PrintCommand(command, output_);
-        process_.Start(command);
+        process_.Start(detail::WithEnvironment(command, context_.environment));
       }
     } else if (id == "android") {
       android_.Apply(platform_.RunCommands(context_), next);

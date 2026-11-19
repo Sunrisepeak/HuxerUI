@@ -13,6 +13,31 @@ cd hello_huxer
 The command creates shared sources under `src`, resources under `resources`, the requested platform shells, and the HuxerUI application-development Skill under `.agents/skills`.
 Only build platforms supported by the current development host.
 
+Run in a terminal, `huxerui create` asks for whatever the command line leaves out: the kind and name, the build system, the template, the platforms, and the agents whose skill files to add. It confirms before writing anything, then names the command to run next.
+`--yes`, or running without a terminal, applies the defaults instead, and the command prints the options that recreate the same project.
+
+A project's source style follows its build systems:
+
+| `--build-system` | Source style | Sources write |
+| --- | --- | --- |
+| `cmake` (an application's default) | headers | `#include <huxerui/huxerui.h>` |
+| `mcpp` | C++ modules | `import huxerui;` in module units |
+| `cmake,mcpp`, application | headers, with both declarations | `#include <huxerui/huxerui.h>` |
+| `cmake,mcpp`, library (a library's default, recommended) | headers and C++ modules | headers; consumers include them or import the library's module |
+
+Keep both for a library: other libraries and applications consume it, and with both declarations each of them can, whether it includes headers or imports C++ modules, while you maintain only the headers.
+An existing headers library gains the module interface without changing its sources, as [Add C++ modules to an existing headers library](../../skills/huxerui-app-development/references/cpp-modules-and-mcpp.md#add-c-modules-to-an-existing-headers-library) describes.
+Such a library is a module named after its package as well: the mcpp build generates its interface, `modules/<package name>.cppm`, from its public headers, so a consumer built with mcpp writes `import <module>;` and one built with CMake includes the headers. Set `cpp_modules_gen = false` under `[package.metadata.huxerui]` to write that file yourself; the build then reports the names it leaves out.
+
+```bash
+huxerui create app hello_modules --build-system mcpp
+huxerui create app hello_both --build-system cmake,mcpp
+```
+
+`--template` selects a C++ modules application's content, `app` (the default) or `navigation`.
+`build`, `run`, and `package` are the same commands for every style and build system.
+A project with both declarations builds with CMake; add `--build-system mcpp` to a command to build it with mcpp instead.
+
 Use `--agent` to select a different Agent Skill directory:
 
 ```bash
@@ -38,12 +63,17 @@ huxerui doctor web,android
 ```
 
 `doctor` reports the selected SDK, project configuration, compiler, platform tools, and actionable missing prerequisites without changing the machine.
+For a library it also states whether importers can `import` it as a C++ module.
 
 For supported downloadable prerequisites:
 
 ```bash
 huxerui setup web,android
 ```
+
+Use `huxerui doctor android --json` to preview the installation plan without making changes. Use `--operation run`, `--operation devices`, or `--operation package` to check prerequisites for a specific operation. For example, `huxerui doctor linux --operation package --format deb` checks tools needed by DEB packaging.
+
+Setup rechecks the environment after each installation. You can rerun it after addressing a manual action or restarting the machine. `--yes` confirms the HuxerUI plan, while official installers retain their own license and privilege prompts.
 
 ## Build and run
 
@@ -68,13 +98,14 @@ The selection applies only to that invocation and its build children. Without `-
 
 Direct CMake builds of generated projects use `-DHUXERUI_HOME=<path>`. CMake loads the source checkout or installed package at that location. Use a separate build directory for each framework location; the CLI does this automatically.
 
-The SDK CLI also provides an independent mcpp frontend for projects that own an `mcpp.toml` manifest:
-
-```bash
-huxerui mcpp build --project ../my-mcpp-project
-```
-
-`--project` defaults to the current directory. The CLI invokes mcpp directly, and the mcpp project owns its sources, dependencies, and framework integration.
+A project's build system is identified by its native declaration: `CMakeLists.txt`, or `mcpp.toml` with `build.mcpp`.
+`build`, `run`, and `package` dispatch to that integration, so the same commands drive a CMake project and an mcpp project.
+A project that declares both builds with CMake and says so before it starts; `--build-system mcpp` selects mcpp for one command.
+For an mcpp project, desktop platforms and the Web build with `mcpp build`, run with `mcpp run`, and package with `mcpp pack`; Android and iOS build, run, and package through the same Gradle and Xcode shells as a CMake project, and `--no-shell` packages them with `mcpp pack` instead. Packages are published below `dist/<platform>` either way.
+An mcpp project takes HuxerUI from the `huxerui` dependency in `mcpp.toml`, so `--sdk` is a usage error there. `--optimization` and `--lto` select the release profiles `huxerui create` declares, `--profile` opens the framework's profiling feature, and `--abi`, `--device`, and `--java-home` apply to the shells.
+`--generator` steers only the CMake driver; for an mcpp project the CLI reports it with a warning and does not apply it.
+mcpp provisions its own compilers and libraries, so it needs nothing from the host but itself: install it with `xlings install mcpp -y`, as its [installation guide](https://github.com/mcpp-community/mcpp#install) describes. `huxerui doctor` checks the build system a project builds with and lists what is missing.
+Capabilities that only mcpp offers are used through `mcpp` directly.
 
 The CLI passes the selected framework home through its process environment and build arguments without writing it into platform configuration files. Direct Android Studio builds require `HUXERUI_HOME` in the IDE's environment; direct Xcode builds require it in the IDE's environment or explicit build settings, such as `Config/Local.xcconfig`. An already running IDE does not inherit the CLI's temporary environment or remember its last `--sdk` selection.
 
@@ -142,8 +173,53 @@ const Application application{
 };
 ```
 
+In a C++ modules project the same application is a module unit, `src/app.cppm`, and each desktop platform's `main.cpp` holds the process entry:
+
+```cpp
+export module app;
+
+import std;
+import huxerui;
+
+using namespace huxerui;
+
+[[huxerui::composable]]
+View Counter() {
+  auto count = UseState(0);
+
+  return Column {
+    Text::Format("Count: {}", count),
+    Button("Increment").OnClick([count] {
+      count += 1;
+    }),
+  }.With(
+      Padding(24.0F),
+      Spacing(12.0F)
+  );
+}
+
+View App() {
+  return MaterialTheme {
+    Counter(),
+  };
+}
+
+const Application application{
+    App,
+    {
+        .window = {
+            .title = "Counter",
+            .initial_size = {480.0F, 320.0F},
+            .minimum_size = Size{320.0F, 240.0F},
+        },
+    }
+};
+```
+
+`import std;` makes the standard-library declarations that HuxerUI's templates instantiate visible to the module unit.
+
 Mark a reusable function `[[huxerui::composable]]` when it directly calls a composition-bound `UseXxx()` function.
-Composable code generation is enabled by the generated CMake project.
+Composable code generation is enabled by the generated project, under either build system.
 
 ## Resources
 
@@ -184,17 +260,16 @@ To read a separate resource package, pass the directory produced by `hrc` to `Re
 ## Project commands
 
 ```text
-huxerui create app <name> [--id <project-id>] [-p|--platform <platform-list>] [--agent <agent-list>]
-huxerui create library <name> [--namespace <cpp-namespace>] [--target <public-cmake-target>] [--id <project-id>] [-p|--platform <platform-list>] [--agent <agent-list>]
+huxerui create [app <name>] [--build-system <build-system-list>] [--template <name>] [--id <project-id>] [-p|--platform <platform-list>] [--agent <agent-list>] [--yes]
+huxerui create [library <name>] [--build-system <build-system-list>] [--namespace <cpp-namespace>] [--target <public-cmake-target>] [--id <project-id>] [-p|--platform <platform-list>] [--agent <agent-list>] [--yes]
 huxerui platform add <platform-list>
-huxerui doctor [platform-list]
-huxerui setup <platform-list> [--yes]
+huxerui doctor [platform-list] [--operation build|run|package|devices] [--json]
+huxerui setup <platform-list> [--operation build|run|package|devices] [--yes]
 huxerui devices [platform]
-huxerui build [platform-list] [-d|--device <id>] [--config debug|release] [--generator <name>] [--sdk <path>] [--java-home <path>]
-huxerui mcpp build [--project <dir>] [--release] [--locked] [--offline] [--verbose]
-huxerui run <platform> [-d|--device <id>] [--config debug|release] [--generator <name>] [--sdk <path>] [--java-home <path>] [--watch]
-huxerui package <platform-list> [-d|--device <id>] [--config debug|release] [--generator <name>] [--sdk <path>] [--java-home <path>]
-huxerui open ios [--sdk <path>]
+huxerui build [platform-list] [--build-system cmake|mcpp] [-d|--device <id>] [--config debug|release] [--generator <name>] [--sdk <path>] [--java-home <path>] [--no-shell]
+huxerui run <platform> [--build-system cmake|mcpp] [-d|--device <id>] [--config debug|release] [--generator <name>] [--sdk <path>] [--java-home <path>] [--no-shell] [--watch]
+huxerui package <platform-list> [--build-system cmake|mcpp] [-d|--device <id>] [--config debug|release] [--generator <name>] [--sdk <path>] [--java-home <path>] [--no-shell]
+huxerui open ios [--build-system cmake|mcpp] [--sdk <path>]
 ```
 
 Use `b`, `r`, and `pkg` as short forms of `build`, `run`, and `package`. These commands and `open` accept `-h` or `--help` immediately after the command name.

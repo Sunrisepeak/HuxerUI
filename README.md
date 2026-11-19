@@ -8,7 +8,7 @@ HuxerUI is a declarative, cross-platform UI framework for C++20. The name *Huxer
 
 ## Quick Start
 
-This quick start targets HuxerUI **0.4.0**. The installers select the latest published SDK.
+This quick start targets HuxerUI **0.5.0**. The installers select the latest published SDK.
 
 ### Install the SDK
 
@@ -30,7 +30,7 @@ For toolchain requirements and SDK version selection, see [Installation](docs/gu
 
 ### Run an application
 
-Open a new terminal to create a CMake application. Replace `windows` with a target you can build and run from your development machine.
+Open a new terminal to create an application. Replace `windows` with a target you can build and run from your development machine.
 
 ```bash
 huxerui create app hello_huxer
@@ -39,7 +39,13 @@ huxerui doctor
 huxerui run windows
 ```
 
-For a C++ modules project on Windows, macOS, or Linux, pass `--build mcpp` to `huxerui create app`. Generated modules use `import huxerui;` and run with `mcpp run`. [C++ Modules and mcpp](skills/huxerui-app-development/references/cpp-modules-and-mcpp.md)
+The project above uses headers (`#include <huxerui/huxerui.h>`) and CMake. For a C++ modules project, whose sources write `import huxerui;` and which mcpp builds:
+
+```bash
+huxerui create app hello_modules --build-system mcpp
+```
+
+A library defaults to, and is recommended with, `--build-system cmake,mcpp`: you maintain its headers, the mcpp build generates its module interface, and consumers can either include or `import` it. See [C++ Modules and mcpp](skills/huxerui-app-development/references/cpp-modules-and-mcpp.md).
 
 ## Example
 

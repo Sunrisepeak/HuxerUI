@@ -1,0 +1,81 @@
+name: CLI Terminal Prompts (PR 9 only)
+
+# TEMPORARY -- PR 9 ONLY, NOT FOR UPSTREAM.
+#
+# Runs tests/scripts/cli_tui_test.py, which drives `huxerui create` on a
+# pseudo-terminal and checks the screen through the pyte emulator: a POSIX pty
+# on Linux and macOS, ConPTY (pywinpty) on Windows. It exists so the redesigned
+# create prompts are checked on each host's terminal back end while PR 9 is
+# reviewed. Delete this file and the test before the branch goes upstream; the
+# Catch2 suite in tests/cli remains the permanent coverage of the prompts.
+
+on:
+  pull_request:
+    paths:
+      - 'tools/huxerui_cli/**'
+      - 'tests/scripts/cli_tui_test.py'
+      - '.github/workflows/cli-tui.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: cli-tui-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  prompts:
+    name: create prompts (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, macos-15, windows-2025]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+        if: runner.os == 'Windows'
+        with:
+          arch: x64
+
+      # Configuring the repository on Linux needs the framework's dependencies
+      # even though only the CLI is built.
+      - name: Install the Linux configure dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-4-dev libepoxy-dev libsoup-3.0-dev pkg-config ninja-build
+
+      - name: Install Ninja
+        if: runner.os != 'Linux'
+        run: python -m pip install ninja
+
+      - name: Build the CLI
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DHUXERUI_BUILD_EXAMPLES=OFF \
+            -DHUXERUI_BUILD_SHARED=OFF \
+            -DHUXERUI_BUILD_CLI=ON \
+            -DHUXERUI_BUILD_TESTS=OFF
+          cmake --build build --target huxerui_cli --parallel
+
+      - name: Install the terminal emulator
+        run: |
+          python -m pip install pyte
+          if [ "${RUNNER_OS}" = Windows ]; then python -m pip install pywinpty; fi
+
+      - name: Drive the create prompts
+        run: |
+          cli=build/bin/huxerui
+          if [ "${RUNNER_OS}" = Windows ]; then cli=build/bin/huxerui.exe; fi
+          python -I tests/scripts/cli_tui_test.py "${cli}" -v
