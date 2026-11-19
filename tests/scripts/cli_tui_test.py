@@ -247,6 +247,7 @@ class CreatePromptTests(unittest.TestCase):
         columns = {len(row) - len(row[row.index(question) + len(question):].lstrip())
                    for question, row in answers.items()}
         self.assertEqual(len(columns), 1, "\n".join(answers.values()))
+        self.assertIn("Create hello-hui?  yes", terminal.text())
         self.assertIn("same as", terminal.text())
 
         if not WINDOWS:

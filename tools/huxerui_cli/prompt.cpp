@@ -246,7 +246,7 @@ Frame Render(const State& state, const Style& style) {
     const bool cancelled = state.status == Status::Cancelled;
     frame.lines.push_back({
         {std::string(cancelled ? glyphs.cancelled : glyphs.done) + "  ", cancelled ? Role::Error : Role::Success},
-        {Padded(state.question, question_width), Role::Plain},
+        {Padded(state.question, std::max(question_width, DisplayWidth(state.question) + 2)), Role::Plain},
         {cancelled ? std::string("cancelled") : Answer(state), cancelled ? Role::Muted : Role::Accent},
     });
     return frame;

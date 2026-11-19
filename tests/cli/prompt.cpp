@@ -113,6 +113,8 @@ TEST_CASE("HuxerUICliPromptConfirmTakesItsDefaultOrALetter") {
   REQUIRE(Lines(state) == std::vector<std::string>{"*  Create hello-hui?  (Y/n)"});
   Apply(state, Press(Key::Enter));
   REQUIRE(state.yes);
+  // A question longer than the answer column still keeps its answer apart.
+  REQUIRE(Lines(state) == std::vector<std::string>{"+  Create hello-hui?  yes"});
   State declined = MakeConfirm("Create hello-hui?", true);
   Apply(declined, Type("n"));
   REQUIRE(declined.status == Status::Submitted);
@@ -144,7 +146,7 @@ TEST_CASE("HuxerUICliPromptMultiSelectRequiresOneChoice") {
   Apply(state, Press(Key::Enter));
   REQUIRE(state.status == Status::Submitted);
   REQUIRE(CheckedIndices(state) == std::vector<std::size_t>{1});
-  REQUIRE(Lines(state) == std::vector<std::string>{"+  Build systems mcpp"});
+  REQUIRE(Lines(state) == std::vector<std::string>{"+  Build systems  mcpp"});
 }
 
 TEST_CASE("HuxerUICliPromptTextUsesDefaultAndValidates") {
