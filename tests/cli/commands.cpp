@@ -1,6 +1,7 @@
 #include "support.h"
 
 #include "mcpp/mcpp.h"
+#include "toolchain.h"
 
 using namespace huxerui::cli::test;
 
@@ -42,6 +43,17 @@ TEST_CASE("HuxerUICliCreatesMcppDispatchCommands") {
   REQUIRE(TargetTriple("android") == "aarch64-linux-android");
   REQUIRE(TargetTriple("ios") == "aarch64-ios-sim");
   REQUIRE_THROWS_AS(TargetTriple("plan9"), std::invalid_argument);
+
+  // Linux builds for the host's ABI, whichever it is, and for no other; Apple platforms build for arm64.
+  using huxerui::cli::mcpp::AbiTriple;
+  const bool arm_host = huxerui::cli::detail::HostArchitecture() == "arm64";
+  REQUIRE(AbiTriple("linux", arm_host ? "aarch64" : "x86_64").empty());
+  REQUIRE_THROWS_WITH(AbiTriple("linux", arm_host ? "x86_64" : "aarch64"),
+                      Catch::Matchers::ContainsSubstring("for the host's ABI"));
+  REQUIRE(AbiTriple("macos", "arm64").empty());
+  REQUIRE(AbiTriple("ios", "arm64") == "aarch64-ios-sim");
+  REQUIRE_THROWS_AS(AbiTriple("macos", "x86_64"), std::invalid_argument);
+  REQUIRE(AbiTriple("android", "x86_64") == "x86_64-linux-android");
 
   const huxerui::cli::mcpp::CommandOptions web{"/project", "web", "release"};
   const huxerui::cli::ProcessCommand build = huxerui::cli::mcpp::BuildCommand(web);
@@ -109,8 +121,9 @@ TEST_CASE("HuxerUICliDispatchesToTheProjectsBuildSystem") {
   const std::filesystem::path both = temporary.Path() / "both";
 
   // An option that would change the product is invalid usage for an integration that cannot honor it.
+  const std::string_view foreign_abi = huxerui::cli::detail::HostArchitecture() == "arm64" ? "x86_64" : "aarch64";
   for (const std::initializer_list<std::string_view> arguments : {
-           std::initializer_list<std::string_view>{"build", "linux", "--abi", "aarch64"},
+           std::initializer_list<std::string_view>{"build", "linux", "--abi", foreign_abi},
            std::initializer_list<std::string_view>{"build", "linux", "--sdk", "."},
            std::initializer_list<std::string_view>{"run", "web", "--watch"},
        }) {

@@ -7,6 +7,8 @@
 #include <utility>
 #include <vector>
 
+#include "toolchain.h"
+
 namespace huxerui::cli::mcpp {
 namespace {
 
@@ -300,16 +302,19 @@ std::string AbiTriple(std::string_view platform, std::string_view abi) {
     }
     throw std::invalid_argument("the mcpp integration builds no Android ABI " + std::string(abi));
   }
-  // The desktop platforms build for the host, so the host's own ABI selects nothing more.
-  if ((platform == "linux" || platform == "windows") && abi == "x86_64") {
-    return {};
+  // Linux and Windows build for the host, so the host's own ABI selects nothing more. Whether the host's ABI builds
+  // at all is the build's answer: the packages it resolves either exist for that ABI or are reported missing.
+  if (platform == "linux" || platform == "windows") {
+    const std::string_view host = detail::HostArchitecture();
+    const std::string_view host_abi = platform == "linux" && host == "arm64" ? "aarch64" : host;
+    if (abi == host_abi) {
+      return {};
+    }
+    const std::string name = platform == "linux" ? "Linux" : "Windows";
+    throw std::invalid_argument("the mcpp integration builds " + name + " for the host's ABI, " + std::string(host_abi));
   }
   if ((platform == "macos" || platform == "ios") && abi == "arm64") {
     return platform == "ios" ? std::string(TargetTriple(platform)) : std::string{};
-  }
-  if (platform == "linux") {
-    throw std::invalid_argument("the mcpp integration builds Linux for x86_64 only: the GTK packages it takes from "
-                                "xlings are built for x86_64");
   }
   if (platform == "macos" || platform == "ios") {
     throw std::invalid_argument("the mcpp integration builds " + std::string(platform == "ios" ? "iOS" : "macOS") +
