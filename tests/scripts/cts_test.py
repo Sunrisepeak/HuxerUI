@@ -241,6 +241,32 @@ class UsageTests(unittest.TestCase):
         self.assertEqual(facts["usage.operation_failure"], "success")
 
 
+class DoctorTests(unittest.TestCase):
+    def verdict(self, files, integration, code, stdout=""):
+        with tempfile.TemporaryDirectory() as root:
+            for name in files:
+                (Path(root) / name).write_text("", encoding="utf-8")
+            completed = mock.Mock(returncode=code, stdout=stdout, stderr="")
+            with mock.patch.object(cts.subprocess, "run", return_value=completed) as run:
+                facts, notes = cts.doctor_facts("huxerui", integration, "linux", Path(root), 60)
+        return facts, notes, run.call_args_list
+
+    def test_a_ready_environment_is_reported_ready(self):
+        facts, _, calls = self.verdict(["CMakeLists.txt"], "cmake", 0)
+        self.assertEqual(facts, {"doctor.ready": "ready"})
+        self.assertEqual(calls[0].args[0], ["huxerui", "doctor", "linux", "--sdk", str(cts.REPOSITORY)])
+
+    def test_what_is_missing_is_named(self):
+        facts, _, _ = self.verdict(["mcpp.toml"], "mcpp", 1, "Common environment:\n  [missing] mcpp\n  [ok] xlings\n")
+        self.assertEqual(facts, {"doctor.ready": "not ready: [missing] mcpp"})
+
+    def test_an_integration_reached_by_selection_has_no_verdict(self):
+        facts, notes, calls = self.verdict(["CMakeLists.txt", "mcpp.toml"], "mcpp", 0)
+        self.assertEqual(facts, {})
+        self.assertEqual(len(notes), 1)
+        self.assertEqual(calls, [])
+
+
 class CreatedFactTests(unittest.TestCase):
     def test_facts_observed_at_creation_join_the_build(self):
         adapter = mock.Mock()

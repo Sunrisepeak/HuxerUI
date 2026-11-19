@@ -44,6 +44,7 @@ The suite is divided into checkpoints so a run shows which part of the contract 
 | `package` | `package.kind`: the distributable `huxerui package` published; `package.location` and `package.resources`, which the contract fixes: it is below `dist/<platform>` and carries the resource package the build produced; `package.dispatch`: the CLI is called as a developer calls it, with no `--build-system` for a root that declares only the checked integration or that declares several when the checked integration is CMake, and with it otherwise, and must state that it built with the checked integration | |
 | `package-shellless` | The same facts for `huxerui package --no-shell`, on Android and iOS, where an integration packages without the standard shell | |
 | `usage` | The exit codes the contract fixes for `huxerui build`: `usage.unknown_build_system` and, on a root that does not declare another integration, `usage.undeclared_build_system` are invalid usage; `usage.product_option`, each product option the integration declares inapplicable, is invalid usage; `usage.driver_option`, each such driver option, is reported; `usage.operation_failure`, a build of a copy carrying an unknown platform directory, is an operation failure. A fact that does not apply is left out with its reason | |
+| `doctor` | `doctor.ready`: `huxerui doctor <platform>` run in a built project as a developer runs it reports ready; a run that needs `--build-system` to reach the checked integration has no verdict, since the diagnosis plans for the root's default | |
 
 The compared facts are also checked between a project and the project it names in `sameModelAs`.
 A difference is accepted only when [`allowed-differences.json`](allowed-differences.json) lists it with its reason.
@@ -64,6 +65,7 @@ A clause is `checked` when some project's `expected.json`, or the contract itsel
 | `ABI-SELECT` | not covered |  |
 | `DISPATCH-ROOT` | checked | `package`, `package-shellless`, `usage` |
 | `DISPATCH-DEFAULT` | checked | `package`, `package-shellless` |
+| `DOCTOR-DISPATCH` | checked | `doctor` |
 | `OPTION-INAPPLICABLE` | checked | `usage` |
 | `CREATE-SELECT` | checked | `build` |
 | `LAYOUT-COMMON` | not covered |  |
@@ -126,6 +128,7 @@ The `package` checkpoint runs `huxerui package <platform> --build-system <integr
 On Android and iOS the package comes from the standard shell: a project without one gets it from `huxerui platform add <platform>` first, which is removed afterwards, and Android is packaged for `arm64-v8a`.
 The `package-shellless` checkpoint adds `--no-shell` and is declared only by an integration that offers it.
 The `usage` checkpoint runs `huxerui build` with what a developer can get wrong and reads only the exit code and, for a driver option, whether the option was reported; it follows `package`, so the release build a driver option repeats has nothing left to do.
+The `doctor` checkpoint is declared for the desktop platforms and the Web; on Android and iOS the diagnosis also asks for SDK components the standard shell installs itself, so it is not yet a statement about the build system.
 A project without `package.kind` in `expected.json` is not packaged.
 
 ## Targets

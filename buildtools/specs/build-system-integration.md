@@ -36,6 +36,7 @@ A library is built by the build system of the application that consumes it, so a
 An option that does not apply to the project's build system is never silent.
 An option that would change the product, such as an ABI, optimization, LTO, or package-format choice, is rejected as invalid usage with the reason.
 An option that only steers the driver, such as a native generator or a tool location, is reported with a warning and not applied, and the operation continues.
+The environment diagnosis, `huxerui doctor`, plans for the build system an operation dispatches to without an explicit selection, so it asks of the host only what that integration takes from it; an environment in which that operation succeeds is reported ready.
 
 `huxerui create` composes a project from one source style, headers or C++ modules, and the native declaration of each selected build system, from explicit options, interactive prompts, or the CLI's defaults.
 The source style follows the selected build systems: it is the one every selected integration can build, so a selection that includes a build system without the `modules` capability is headers, and a selection whose every build system declares `modules` is C++ modules.
@@ -246,6 +247,7 @@ The conformance suite names the clauses each of its checks covers, and its [cove
 | `ABI-SELECT` | An explicit ABI selection is satisfied in full or rejected, and the ABIs of each produced artifact are reported. | [CLI build intent](#cli-build-intent) |
 | `DISPATCH-ROOT` | The native build file at the project root identifies its build system, and the CLI dispatches one set of verbs to it. | [Build-system selection and dispatch](#build-system-selection-and-dispatch) |
 | `DISPATCH-DEFAULT` | An application root that declares several build systems builds with CMake unless an explicit selection names another. | [Build-system selection and dispatch](#build-system-selection-and-dispatch) |
+| `DOCTOR-DISPATCH` | `huxerui doctor` diagnoses the requirements of the build system an operation dispatches to, and reports ready an environment in which that operation succeeds. | [Build-system selection and dispatch](#build-system-selection-and-dispatch) |
 | `OPTION-INAPPLICABLE` | An inapplicable option is never silent: a product option is invalid usage, a driver option is reported and not applied. | [Build-system selection and dispatch](#build-system-selection-and-dispatch) |
 | `CREATE-SELECT` | `huxerui create` generates the native declaration of each selected build system around the common layout. | [Build-system selection and dispatch](#build-system-selection-and-dispatch) |
 | `LAYOUT-COMMON` | Common sources, `resources/`, and the `platform/<platform-id>` shells have the same layout and meaning under every integration. | [Build-system selection and dispatch](#build-system-selection-and-dispatch) |

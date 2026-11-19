@@ -18,7 +18,8 @@
         "libraries",
         "launch",
         "package",
-        "usage"
+        "usage",
+        "doctor"
       ],
       "capabilities": []
     },
@@ -33,7 +34,8 @@
         "libraries",
         "launch",
         "package",
-        "usage"
+        "usage",
+        "doctor"
       ],
       "capabilities": []
     },
@@ -48,7 +50,8 @@
         "libraries",
         "launch",
         "package",
-        "usage"
+        "usage",
+        "doctor"
       ],
       "capabilities": []
     },
@@ -65,7 +68,8 @@
         "libraries",
         "launch",
         "package",
-        "usage"
+        "usage",
+        "doctor"
       ],
       "capabilities": []
     },

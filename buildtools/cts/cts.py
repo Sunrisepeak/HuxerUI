@@ -116,6 +116,13 @@ CHECKS: dict[str, dict] = {
                   "usage.operation_failure": "operation failure"},
         "equivalent": {},
     },
+    # The environment diagnosis agrees with the build: where the project was built, `huxerui doctor` reports ready.
+    "doctor": {
+        "title": "Environment diagnosis for the dispatched build system",
+        "facts": {"doctor.ready": ["DOCTOR-DISPATCH"]},
+        "fixed": {"doctor.ready": "ready"},
+        "equivalent": {},
+    },
 }
 
 # The exit codes the contract fixes (EXIT-CODES), named as the usage checkpoint records them.
@@ -878,6 +885,26 @@ def usage_facts(cli: str | None, integration: str, target: str, project: Path, w
     return facts, notes
 
 
+def doctor_facts(cli: str | None, integration: str, target: str, project: Path,
+                 timeout: float) -> tuple[dict, list[str]]:
+    """Runs `huxerui doctor` for a built project as a developer does, without a selection, and reads its verdict.
+
+    The diagnosis plans for the build system a command reaches without `--build-system`, so a run that has to
+    select the checked integration has no verdict to compare."""
+    if not cli:
+        raise Unavailable("no HuxerUI CLI was given; pass --cli")
+    if dispatch_selection(integration, project):
+        return {}, [f"doctor plans for the root's default build system, and reaching {integration} needs a selection"]
+    command = [cli, "doctor", target, *cli_arguments(integration)]
+    log("  $ " + " ".join(command))
+    completed = subprocess.run(command, cwd=project, capture_output=True, text=True, timeout=timeout)
+    if completed.returncode == 0:
+        return {"doctor.ready": "ready"}, []
+    missing = [line.strip() for line in completed.stdout.splitlines()
+               if line.strip().startswith(("[missing]", "[blocked]", "[error]"))]
+    return {"doctor.ready": "not ready: " + "; ".join(missing or completed.stderr.splitlines()[-3:])}, []
+
+
 def package_facts(cli: str | None, integration: str, target: str, project: Path, built: dict, work: Path,
                   timeout: float, shellless: bool = False) -> dict:
     """Runs `huxerui package` the way a developer does and reads what it published.
@@ -1212,6 +1239,16 @@ def check_project(check: str, integration: str, target: str, host: str, project:
         result["facts"].update(facts)
         write_json(path, result)
         wanted = {fact: CHECKS["usage"]["fixed"][fact] for fact in facts}
+    if check == "doctor":
+        try:
+            facts, notes = doctor_facts(arguments.cli, integration, target, project, arguments.package_timeout)
+        except Unavailable as unavailable:
+            return "unavailable", str(unavailable)
+        except (RuntimeError, subprocess.SubprocessError) as failure:
+            return "fail", str(failure)
+        result["facts"].update(facts)
+        write_json(path, result)
+        wanted = {fact: CHECKS["doctor"]["fixed"][fact] for fact in facts}
 
     problems = []
     for fact, value in wanted.items():

@@ -28,7 +28,8 @@
         "libraries",
         "launch",
         "package",
-        "usage"
+        "usage",
+        "doctor"
       ],
       "capabilities": [
         "modules"
@@ -45,7 +46,8 @@
         "libraries",
         "launch",
         "package",
-        "usage"
+        "usage",
+        "doctor"
       ],
       "capabilities": [
         "modules"
@@ -62,7 +64,8 @@
         "libraries",
         "launch",
         "package",
-        "usage"
+        "usage",
+        "doctor"
       ],
       "capabilities": [
         "modules"
@@ -81,7 +84,8 @@
         "libraries",
         "launch",
         "package",
-        "usage"
+        "usage",
+        "doctor"
       ],
       "capabilities": [
         "modules"
