@@ -902,6 +902,10 @@ std::string_view BuildSystemName(BuildSystem build_system) noexcept {
   return build_system == BuildSystem::CMake ? "cmake" : "mcpp";
 }
 
+bool ProvisionsToolchain(BuildSystem build_system) noexcept {
+  return build_system == BuildSystem::Mcpp;
+}
+
 std::optional<BuildSystem> ParseBuildSystem(std::string_view name) noexcept {
   if (name == "cmake") {
     return BuildSystem::CMake;
@@ -1025,6 +1029,11 @@ ProjectTemplate LoadProjectTemplate(const Project& project) {
 
 bool Project::Declares(BuildSystem build_system) const noexcept {
   return std::ranges::find(build_systems, build_system) != build_systems.end();
+}
+
+BuildSystem Project::DefaultBuildSystem() const noexcept {
+  // `build_systems` is in `BuildSystem` order, so a root declaring both starts with CMake.
+  return build_systems.empty() ? BuildSystem::CMake : build_systems.front();
 }
 
 Project ResolveApplicationProject(const Project& project) {

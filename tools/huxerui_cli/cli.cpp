@@ -236,7 +236,14 @@ std::optional<Project> TryDiscoverProject(const std::filesystem::path& start) {
   }
 }
 
-std::vector<EnvironmentDiagnostic> DiagnoseCommonEnvironment(const SdkLocation& sdk, bool explicit_sdk) {
+/// The engine checks of the build system an operation dispatches to. CMake builds against a HuxerUI SDK with the
+/// host's CMake; mcpp takes the framework from its manifest and needs only itself, installed through xlings. Outside a
+/// project the CMake checks apply, as they always have, and mcpp and xlings are reported without being required.
+std::vector<EnvironmentDiagnostic> DiagnoseCommonEnvironment(const SdkLocation& sdk, bool explicit_sdk,
+                                                             std::optional<BuildSystem> build_system) {
+  if (build_system == BuildSystem::Mcpp) {
+    return {detail::ResolveMcpp(), detail::ResolveXlings()};
+  }
   std::vector<EnvironmentDiagnostic> diagnostics;
   if (sdk.home.empty()) {
     diagnostics.push_back({
@@ -263,6 +270,12 @@ std::vector<EnvironmentDiagnostic> DiagnoseCommonEnvironment(const SdkLocation& 
   }
 
   diagnostics.push_back(detail::ResolveCMake());
+  if (!build_system) {
+    auto mcpp = detail::ResolveMcpp();
+    mcpp.required = false;
+    diagnostics.push_back(std::move(mcpp));
+    diagnostics.push_back(detail::ResolveXlings());
+  }
   return diagnostics;
 }
 
@@ -648,12 +661,18 @@ int RunCreate(std::span<const std::string_view> arguments, const std::filesystem
     std::vector<std::pair<std::string, prompt::Line>> details{
         {"next", {{"cd " + directory + " && huxerui run " + first, Role::Accent}}},
     };
-    if (selection.build_systems.size() > 1) {
-      // The default for a project declaring both is CMake, which needs an SDK and system packages; mcpp does not.
+    // The default for a project declaring both is CMake, which needs an SDK and system packages; mcpp does not, but
+    // needs itself.
+    const bool mcpp_ready = !selection.Has(BuildSystem::Mcpp) ||
+                            detail::ResolveMcpp().status == EnvironmentDiagnosticStatus::Ready;
+    if (selection.build_systems.size() > 1 && mcpp_ready) {
       details.push_back({"or", {{"huxerui run " + first + " --build-system mcpp", Role::Accent},
                                 {"  (fetches its own toolchain)", Role::Muted}}});
     }
     details.push_back({"same as", {{command, Role::Muted}}});
+    if (!mcpp_ready) {
+      details.push_back({"note", {{"mcpp is unavailable; 'huxerui doctor' shows how to install it", Role::Muted}}});
+    }
     if (const auto* library = std::get_if<LibraryTemplateContext>(&project_template);
         library != nullptr && selection.module_interface) {
       details.push_back({"note", {{"modules/" + ModuleInterfaceName(*library) +
@@ -694,6 +713,8 @@ struct EnvironmentOptions {
   std::vector<std::string_view> abis;
   bool json = false;
   bool yes = false;
+  /// The build system the project's operations dispatch to by default; empty outside a project.
+  std::optional<BuildSystem> build_system;
 };
 
 constexpr std::array operation_names{"build", "run", "package", "devices"};
@@ -788,17 +809,23 @@ std::vector<const PlatformDriver*> EnvironmentPlatforms(const EnvironmentOptions
   return platforms;
 }
 
+/// The plan for an operation dispatched to `build_system`, or outside a project when it is empty.
 EnvironmentPlan CreateEnvironmentPlan(const SdkLocation& sdk, EnvironmentRequest request,
-                                      std::span<const PlatformDriver* const> platforms, bool explicit_sdk) {
+                                      std::span<const PlatformDriver* const> platforms, bool explicit_sdk,
+                                      std::optional<BuildSystem> build_system) {
   EnvironmentPlan plan;
+  request.provisioned_toolchain = build_system && ProvisionsToolchain(*build_system);
   const bool applicable = platforms.empty() || std::ranges::any_of(platforms, [](const auto* platform) {
                             return platform->SupportsCurrentHost();
                           });
   if (applicable && request.operation != EnvironmentOperation::Devices) {
-    plan.common = DiagnoseCommonEnvironment(sdk, explicit_sdk);
+    plan.common = DiagnoseCommonEnvironment(sdk, explicit_sdk, build_system);
     if (detail::NeedsSetup(plan.common, "huxerui_home")) {
       plan.actions.push_back(
           {"Install the HuxerUI SDK or set HUXERUI_HOME", std::nullopt, "install_huxerui_sdk", {}, {"huxerui_home"}});
+    }
+    if (build_system == BuildSystem::Mcpp) {
+      std::ranges::move(detail::PlanMcppSetup(plan.common), std::back_inserter(plan.actions));
     }
   }
 
@@ -813,6 +840,21 @@ EnvironmentPlan CreateEnvironmentPlan(const SdkLocation& sdk, EnvironmentRequest
       actions = platform->PlanSetup(checks, request);
     } catch (const std::runtime_error& error) {
       checks.push_back({EnvironmentDiagnosticStatus::Blocked, "probe", "Platform environment probe", error.what()});
+    }
+    if (request.provisioned_toolchain) {
+      // The build system brings its own compilers, libraries, and packaging tools: the host's are not checked, and an
+      // action that would only install them is not proposed.
+      std::vector<std::string> provisioned;
+      std::erase_if(checks, [&provisioned](const EnvironmentDiagnostic& check) {
+        if (check.host_toolchain)
+          provisioned.push_back(check.id);
+        return check.host_toolchain;
+      });
+      std::erase_if(actions, [&provisioned](const SetupAction& action) {
+        return !action.provides.empty() && std::ranges::all_of(action.provides, [&provisioned](const auto& id) {
+          return std::ranges::find(provisioned, id) != provisioned.end();
+        });
+      });
     }
     // Driver-owned checks are scoped to the target. Actions may also depend on the common CMake check.
     const std::string prefix = std::string(platform->Id()) + ".";
@@ -966,6 +1008,10 @@ void PrintEnvironmentPlan(const EnvironmentPlan& plan, std::ostream& output) {
   for (const auto& target : plan.targets) {
     output << "Platform " << target.platform << ":\n";
     PrintEnvironmentDiagnostics(target.checks, "  ", output);
+    if (target.checks.empty()) {
+      // A build system that provisions its own toolchain can leave a platform nothing to take from the host.
+      output << "  [ok] nothing required from the host\n";
+    }
   }
   if (!plan.actions.empty()) {
     output << "Setup plan:\n";
@@ -1029,7 +1075,7 @@ int ApplyEnvironmentPlan(EnvironmentPlan plan, const SdkLocation& sdk, const Env
     }
 
     // Rebuild the remaining actions with the tool paths and environment discovered after this installation.
-    plan = CreateEnvironmentPlan(sdk, options.request, platforms, options.sdk.has_value());
+    plan = CreateEnvironmentPlan(sdk, options.request, platforms, options.sdk.has_value(), options.build_system);
     const auto unsatisfied =
         std::ranges::find_if(action.provides, [&](const auto& id) { return !PlanCheckReady(plan, id); });
     if (unsatisfied != action.provides.end()) {
@@ -1055,6 +1101,7 @@ int RunEnvironment(std::span<const std::string_view> arguments, const std::files
   if (project) {
     project = ResolveApplicationProject(*project);
     options.request.project_root = project->root;
+    options.build_system = project->DefaultBuildSystem();
   }
   if (options.sdk) {
     sdk = {std::filesystem::absolute(directory / *options.sdk), SdkLocationSource::Environment};
@@ -1091,7 +1138,7 @@ int RunEnvironment(std::span<const std::string_view> arguments, const std::files
     throw UsageError("no selected platforms are available on this host");
   }
 
-  auto plan = CreateEnvironmentPlan(sdk, options.request, platforms, options.sdk.has_value());
+  auto plan = CreateEnvironmentPlan(sdk, options.request, platforms, options.sdk.has_value(), options.build_system);
   if (setup) {
     PrintEnvironmentPlan(plan, output);
     return ApplyEnvironmentPlan(std::move(plan), sdk, options, platforms, input, output);
@@ -1120,26 +1167,24 @@ int RunEnvironment(std::span<const std::string_view> arguments, const std::files
       }
     }
   }
-  // The plan covers the tools of the CMake path; a project declaring mcpp needs the engine as well.
-  const std::optional<std::filesystem::path> mcpp =
-      project && project->Declares(BuildSystem::Mcpp) ? FindExecutable("mcpp") : std::nullopt;
-  const bool mcpp_ready = !project || !project->Declares(BuildSystem::Mcpp) || mcpp.has_value();
   if (options.json) {
     PrintEnvironmentJson(plan, options.request.operation, project_errors, output);
   } else {
     output << "HuxerUI CLI " << version << "\nHost: " << CurrentHostId()
            << "\nProject: " << (project ? project->root.string() : "not found") << '\n';
     if (project) {
-      output << "Build systems: " << JoinBuildSystems(project->build_systems, ", ") << '\n';
-      if (project->Declares(BuildSystem::Mcpp)) {
-        output << '[' << (mcpp ? "ok" : "missing") << "] mcpp" << (mcpp ? ": " + mcpp->string() : "") << '\n';
+      // The checks are those of the build system a command reaches without --build-system.
+      output << "Build systems: " << JoinBuildSystems(project->build_systems, ", ");
+      if (project->build_systems.size() > 1) {
+        output << " (checking " << BuildSystemName(*options.build_system) << ", the default)";
       }
+      output << '\n';
     }
     PrintEnvironmentPlan(plan, output);
     for (const auto& error : project_errors)
       output << "[error] " << error << '\n';
   }
-  return EnvironmentReady(plan) && project_errors.empty() && mcpp_ready ? 0 : 1;
+  return EnvironmentReady(plan) && project_errors.empty() ? 0 : 1;
 }
 
 void PrintDevices(const PlatformDriver& platform, std::span<const PlatformDevice> devices, std::ostream& output) {
@@ -1631,8 +1676,7 @@ BuildSystem SelectBuildSystem(const Project& project, const BuildOptions& option
     }
     return *options.build_system;
   }
-  // `project.build_systems` is in `BuildSystem` order, so a project that declares both starts with CMake.
-  return project.build_systems.front();
+  return project.DefaultBuildSystem();
 }
 
 /// The project a build command dispatches to mcpp, or nothing when CMake builds it or no project is found;
@@ -1785,10 +1829,20 @@ void BuildMcppProgram(const PlatformCommandContext& context, const mcpp::Command
       << JsonQuote(bundled ? bundle.generic_string() : std::string{}) << "\n}\n";
 }
 
+/// An mcpp command stops before it prints or starts anything when the engine is missing, as a CMake build does
+/// without CMake; `doctor` names the installation.
+void RequireMcpp(std::span<const PlatformDriver* const> platforms) {
+  if (detail::ResolveMcpp().status == EnvironmentDiagnosticStatus::Ready) {
+    return;
+  }
+  throw std::runtime_error("mcpp is unavailable; run 'huxerui doctor " + JoinPlatformIds(platforms) + "'");
+}
+
 int RunMcppCommand(const Project& project, BuildOptions& options, std::string_view command,
                    const std::filesystem::path& working_directory, std::ostream& output, std::ostream& error) {
   const std::vector<const PlatformDriver*> platforms = ResolveMcppPlatforms(
       project, options, command == "build" ? std::string_view{} : command, working_directory, error);
+  RequireMcpp(platforms);
   if (options.watch) {
     const PlatformDriver& platform = *platforms.front();
     if (McppUsesShell(platform, options)) {
@@ -1848,6 +1902,7 @@ int RunMcppPackage(const Project& project, BuildOptions& options, const std::fil
   options.package = true;
   const std::vector<const PlatformDriver*> platforms =
       ResolveMcppPlatforms(project, options, {}, working_directory, error);
+  RequireMcpp(platforms);
   for (const PlatformDriver* platform : platforms) {
     if (McppUsesShell(*platform, options)) {
       const PlatformCommandContext context = McppShellContext(project, *platform, options);
@@ -2099,6 +2154,7 @@ int RunOpen(std::span<const std::string_view> arguments, const std::filesystem::
                        "mcpp.toml, so change that entry instead");
     }
     const std::vector<const PlatformDriver*> platforms = ResolveBuildPlatforms(*project, options, "open");
+    RequireMcpp(platforms);
     const PlatformDriver& platform = *platforms.front();
     console.Step(output, "Opening ios Xcode project");
     const PlatformCommandContext context = McppShellContext(*project, platform, options);

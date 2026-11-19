@@ -49,6 +49,9 @@ struct EnvironmentDiagnostic {
   std::filesystem::path path = {};
   /// False for checks needed only to perform a proposed installation.
   bool required = true;
+  /// A compiler, library, or packaging tool the build takes from the host. A build system that provisions its own
+  /// toolchain does not need it, so its plan leaves the check out.
+  bool host_toolchain = false;
 };
 
 enum class EnvironmentOperation { Build, Run, Package, Devices };
@@ -64,6 +67,9 @@ struct EnvironmentRequest {
   std::string device;
   /// Shared CMake discovery result when a plan has already resolved it.
   std::optional<std::filesystem::path> cmake_path = std::nullopt;
+  /// Whether the build system the operation dispatches to provisions its own toolchain, so that the checks marked
+  /// `host_toolchain` do not apply.
+  bool provisioned_toolchain = false;
 };
 
 /// One automatic or manual action proposed by `setup`.

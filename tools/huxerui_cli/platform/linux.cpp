@@ -137,7 +137,9 @@ public:
                                   {},
                                   std::string(package.minimum)};
       if (pkg_config) {
-        const auto result = RunProcessCapture({pkg_config->string(), {"--modversion", std::string(package.name)}, {}});
+        // A missing package is this check's result, not a message for the terminal.
+        const auto result = RunProcessCapture(
+            {pkg_config->string(), {"--silence-errors", "--modversion", std::string(package.name)}, {}});
         check.version = detail::ParseToolVersion(result.output);
         check.status =
             result.exit_code == 0 && (package.minimum.empty() || detail::VersionAtLeast(check.version, package.minimum))
@@ -161,6 +163,9 @@ public:
             "cpack", "CPack", std::filesystem::is_regular_file(cpack) ? cpack : std::filesystem::path{}));
       }
     }
+    // Every Linux requirement is a compiler, a development package, or a packaging tool the build takes from the host.
+    for (auto& check : diagnostics)
+      check.host_toolchain = true;
     return diagnostics;
   }
 

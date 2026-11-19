@@ -366,10 +366,27 @@ TEST_CASE("HuxerUICliOffersMcppForAProjectDeclaringBoth") {
   std::istringstream input;
   const huxerui::cli::SdkLocation sdk{HUXERUI_TEST_SOURCE_DIRECTORY, huxerui::cli::SdkLocationSource::Executable};
   const std::vector<std::string_view> create{"create", "--agent", "none"};
-  REQUIRE(huxerui::cli::Run(create, temporary.Path(), sdk, input, output, error, &prompter) == 0);
-  // The default, CMake, needs an SDK and system packages, so the outcome also names the mcpp command.
-  REQUIRE(prompts.str().find("   or       huxerui run ") != std::string::npos);
-  REQUIRE(prompts.str().find(" --build-system mcpp  (fetches its own toolchain)\n") != std::string::npos);
+  {
+    // Without mcpp the outcome says how to find out how to install it, and offers no command that would fail.
+    const ScopedPath empty(temporary.Path() / "no-tools");
+    REQUIRE(huxerui::cli::Run(create, temporary.Path(), sdk, input, output, error, &prompter) == 0);
+  }
+  REQUIRE(prompts.str().find("   or       huxerui run ") == std::string::npos);
+  REQUIRE(prompts.str().find("mcpp is unavailable; 'huxerui doctor' shows how to install it") != std::string::npos);
+  if (huxerui::cli::CurrentHostId() != "windows") {
+    // With mcpp, the default, CMake, needs an SDK and system packages, so the outcome also names the mcpp command.
+    const std::filesystem::path tools = temporary.Path() / "tools";
+    std::filesystem::create_directories(tools);
+    std::ofstream(tools / "mcpp") << "#!/bin/sh\necho mcpp 2026.11.17.1\n";
+    std::filesystem::permissions(tools / "mcpp", std::filesystem::perms::owner_all);
+    const ScopedPath with_mcpp(tools);
+    std::istringstream again("1\nDual-Again\n3\n\n\n");
+    std::ostringstream again_prompts;
+    huxerui::cli::prompt::LinePrompter again_prompter(again, again_prompts);
+    REQUIRE(huxerui::cli::Run(create, temporary.Path(), sdk, input, output, error, &again_prompter) == 0);
+    REQUIRE(again_prompts.str().find("   or       huxerui run ") != std::string::npos);
+    REQUIRE(again_prompts.str().find(" --build-system mcpp  (fetches its own toolchain)\n") != std::string::npos);
+  }
 
   const std::vector<std::string_view> cmake_only{"create", "app", "Single", "--build-system", "cmake", "--agent",
                                                  "none", "--yes"};

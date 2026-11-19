@@ -361,6 +361,7 @@ public:
     const auto cmake = AndroidCMake(request);
     if (!devices && !cmake.empty()) {
       checks.push_back(detail::CheckTool("cmake", "CMake selected by cmake.dir", cmake, "3.20"));
+      checks.back().host_toolchain = true;
     }
     if (!termux && (!devices || packages_missing)) {
       auto java = AndroidJava(request);
@@ -388,6 +389,8 @@ public:
       };
       check_package("android_platform", "Android platform", api, platform_jar);
       check_package("android_ndk", "Android NDK", ndk, ndk_toolchain);
+      // The Gradle shell needs the JDK and the SDK under every build system; the NDK compiles only the CMake core.
+      checks.back().host_toolchain = true;
       if (!termux)
         check_package("build_tools", "Android SDK Build Tools", android_build_tools, build_tools);
     }

@@ -36,6 +36,10 @@ struct CreateSelection {
 /// The command-line spelling of a build system, such as `cmake`.
 [[nodiscard]] std::string_view BuildSystemName(BuildSystem build_system) noexcept;
 
+/// Whether a build system provisions its own toolchain and packages, as mcpp does through its registry, instead of
+/// taking compilers, libraries, and packaging tools from the host as CMake does.
+[[nodiscard]] bool ProvisionsToolchain(BuildSystem build_system) noexcept;
+
 /// Parses a build system's command-line spelling.
 /// @return The build system, or nothing for an unknown name.
 [[nodiscard]] std::optional<BuildSystem> ParseBuildSystem(std::string_view name) noexcept;
@@ -85,6 +89,9 @@ struct Project {
 
   /// Whether the root carries a build system's declaration.
   [[nodiscard]] bool Declares(BuildSystem build_system) const noexcept;
+  /// The build system a command dispatches to without `--build-system`: the only one declared, or CMake for a root
+  /// declaring both.
+  [[nodiscard]] BuildSystem DefaultBuildSystem() const noexcept;
 };
 
 /// Checks whether a name is valid for a generated application project.

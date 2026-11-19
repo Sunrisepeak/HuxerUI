@@ -536,6 +536,59 @@ TEST_CASE("HuxerUICliDoctorChecksRequestedPlatformsOutsideAProject") {
   REQUIRE(invocation.output.find("cmake") < invocation.output.find("Platform android:"));
 }
 
+TEST_CASE("HuxerUICliDoctorChecksTheBuildSystemAProjectDispatchesTo") {
+  TemporaryDirectory temporary;
+  REQUIRE(Invoke(temporary.Path(), {"create", "app", "modular", "--build-system", "mcpp", "--platform", "android",
+                                    "--agent", "none", "--yes"})
+              .result == 0);
+  REQUIRE(Invoke(temporary.Path(), {"create", "app", "dual", "--build-system", "cmake,mcpp", "--platform", "android",
+                                    "--agent", "none", "--yes"})
+              .result == 0);
+
+  // mcpp brings its own toolchain: the plan checks the engine and the shell's needs, not an SDK, CMake, or the NDK.
+  const auto modular = Invoke(temporary.Path() / "modular", {"doctor", "--json"});
+  REQUIRE(modular.output.find("\"id\":\"mcpp\"") != std::string::npos);
+  REQUIRE(modular.output.find("\"id\":\"xlings\"") != std::string::npos);
+  REQUIRE(modular.output.find("\"id\":\"huxerui_home\"") == std::string::npos);
+  REQUIRE(modular.output.find("\"id\":\"cmake\"") == std::string::npos);
+  REQUIRE(modular.output.find("\"id\":\"android.java\"") != std::string::npos);
+  REQUIRE(modular.output.find("\"id\":\"android.android_sdk\"") != std::string::npos);
+  REQUIRE(modular.output.find("\"id\":\"android.android_ndk\"") == std::string::npos);
+  REQUIRE(Invoke(temporary.Path() / "modular", {"doctor"}).output.find("Build systems: mcpp\n") != std::string::npos);
+
+  // A root declaring both is checked for the default, CMake, as a build without --build-system reaches it.
+  const auto dual = Invoke(temporary.Path() / "dual", {"doctor", "--json"});
+  REQUIRE(dual.output.find("\"id\":\"huxerui_home\"") != std::string::npos);
+  REQUIRE(dual.output.find("\"id\":\"android.android_ndk\"") != std::string::npos);
+  REQUIRE(dual.output.find("\"id\":\"mcpp\"") == std::string::npos);
+  REQUIRE(Invoke(temporary.Path() / "dual", {"doctor"}).output.find(
+              "Build systems: cmake, mcpp (checking cmake, the default)\n") != std::string::npos);
+
+  // Without mcpp or xlings the plan installs xlings first, then mcpp, by hand; an mcpp command stops before it prints
+  // anything and names doctor.
+  const ScopedPath empty(temporary.Path() / "no-tools");
+  const auto missing = Invoke(temporary.Path() / "modular", {"doctor"});
+  REQUIRE(missing.result == 1);
+  const auto xlings = missing.output.find("[manual] Install xlings: ");
+  const auto mcpp = missing.output.find("[manual] Install mcpp: xlings install mcpp -y");
+  REQUIRE(xlings != std::string::npos);
+  REQUIRE(mcpp != std::string::npos);
+  REQUIRE(xlings < mcpp);
+  const auto build = Invoke(temporary.Path() / "modular", {"build", "android"});
+  REQUIRE(build.result == 1);
+  REQUIRE(build.output.empty());
+  REQUIRE(build.error.find("mcpp is unavailable; run 'huxerui doctor android'") != std::string::npos);
+}
+
+TEST_CASE("HuxerUICliDoctorReportsMcppOutsideAProjectWithoutRequiringIt") {
+  TemporaryDirectory temporary;
+  const ScopedPath empty(temporary.Path() / "no-tools");
+  const auto plan = Invoke(temporary.Path(), {"doctor"});
+  REQUIRE(plan.output.find("[missing] mcpp (optional)") != std::string::npos);
+  REQUIRE(plan.output.find("[missing] xlings (optional)") != std::string::npos);
+  REQUIRE(plan.output.find("Install mcpp") == std::string::npos);
+}
+
 TEST_CASE("HuxerUICliDoctorEmitsAnOperationScopedJsonPlan") {
   TemporaryDirectory temporary;
   const auto plan = Invoke(temporary.Path(), {"doctor", "android", "--operation", "devices", "--json"});

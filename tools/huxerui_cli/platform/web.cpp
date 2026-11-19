@@ -255,6 +255,10 @@ public:
       emsdk.required = false;
       checks.push_back(std::move(emsdk));
     }
+    // Emscripten, and the emsdk and Python that install it, are the host toolchain the CMake build compiles with;
+    // Termux's opener only shows the page.
+    for (auto& check : checks)
+      check.host_toolchain = check.id != "termux-open";
     return checks;
   }
 

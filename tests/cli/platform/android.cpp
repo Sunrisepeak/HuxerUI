@@ -104,6 +104,14 @@ TEST_CASE("HuxerUICliAndroidEnvironmentDiagnosisOwnsToolChecks") {
     );
   };
   REQUIRE(has_android_diagnostic("java"));
+  // The Gradle shell needs the JDK and the SDK under every build system; only the CMake core needs the NDK.
+  const auto host_toolchain = [&android_diagnostics](std::string_view id) {
+    const auto check = std::ranges::find(android_diagnostics, id, &huxerui::cli::EnvironmentDiagnostic::id);
+    return check != android_diagnostics.end() && check->host_toolchain;
+  };
+  REQUIRE_FALSE(host_toolchain("java"));
+  REQUIRE_FALSE(host_toolchain("android_sdk"));
+  REQUIRE(host_toolchain("android_ndk"));
   const bool android_host = huxerui::cli::CurrentHostId() == "android";
   REQUIRE(has_android_diagnostic("sdkmanager") != android_host);
   REQUIRE(has_android_diagnostic("platform_tools") != android_host);

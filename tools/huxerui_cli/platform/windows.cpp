@@ -236,6 +236,7 @@ public:
         check.detail = error.what();
       }
     }
+    check.host_toolchain = true;
     return {std::move(check)};
   }
 
