@@ -368,8 +368,9 @@ class CreatePromptTests(unittest.TestCase):
         terminal.finish()
         self.assertEqual("\n".join(terminal.rows()).rstrip(), plain.rstrip())
         self.assertTrue(all(cell.fg == VIOLET and cell.bold for cell in self.cells(terminal, "HuxerUI project")))
-        self.assertTrue(all(cell.bold for cell in self.cells(terminal, "Usage:")))
-        self.assertTrue(all(cell.fg == VIOLET for cell in self.cells(terminal, "huxerui build")))
+        self.assertTrue(all(cell.fg == VIOLET and cell.bold for cell in self.cells(terminal, "Usage:")))
+        # Commands are bold in the terminal's own color; only the title and the headings carry HuxerUI's.
+        self.assertTrue(all(cell.fg == "default" and cell.bold for cell in self.cells(terminal, "huxerui build")))
         self.assertTrue(all(cell.fg == "808080" for cell in self.cells(terminal, "[platform-list]")))
 
     def test_without_a_terminal_create_applies_defaults_and_writes_no_escapes(self):

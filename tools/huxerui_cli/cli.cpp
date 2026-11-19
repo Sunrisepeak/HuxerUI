@@ -107,8 +107,8 @@ void PrintBuildHelp(std::ostream& output, std::string_view command) {
   }
 }
 
-/// The help as written, colored on a terminal only: the title, the headings, and each usage line's command, with its
-/// arguments muted. The text itself is the same everywhere, so what a script or an agent reads does not change.
+/// The help as written, colored on a terminal only: the title and the headings in HuxerUI's color, each usage line's
+/// command in bold, and its arguments muted. The text itself is the same everywhere, so what a script or an agent reads does not change.
 void WriteHelp(std::string_view text, std::ostream& output) {
   if (!console.Styled()) {
     output << text;
@@ -128,7 +128,7 @@ void WriteHelp(std::string_view text, std::ostream& output) {
     } else if (first && !line.starts_with(' ') && !line.ends_with(':')) {
       painted = {{line, Role::Brand}};
     } else if (!line.starts_with(' ') && line.ends_with(':')) {
-      painted = {{line, Role::Strong}};
+      painted = {{line, Role::Brand}};
       aliases = line == "Command aliases:";
     } else if (line.starts_with("  huxerui ")) {
       // The command is the words before the first argument, option, or placeholder.
@@ -143,11 +143,11 @@ void WriteHelp(std::string_view text, std::ostream& output) {
           command_end = line.size();
         }
       }
-      painted = {{"  ", Role::Plain}, {line.substr(2, command_end - 2), Role::Accent},
+      painted = {{"  ", Role::Plain}, {line.substr(2, command_end - 2), Role::Strong},
                  {line.substr(command_end), Role::Muted}};
     } else if (aliases && line.starts_with("  ")) {
       const std::size_t alias_end = line.find(' ', 2);
-      painted = {{"  ", Role::Plain}, {line.substr(2, alias_end - 2), Role::Accent}, {line.substr(alias_end), Role::Plain}};
+      painted = {{"  ", Role::Plain}, {line.substr(2, alias_end - 2), Role::Strong}, {line.substr(alias_end), Role::Plain}};
     }
     console.Write(output, painted);
     first = false;
