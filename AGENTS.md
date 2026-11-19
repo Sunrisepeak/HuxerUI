@@ -277,7 +277,7 @@ Finish with `git diff --check` and `git status --short`. Report important files,
 
 ## C++20/23 modules and the mcpp build
 
-CMake builds all supported platforms. mcpp builds the framework and applications on Linux, Windows, and macOS. The mcpp files `mcpp.toml`, `build.mcpp`, `buildtools/mcpp/`, `modules/`, and `templates/` are independent of CMake's build configuration.
+CMake and mcpp both build the framework and applications for every supported platform; on Android and iOS the standard Gradle and Xcode shells consume the core either one builds. The mcpp files `mcpp.toml`, `build.mcpp`, `buildtools/mcpp/`, `modules/`, and `templates/` are independent of CMake's build configuration.
 
 - Keep the public API available through both `import huxerui;` and `#include <huxerui/huxerui.h>`. Use `huxerui-module-gen` to update `modules/huxerui.cppm` when public exports change.
 - `hcg` expands `HUXERUI_SCOPE` so generated scope code works in module units. In handwritten module code, spell explicit scopes with the exported `Scope` and `View` APIs.

@@ -4,8 +4,10 @@ HuxerUI has two build systems. This document specifies the second one: how the
 framework is an [mcpp](https://github.com/mcpp-community/mcpp) package, how an
 application consumes it, and what the C++20 module surface guarantees.
 
-CMake remains the full-platform path and the only path for Android, iOS and
-Web. Nothing in the CMake build reads any file described here, and deleting
+Both build the framework and applications for Linux, Windows, macOS, the Web,
+Android and iOS; on Android and iOS the standard Gradle and Xcode shells consume
+the core either one builds, as [SDK, CLI, Platform Shell, and Library](sdk-cli.md)
+describes. Nothing in the CMake build reads any file described here, and deleting
 `mcpp.toml`, `build.mcpp` and `buildtools/mcpp/` returns the repository to a CMake-only
 project.
 
@@ -13,7 +15,7 @@ project.
 
 | | CMake | mcpp |
 |---|---|---|
-| Platforms | Linux, Windows, macOS, Android, iOS, Web | Linux, Windows, macOS |
+| Platforms | Linux, Windows, macOS, Android, iOS, Web | Linux, Windows, macOS, Android, iOS, Web |
 | Consumption | `#include <huxerui/huxerui.h>` | `import huxerui;` *and* the headers |
 | Linux dependencies | the distribution's packages | xlings payloads |
 | Toolchain | the host's | mcpp's own, per target |
@@ -28,12 +30,12 @@ why they must.
 mcpp.toml                     the framework as a package
 build.mcpp                    its build program
 modules/huxerui.cppm          the C++20 module interface (generated, committed)
-mcpp/
+buildtools/mcpp/
   huxerui-build-rules/        `import huxerui.rules;` -- the application-facing API
   huxerui-source-select/      the scanning the rules and the tools share
   huxerui-tools/              huxerui-build-check, huxerui-module-gen
   huxerui-tests/              the unit suite, compiled against the mcpp build
-  examples/                   three applications
+  examples/                   four applications
 templates/                    mcpp package templates: app, navigation, library
 tools/codegen/mcpp.toml       hcg as a package
 tools/resource_compiler/…     hrc as a package
