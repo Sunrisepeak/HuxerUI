@@ -10,12 +10,14 @@ name: Build System Conformance
 # such as the content of the final resource package. The sequence job builds
 # several targets in one checkout in turn, as a developer on one host does.
 #
-# A pull request runs the jobs its changes can affect: the plan job reads the
-# changed paths (.github/workflows/scripts/conformance_plan.py). A path one
-# integration owns selects only that integration. A path one target owns runs
-# that target on every host; build tooling runs every row; any other source
-# runs each target on its primary host only. The comparison runs when both
-# integrations ran. A push to main and a manual dispatch run everything.
+# The suite checks the build systems, not the framework, so the framework's
+# sources start no run. A pull request and a push to main run the jobs and
+# projects their changed paths can affect, each target on its primary host
+# (.github/workflows/scripts/conformance_plan.py): a conformance project's
+# change runs that project, a path one integration or target owns runs only
+# that integration or target, and the suite itself runs everything. The
+# comparison runs when both integrations ran. A manual dispatch runs every job
+# on every host; run one before a release.
 #
 # To verify a change on a few rows first, a pull request's head commit names
 # them on a `CTS-Only:` line, for example `CTS-Only: mcpp/ios@macos,
@@ -33,10 +35,6 @@ on:
       - 'mcpp.toml'
       - 'build.mcpp'
       - 'modules/**'
-      - 'include/**'
-      - 'src/**'
-      - 'platform/**'
-      - 'resources/**'
       - 'templates/**'
       - 'tools/codegen/**'
       - 'tools/resource_compiler/**'
@@ -54,10 +52,6 @@ on:
       - 'mcpp.toml'
       - 'build.mcpp'
       - 'modules/**'
-      - 'include/**'
-      - 'src/**'
-      - 'platform/**'
-      - 'resources/**'
       - 'templates/**'
       - 'tools/codegen/**'
       - 'tools/resource_compiler/**'
@@ -103,6 +97,7 @@ jobs:
       run_sequence: ${{ steps.select.outputs.run_sequence }}
       compare: ${{ steps.select.outputs.compare }}
       compare_macos: ${{ steps.select.outputs.compare_macos }}
+      projects: ${{ steps.select.outputs.projects }}
       emscripten: ${{ steps.toolchains.outputs.emscripten }}
     steps:
       # The pull request's merge commit and its first parent, the base it is compared with.
@@ -128,6 +123,7 @@ jobs:
         id: select
         env:
           DISPATCH_ONLY: ${{ github.event.inputs.only }}
+          BEFORE: ${{ github.event.before }}
         run: |
           only=""
           if [ "${{ github.event_name }}" = pull_request ]; then
@@ -136,8 +132,15 @@ jobs:
             only=$DISPATCH_ONLY
           fi
           echo "only: ${only:-<everything selected>}" >&2
+          # A push compares with the commit main was at; one the checkout cannot reach selects everything.
+          base=""
           if [ "${{ github.event_name }}" = pull_request ]; then
-            git diff --name-only HEAD^1 HEAD | tee /dev/stderr \
+            base=HEAD^1
+          elif [ "${{ github.event_name }}" = push ] && git fetch --depth=1 origin "$BEFORE" 2> /dev/null; then
+            base=$BEFORE
+          fi
+          if [ -n "$base" ]; then
+            git diff --name-only "$base" HEAD | tee /dev/stderr \
               | python3 -I .github/workflows/scripts/conformance_plan.py --only "$only" >> "$GITHUB_OUTPUT"
           else
             python3 -I .github/workflows/scripts/conformance_plan.py --only "$only" < /dev/null >> "$GITHUB_OUTPUT"
@@ -150,6 +153,9 @@ jobs:
     name: ${{ matrix.integration }} (${{ matrix.row.target }} on ${{ matrix.row.host }})
     needs: [plan]
     if: needs.plan.outputs.run_jobs == 'true'
+    env:
+      # The projects the plan confines the run to, as the runner's `--project` arguments; empty for every project.
+      CTS_PROJECTS: ${{ needs.plan.outputs.projects }}
     runs-on: ${{ matrix.row.os }}
     timeout-minutes: 90
     strategy:
@@ -353,36 +359,36 @@ jobs:
       - name: Create projects with the CLI
         run: |
           ${{ matrix.row.python }} buildtools/cts/cts.py create --integration ${{ matrix.integration }} \
-            --target ${{ matrix.row.target }} --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts"
+            --target ${{ matrix.row.target }} --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts" $CTS_PROJECTS
 
       - name: Build the conformance projects
         run: |
           ${{ matrix.row.python }} buildtools/cts/cts.py build --integration ${{ matrix.integration }} \
-            --target ${{ matrix.row.target }} --out "$RUNNER_TEMP/cts"
+            --target ${{ matrix.row.target }} --out "$RUNNER_TEMP/cts" $CTS_PROJECTS
 
       - name: "Check: default build"
         if: ${{ !cancelled() }}
         run: |
           ${{ matrix.row.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
-            --target ${{ matrix.row.target }} --check build --out "$RUNNER_TEMP/cts"
+            --target ${{ matrix.row.target }} --check build --out "$RUNNER_TEMP/cts" $CTS_PROJECTS
 
       - name: "Check: framework linkage"
         if: ${{ !cancelled() }}
         run: |
           ${{ matrix.row.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
-            --target ${{ matrix.row.target }} --check linkage --out "$RUNNER_TEMP/cts"
+            --target ${{ matrix.row.target }} --check linkage --out "$RUNNER_TEMP/cts" $CTS_PROJECTS
 
       - name: "Check: final resource package"
         if: ${{ !cancelled() }}
         run: |
           ${{ matrix.row.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
-            --target ${{ matrix.row.target }} --check resources --out "$RUNNER_TEMP/cts"
+            --target ${{ matrix.row.target }} --check resources --out "$RUNNER_TEMP/cts" $CTS_PROJECTS
 
       - name: "Check: library-graph record"
         if: ${{ !cancelled() }}
         run: |
           ${{ matrix.row.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
-            --target ${{ matrix.row.target }} --check libraries --out "$RUNNER_TEMP/cts"
+            --target ${{ matrix.row.target }} --check libraries --out "$RUNNER_TEMP/cts" $CTS_PROJECTS
 
       - name: Wait for the Android emulator
         if: ${{ !cancelled() && matrix.row.target == 'android' && matrix.row.host == 'linux' }}
@@ -407,33 +413,33 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           ${{ matrix.row.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
-            --target ${{ matrix.row.target }} --check package --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts"
+            --target ${{ matrix.row.target }} --check package --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts" $CTS_PROJECTS
 
       # After the distributable, whose release build the inapplicable driver option rebuilds without new work.
       - name: "Check: exit codes and inapplicable options"
         if: ${{ !cancelled() }}
         run: |
           ${{ matrix.row.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
-            --target ${{ matrix.row.target }} --check usage --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts"
+            --target ${{ matrix.row.target }} --check usage --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts" $CTS_PROJECTS
 
       - name: "Check: environment diagnosis"
         if: ${{ !cancelled() }}
         run: |
           ${{ matrix.row.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
-            --target ${{ matrix.row.target }} --check doctor --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts"
+            --target ${{ matrix.row.target }} --check doctor --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts" $CTS_PROJECTS
 
       # On Android and iOS the application starts from the APK or bundle the distributable check published.
       - name: "Check: startup and resource resolution"
         if: ${{ !cancelled() }}
         run: |
           ${{ matrix.row.target == 'linux' && 'xvfb-run -a ' || '' }}${{ matrix.row.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
-            --target ${{ matrix.row.target }} --check launch --launch-timeout 120 --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts"
+            --target ${{ matrix.row.target }} --check launch --launch-timeout 120 --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts" $CTS_PROJECTS
 
       - name: "Check: distributable without the standard shell"
         if: ${{ !cancelled() }}
         run: |
           ${{ matrix.row.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
-            --target ${{ matrix.row.target }} --check package-shellless --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts"
+            --target ${{ matrix.row.target }} --check package-shellless --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts" $CTS_PROJECTS
 
       - name: Trim the build caches
         if: always()
@@ -469,6 +475,9 @@ jobs:
     name: ${{ matrix.integration }} (linux, web, android in turn on linux)
     needs: [plan]
     if: needs.plan.outputs.run_sequence == 'true'
+    env:
+      # The projects the plan confines the run to, as the runner's `--project` arguments; empty for every project.
+      CTS_PROJECTS: ${{ needs.plan.outputs.projects }}
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     strategy:
@@ -565,7 +574,7 @@ jobs:
       - name: Build and check every target in turn
         run: |
           python3 buildtools/cts/cts.py sequence --integration ${{ matrix.integration }} --targets linux,web,android \
-            --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts"
+            --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts" $CTS_PROJECTS
 
       - name: Trim the build caches
         if: always()
@@ -592,6 +601,9 @@ jobs:
     name: ${{ matrix.integration }} (${{ matrix.row.target }} on ${{ matrix.row.host }})
     needs: [plan]
     if: needs.plan.outputs.run_macos_jobs == 'true'
+    env:
+      # The projects the plan confines the run to, as the runner's `--project` arguments; empty for every project.
+      CTS_PROJECTS: ${{ needs.plan.outputs.projects }}
     runs-on: ${{ matrix.row.os[matrix.integration] }}
     timeout-minutes: 90
     strategy:
@@ -766,68 +778,68 @@ jobs:
       - name: Create projects with the CLI
         run: |
           ${{ matrix.row.python }} buildtools/cts/cts.py create --integration ${{ matrix.integration }} \
-            --target ${{ matrix.row.target }} --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts"
+            --target ${{ matrix.row.target }} --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts" $CTS_PROJECTS
 
       - name: Build the conformance projects
         run: |
           ${{ matrix.row.python }} buildtools/cts/cts.py build --integration ${{ matrix.integration }} \
-            --target ${{ matrix.row.target }} --out "$RUNNER_TEMP/cts"
+            --target ${{ matrix.row.target }} --out "$RUNNER_TEMP/cts" $CTS_PROJECTS
 
       - name: "Check: default build"
         if: ${{ !cancelled() }}
         run: |
           ${{ matrix.row.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
-            --target ${{ matrix.row.target }} --check build --out "$RUNNER_TEMP/cts"
+            --target ${{ matrix.row.target }} --check build --out "$RUNNER_TEMP/cts" $CTS_PROJECTS
 
       - name: "Check: framework linkage"
         if: ${{ !cancelled() }}
         run: |
           ${{ matrix.row.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
-            --target ${{ matrix.row.target }} --check linkage --out "$RUNNER_TEMP/cts"
+            --target ${{ matrix.row.target }} --check linkage --out "$RUNNER_TEMP/cts" $CTS_PROJECTS
 
       - name: "Check: final resource package"
         if: ${{ !cancelled() }}
         run: |
           ${{ matrix.row.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
-            --target ${{ matrix.row.target }} --check resources --out "$RUNNER_TEMP/cts"
+            --target ${{ matrix.row.target }} --check resources --out "$RUNNER_TEMP/cts" $CTS_PROJECTS
 
       - name: "Check: library-graph record"
         if: ${{ !cancelled() }}
         run: |
           ${{ matrix.row.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
-            --target ${{ matrix.row.target }} --check libraries --out "$RUNNER_TEMP/cts"
+            --target ${{ matrix.row.target }} --check libraries --out "$RUNNER_TEMP/cts" $CTS_PROJECTS
 
       - name: "Check: distributable"
         if: ${{ !cancelled() }}
         run: |
           ${{ matrix.row.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
-            --target ${{ matrix.row.target }} --check package --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts"
+            --target ${{ matrix.row.target }} --check package --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts" $CTS_PROJECTS
 
       # After the distributable, whose release build the inapplicable driver option rebuilds without new work.
       - name: "Check: exit codes and inapplicable options"
         if: ${{ !cancelled() }}
         run: |
           ${{ matrix.row.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
-            --target ${{ matrix.row.target }} --check usage --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts"
+            --target ${{ matrix.row.target }} --check usage --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts" $CTS_PROJECTS
 
       - name: "Check: environment diagnosis"
         if: ${{ !cancelled() }}
         run: |
           ${{ matrix.row.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
-            --target ${{ matrix.row.target }} --check doctor --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts"
+            --target ${{ matrix.row.target }} --check doctor --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts" $CTS_PROJECTS
 
       # On Android and iOS the application starts from the APK or bundle the distributable check published.
       - name: "Check: startup and resource resolution"
         if: ${{ !cancelled() }}
         run: |
           ${{ matrix.row.target == 'linux' && 'xvfb-run -a ' || '' }}${{ matrix.row.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
-            --target ${{ matrix.row.target }} --check launch --launch-timeout 120 --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts"
+            --target ${{ matrix.row.target }} --check launch --launch-timeout 120 --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts" $CTS_PROJECTS
 
       - name: "Check: distributable without the standard shell"
         if: ${{ !cancelled() }}
         run: |
           ${{ matrix.row.python }} buildtools/cts/cts.py check --integration ${{ matrix.integration }} \
-            --target ${{ matrix.row.target }} --check package-shellless --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts"
+            --target ${{ matrix.row.target }} --check package-shellless --cli "$CTS_CLI" --out "$RUNNER_TEMP/cts" $CTS_PROJECTS
 
       - name: Trim the build caches
         if: always()

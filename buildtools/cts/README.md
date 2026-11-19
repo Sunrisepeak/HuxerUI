@@ -146,10 +146,24 @@ Which hosts build each target is stated per integration in its `support.json`, a
 The `build`, `linkage`, and `resources` checks of Android and iOS stop at the application core; the `package` checkpoint reads the APK or the application bundle where an integration declares it, and the `launch` checkpoint starts it.
 The workflow boots an Android emulator on Linux hosts and runs `launch` after `package` on every row.
 
-`.github/workflows/build-system-conformance.yml` runs every checkpoint as its own step for each integration, then compares the integrations, on pull requests that touch a build system, the framework sources, the CLI, the templates, or the suite; Markdown changes start nothing.
-Its plan job first runs the suite's own tests (`tests/scripts/cts_test.py`) and then selects the integrations from the changed paths: a path only one integration consumes, such as `cmake/**` or `buildtools/mcpp/**`, runs that integration's rows, and any other path runs both.
-It then selects the rows: a path one target owns, such as `platform/android/**`, `cmake/platform/IOS.cmake`, or the target's CLI driver and shell templates, runs that target on every host that builds it; build tooling, which runs on the host (`cmake/**`, `tools/**`, `buildtools/**` apart from the projects, the root declarations, and the workflows), runs every row; any other path is source compiled for the target and runs each target on its primary host only, the target's own host or a Linux host for the Web and Android.
-A `sequence` job per selected integration builds Linux, the Web, and Android in turn on one Linux host when one of those targets is selected.
-The comparison runs only when both integrations ran. A push to `main` and a manual dispatch run every row.
+`.github/workflows/build-system-conformance.yml` runs every checkpoint as its own step for each integration, then compares the integrations.
+The suite checks the build systems rather than the framework, and a run takes hours, so pull requests and pushes to `main` start it only for a build system, the CLI and the tools it runs, the templates, or the suite; framework sources and Markdown start nothing.
+Its plan job first runs the suite's own tests (`tests/scripts/cts_test.py`) and then selects, for each changed path, as little as the path can affect, and runs the union:
+
+| Changed path | Runs |
+| --- | --- |
+| The suite: `cts.py`, `adapter_api.py`, `allowed-differences.json`, and the workflow | every job and every project |
+| `buildtools/cts/projects/<project>/**` | that project, and the project its `sameModelAs` relates it to, with the integration a declaration file belongs to or both, on the target a `platform/<target>/` path belongs to or every target |
+| `buildtools/cts/created-projects.json` | the created projects, where it declares them |
+| A path one integration owns, such as `cmake/**`, `buildtools/mcpp/**`, `mcpp.toml`, or `templates/**` | that integration, every project |
+| A path one target owns, such as `cmake/platform/IOS.cmake` or the target's CLI driver and shell templates | that target, every project |
+| `tools/prebuilt/<host>/**` | the rows of that host |
+| Any other path, such as the rest of the CLI | both integrations on every target, every project |
+| The plan script | nothing beyond its tests |
+
+Each selected target runs on its primary host: the target's own host, or a Linux host for the Web and Android.
+A `sequence` job per selected integration builds Linux, the Web, and Android in turn on one Linux host when all three are selected for the suite's own projects.
+The comparison runs only when both integrations ran.
+A manual dispatch runs every job on every host; run one before a release.
 To verify a change on a few rows before the whole matrix, a pull request's head commit names them on a `CTS-Only:` line of its message, such as `CTS-Only: mcpp/ios@macos, */android@linux`, and every other job is skipped; `<integration>/sequence@linux` names a sequence job, and a manual dispatch takes the same patterns as its `only` input. A push without the line runs the selection by path again.
 `.github/workflows/rerun-unassigned.yml` starts a run's failed jobs again when every job that did not pass is one no hosted runner took, as happens when GitHub's macOS arm64 capacity runs out; a run with a job that ran and failed is left alone.

@@ -13,8 +13,8 @@ name: mcpp Build
 
 on:
   # The paths only mcpp consumes, the C++ modules templates and the CLI that renders them, and the unit
-  # sources `mcpp test` builds. A change to the shared framework sources is built with mcpp by
-  # build-system-conformance.yml.
+  # sources `mcpp test` builds. A change to the shared framework sources runs this workflow on a manual
+  # dispatch, as it runs build-system-conformance.yml.
   pull_request:
     paths:
       - 'mcpp.toml'
