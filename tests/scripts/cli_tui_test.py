@@ -345,6 +345,22 @@ class CreatePromptTests(unittest.TestCase):
         self.assertEqual(rows[0], "│  Using cmake, the default (or --build-system mcpp)", terminal.text())
         self.assertTrue(rows[1].startswith("huxerui: "), terminal.text())
 
+    def test_doctor_marks_each_requirement_and_what_mcpp_provides(self):
+        result = subprocess.run([CLI, "create", "app", "modular", "--build-system", "mcpp", "--platform", "android",
+                                 "--agent", "none"], cwd=self.work, env=dict(environment(), HUXERUI_HOME=str(self.home)),
+                                stdin=subprocess.DEVNULL, capture_output=True, timeout=TIMEOUT)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.work = self.work / "modular"
+        terminal = self.start(environment(), arguments=("doctor",))
+        terminal.finish()
+        rows = terminal.rows()
+        self.assertTrue(any(row.startswith("◆  HuxerUI CLI ") for row in rows), terminal.text())
+        self.assertIn("◆  Common environment", rows)
+        self.assertIn("◆  Platform android", rows)
+        provided = next(row for row in rows if "provided by mcpp" in row)
+        self.assertIn("Android NDK", provided)
+        self.assertTrue(all(cell.fg == VIOLET for cell in self.cells(terminal, "◆")))
+
     def test_without_a_terminal_create_applies_defaults_and_writes_no_escapes(self):
         result = subprocess.run([CLI, "create", "app", "plain", "--agent", "none"], cwd=self.work,
                                 env=dict(environment(), HUXERUI_HOME=str(self.home)), stdin=subprocess.DEVNULL,
