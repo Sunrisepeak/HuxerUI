@@ -11,7 +11,8 @@ If the project has no configured package, use `HUXERUI_HOME` when it identifies 
 Check the shell-selected executable with `huxerui --version` and `huxerui --help` before relying on flags. Try subcommand help where available and use `huxerui doctor` for setup or environment diagnosis. Use the selected CLI's help for available scaffold options and agent destinations.
 
 Headers with CMake is an application's default. `--build-system cmake,mcpp` adds an mcpp declaration to a headers project, and `--build-system mcpp` creates a C++ modules project, which [cpp-modules-and-mcpp.md](cpp-modules-and-mcpp.md) covers.
-A library defaults to, and is recommended to keep, both declarations: its consumers can then include its headers or import it as a C++ module, and the module interface is generated from the headers.
+A library defaults to, and is recommended to keep, both declarations: its consumers can then include its headers or import it as a C++ module, and the module interface is generated from the headers; an existing headers library gains it as [cpp-modules-and-mcpp.md](cpp-modules-and-mcpp.md#add-c-modules-to-an-existing-headers-library) describes.
+An application's sources stay headers whichever build systems it declares; a C++ modules application, whose sources import `huxerui`, is described in [cpp-modules-and-mcpp.md](cpp-modules-and-mcpp.md).
 
 ## Create a minimal application
 

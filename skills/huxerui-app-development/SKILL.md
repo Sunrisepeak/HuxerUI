@@ -19,7 +19,7 @@ Identify the project style first, then its build system:
 
 Keep the project's build system and compatible toolchain. Report build and run results for the host and affected platforms actually validated.
 
-Create a library with both declarations, `--build-system cmake,mcpp`, which is a library's default. Other libraries and applications consume a library, and both declarations let each of them include its headers or import it as a C++ module, while only the headers are maintained: the mcpp build generates the module interface from them. An application has no consumer, so it keeps its single build system, headers with CMake by default.
+Create a library with both declarations, `--build-system cmake,mcpp`, which is a library's default. Other libraries and applications consume a library, and both declarations let each of them include its headers or import it as a C++ module, while only the headers are maintained: the mcpp build generates the module interface from them. To give an existing headers library that interface, follow [Add C++ modules to an existing headers library](references/cpp-modules-and-mcpp.md#add-c-modules-to-an-existing-headers-library). An application has no consumer, so it keeps its single build system, headers with CMake by default.
 
 ## Shared rules
 

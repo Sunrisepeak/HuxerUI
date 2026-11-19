@@ -26,6 +26,7 @@ A project's source style follows its build systems:
 | `cmake,mcpp`, library (a library's default, recommended) | headers and C++ modules | headers; consumers include them or import the library's module |
 
 Keep both for a library: other libraries and applications consume it, and with both declarations each of them can, whether it includes headers or imports C++ modules, while you maintain only the headers.
+An existing headers library gains the module interface without changing its sources, as [Add C++ modules to an existing headers library](../../skills/huxerui-app-development/references/cpp-modules-and-mcpp.md#add-c-modules-to-an-existing-headers-library) describes.
 Such a library is the module named by its C++ namespace as well: the mcpp build generates `modules/<module>.cppm` from its public headers, so a consumer built with mcpp writes `import <module>;` and one built with CMake includes the headers. Set `cpp_modules_gen = false` under `[package.metadata.huxerui]` to write that file yourself; the build then reports the names it leaves out.
 
 ```bash
