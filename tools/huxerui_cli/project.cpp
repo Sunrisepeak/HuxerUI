@@ -1096,12 +1096,13 @@ void CreateProject(const std::filesystem::path& destination, const ProjectTempla
     // `mcpp new` cannot know the identifier, so the template leaves it commented out in its identity table; the CLI
     // states it there, where `platform add` and the package formats read it.
     std::string& manifest = FindGeneratedFile(files, "mcpp.toml", "templates/" + std::string(selected)).content;
-    const std::size_t table = manifest.find("[package.metadata.huxerui]\n");
+    // A Windows checkout may embed the template with CRLF line endings; the line's own ending is kept.
+    const std::size_t table = manifest.find("[package.metadata.huxerui]");
     const std::size_t placeholder = table == std::string::npos ? table : manifest.find("\n# id = ", table);
     if (placeholder == std::string::npos) {
       throw std::logic_error("templates/" + std::string(selected) + " has no identity table with an id placeholder");
     }
-    const std::size_t end = manifest.find('\n', placeholder + 1);
+    const std::size_t end = manifest.find_first_of("\r\n", placeholder + 1);
     manifest.replace(placeholder + 1, end - placeholder - 1, "id   = \"" + context.project_id + "\"");
     WriteFiles(temporary, files);
     for (const PlatformDriver* platform : application_platforms) {
