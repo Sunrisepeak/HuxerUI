@@ -311,3 +311,25 @@ TEST_CASE("HuxerUICliConsoleSetsToolOutputApartOnlyOnATerminal") {
                           "   > mcpp pack\n"
                           "ok  Packaged app\n");
 }
+
+TEST_CASE("HuxerUICliConsoleListsItemsAlignedOnATerminal") {
+  using Mark = Console::Mark;
+  std::ostringstream plain;
+  const Console unstyled;
+  unstyled.Item(plain, Mark::Missing, "JDK", "/opt/jdk", 12);
+  REQUIRE(plain.str() == "  [missing] JDK: /opt/jdk\n");
+
+  // Each mark takes one column, so labels and details line up; a summary may be cut, a path never is.
+  std::ostringstream styled;
+  const Console terminal(Style{.color = ColorDepth::None, .unicode = false, .width = 30});
+  terminal.Item(styled, Mark::Ready, "cmake", "/usr/local/bin/cmake-with-a-long-path", 7);
+  terminal.Item(styled, Mark::Missing, "JDK 17", {}, 7);
+  terminal.Item(styled, Mark::Optional, "sdkmanager", "(optional)", 10);
+  terminal.Item(styled, Mark::Ready, "provided", "9 checks: pkg-config, C++ compiler", 8, true);
+  terminal.Item(styled, Mark::Action, "manual", "Install mcpp: xlings install mcpp -y", 9);
+  REQUIRE(styled.str() == "   + cmake    /usr/local/bin/cmake-with-a-long-path\n"
+                          "   ! JDK 17\n"
+                          "   - sdkmanager  (optional)\n"
+                          "   + provided  9 checks: p...\n"
+                          "   > manual     Install mcpp: xlings install mcpp -y\n");
+}

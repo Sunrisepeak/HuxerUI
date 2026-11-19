@@ -133,10 +133,10 @@ void PrintHelp(std::ostream& output) {
   PrintPackageOptions(output);
   output << "create asks for a missing kind, name, build system, template, platform list, or agent list when\n"
          << "run in a terminal, and confirms before writing; --yes, or no terminal, applies the defaults instead.\n"
-         << "A build-system list is cmake, mcpp, or\n"
-         << "cmake,mcpp: mcpp alone creates a C++ modules project (import huxerui;), and a list naming cmake a\n"
-         << "headers project (#include <huxerui/huxerui.h>); a library naming both is also a module, whose\n"
-         << "interface the mcpp build generates from its headers. An app defaults to cmake and a library to both.\n"
+         << "A build-system list is cmake, mcpp, or cmake,mcpp. mcpp alone creates a C++ modules project\n"
+         << "(import huxerui;) and a list naming cmake a headers project (#include <huxerui/huxerui.h>); a library\n"
+         << "naming both is also a module, whose interface the mcpp build generates from its headers.\n"
+         << "An app defaults to cmake and a library to both.\n"
          << "Without --platform, an app and a common library's Preview enable all platforms.\n"
          << "An agent list is comma-separated and supports ";
   for (std::size_t index = 0; index < agent_skill_mappings.size(); ++index) {
@@ -771,12 +771,16 @@ EnvironmentOptions ParseEnvironmentOptions(std::span<const std::string_view> arg
 struct EnvironmentTarget {
   std::string platform;
   std::vector<EnvironmentDiagnostic> checks;
+  /// The labels of the host-toolchain checks the build system provides instead, which the plan leaves out.
+  std::vector<std::string> provided = {};
 };
 
 struct EnvironmentPlan {
   std::vector<EnvironmentDiagnostic> common;
   std::vector<EnvironmentTarget> targets;
   std::vector<SetupAction> actions;
+  /// The build system that provisions its own toolchain, when the plan is for one.
+  std::string provider = {};
 };
 
 bool DiagnosticsReady(std::span<const EnvironmentDiagnostic> diagnostics) {
@@ -815,6 +819,9 @@ EnvironmentPlan CreateEnvironmentPlan(const SdkLocation& sdk, EnvironmentRequest
                                       std::optional<BuildSystem> build_system) {
   EnvironmentPlan plan;
   request.provisioned_toolchain = build_system && ProvisionsToolchain(*build_system);
+  if (request.provisioned_toolchain) {
+    plan.provider = BuildSystemName(*build_system);
+  }
   const bool applicable = platforms.empty() || std::ranges::any_of(platforms, [](const auto* platform) {
                             return platform->SupportsCurrentHost();
                           });
@@ -841,13 +848,16 @@ EnvironmentPlan CreateEnvironmentPlan(const SdkLocation& sdk, EnvironmentRequest
     } catch (const std::runtime_error& error) {
       checks.push_back({EnvironmentDiagnosticStatus::Blocked, "probe", "Platform environment probe", error.what()});
     }
+    std::vector<std::string> provided;
     if (request.provisioned_toolchain) {
       // The build system brings its own compilers, libraries, and packaging tools: the host's are not checked, and an
       // action that would only install them is not proposed.
       std::vector<std::string> provisioned;
-      std::erase_if(checks, [&provisioned](const EnvironmentDiagnostic& check) {
-        if (check.host_toolchain)
+      std::erase_if(checks, [&provisioned, &provided](const EnvironmentDiagnostic& check) {
+        if (check.host_toolchain) {
           provisioned.push_back(check.id);
+          provided.push_back(check.label);
+        }
         return check.host_toolchain;
       });
       std::erase_if(actions, [&provisioned](const SetupAction& action) {
@@ -872,7 +882,7 @@ EnvironmentPlan CreateEnvironmentPlan(const SdkLocation& sdk, EnvironmentRequest
         plan.actions.push_back(std::move(action));
       }
     }
-    plan.targets.push_back({std::string(platform->Id()), std::move(checks)});
+    plan.targets.push_back({std::string(platform->Id()), std::move(checks), std::move(provided)});
   }
   if (cmake != plan.common.end()) {
     // An Android target with cmake.dir supplies its own CMake check.
@@ -1000,7 +1010,68 @@ void PrintEnvironmentJson(const EnvironmentPlan& plan, EnvironmentOperation oper
   output << "}\n";
 }
 
+std::string JoinLabels(std::span<const std::string> labels) {
+  std::string joined;
+  for (const std::string& label : labels) {
+    joined += (joined.empty() ? "" : ", ") + label;
+  }
+  return joined;
+}
+
+/// The plan as a terminal shows it: one titled group per scope, each requirement marked by its state, and the
+/// requirements a build system provides itself named as provided.
+void PrintStyledEnvironmentPlan(const EnvironmentPlan& plan, std::ostream& output) {
+  using Mark = prompt::Console::Mark;
+  const auto group = [&output](std::string_view title, std::span<const EnvironmentDiagnostic> checks,
+                               std::span<const std::string> provided, std::string_view provider) {
+    console.Gap(output);
+    console.Step(output, title);
+    const std::string provider_label = "provided by " + std::string(provider);
+    std::size_t width = provided.empty() ? 0 : provider_label.size();
+    for (const EnvironmentDiagnostic& check : checks) {
+      width = std::max(width, check.label.size());
+    }
+    for (const EnvironmentDiagnostic& check : checks) {
+      const bool ready = check.status == EnvironmentDiagnosticStatus::Ready;
+      const Mark mark = ready                                              ? Mark::Ready
+                        : !check.required || check.status == EnvironmentDiagnosticStatus::Unavailable ? Mark::Optional
+                        : check.status == EnvironmentDiagnosticStatus::Blocked ? Mark::Blocked
+                                                                               : Mark::Missing;
+      std::string detail = check.detail;
+      if (!check.required) {
+        detail += detail.empty() ? "(optional)" : "  (optional)";
+      }
+      console.Item(output, mark, check.label, detail, width);
+    }
+    if (!provided.empty()) {
+      // A summary, so it may be cut to the terminal's width; the plain report names every check.
+      console.Item(output, Mark::Ready, provider_label,
+                   std::to_string(provided.size()) + (provided.size() == 1 ? " check: " : " checks: ") +
+                       JoinLabels(provided),
+                   width, true);
+    }
+  };
+  if (!plan.common.empty()) {
+    group("Common environment", plan.common, {}, {});
+  }
+  for (const auto& target : plan.targets) {
+    group("Platform " + target.platform, target.checks, target.provided, plan.provider);
+  }
+  if (!plan.actions.empty()) {
+    console.Gap(output);
+    console.Step(output, "Setup plan");
+    for (const auto& action : plan.actions) {
+      console.Item(output, Mark::Action, action.command || action.install ? "automatic" : "manual",
+                   action.description, std::string_view{"automatic"}.size());
+    }
+  }
+}
+
 void PrintEnvironmentPlan(const EnvironmentPlan& plan, std::ostream& output) {
+  if (console.Styled()) {
+    PrintStyledEnvironmentPlan(plan, output);
+    return;
+  }
   if (!plan.common.empty()) {
     output << "Common environment:\n";
     PrintEnvironmentDiagnostics(plan.common, "  ", output);
@@ -1008,9 +1079,8 @@ void PrintEnvironmentPlan(const EnvironmentPlan& plan, std::ostream& output) {
   for (const auto& target : plan.targets) {
     output << "Platform " << target.platform << ":\n";
     PrintEnvironmentDiagnostics(target.checks, "  ", output);
-    if (target.checks.empty()) {
-      // A build system that provisions its own toolchain can leave a platform nothing to take from the host.
-      output << "  [ok] nothing required from the host\n";
+    if (!target.provided.empty()) {
+      output << "  [provided] by " << plan.provider << ": " << JoinLabels(target.provided) << '\n';
     }
   }
   if (!plan.actions.empty()) {
@@ -1170,19 +1240,37 @@ int RunEnvironment(std::span<const std::string_view> arguments, const std::files
   if (options.json) {
     PrintEnvironmentJson(plan, options.request.operation, project_errors, output);
   } else {
-    output << "HuxerUI CLI " << version << "\nHost: " << CurrentHostId()
-           << "\nProject: " << (project ? project->root.string() : "not found") << '\n';
+    // The checks are those of the build system a command reaches without --build-system.
+    std::string build_systems;
     if (project) {
-      // The checks are those of the build system a command reaches without --build-system.
-      output << "Build systems: " << JoinBuildSystems(project->build_systems, ", ");
+      build_systems = JoinBuildSystems(project->build_systems, ", ");
       if (project->build_systems.size() > 1) {
-        output << " (checking " << BuildSystemName(*options.build_system) << ", the default)";
+        build_systems += " (checking " + std::string(BuildSystemName(*options.build_system)) + ", the default)";
       }
-      output << '\n';
+    }
+    if (console.Styled()) {
+      console.Step(output, "HuxerUI CLI " + std::string(version) + " on " + std::string(CurrentHostId()));
+      console.Note(output, "Project        " + (project ? project->root.string() : std::string("not found")));
+      if (project) {
+        console.Note(output, "Build systems  " + build_systems);
+      }
+    } else {
+      output << "HuxerUI CLI " << version << "\nHost: " << CurrentHostId()
+             << "\nProject: " << (project ? project->root.string() : "not found") << '\n';
+      if (project) {
+        output << "Build systems: " << build_systems << '\n';
+      }
     }
     PrintEnvironmentPlan(plan, output);
-    for (const auto& error : project_errors)
-      output << "[error] " << error << '\n';
+    if (!project_errors.empty() && console.Styled()) {
+      console.Gap(output);
+      console.Step(output, "Project");
+      for (const auto& error : project_errors)
+        console.Item(output, prompt::Console::Mark::Missing, error, {});
+    } else {
+      for (const auto& error : project_errors)
+        output << "[error] " << error << '\n';
+    }
   }
   return EnvironmentReady(plan) && project_errors.empty() ? 0 : 1;
 }

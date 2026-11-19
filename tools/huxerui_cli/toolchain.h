@@ -27,7 +27,7 @@ ProcessCommand WithEnvironment(ProcessCommand command, const ProcessEnvironment&
 EnvironmentDiagnostic ResolveCMake(const ProcessEnvironment& environment = {},
                                    const std::filesystem::path& preferred = {});
 SetupAction PlanCMakeSetup();
-/// The mcpp engine on PATH, with its version for the record.
+/// The mcpp engine on PATH.
 EnvironmentDiagnostic ResolveMcpp();
 /// xlings, the installer mcpp is distributed through; the plan needs it only to install mcpp.
 EnvironmentDiagnostic ResolveXlings();

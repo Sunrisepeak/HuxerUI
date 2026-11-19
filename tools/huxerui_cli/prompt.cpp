@@ -1,6 +1,7 @@
 #include "prompt.h"
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <istream>
 #include <ostream>
@@ -779,6 +780,44 @@ void Console::Command(std::ostream& output, std::string_view command, bool strea
                   whole)
          << (streams ? "\n\n" : "\n");
   output.flush();
+}
+
+void Console::Item(std::ostream& output, Mark mark, std::string_view label, std::string_view detail,
+                   std::size_t label_width, bool cut_to_width) const {
+  struct Shape {
+    std::string_view unicode;
+    std::string_view ascii;
+    std::string_view word;
+    Role role;
+  };
+  // One column each, so that labels line up whichever symbols the terminal draws.
+  static constexpr std::array<Shape, 5> shapes{{
+      {"✔", "+", "ok", Role::Success},
+      {"▲", "!", "missing", Role::Error},
+      {"○", "-", "optional", Role::Muted},
+      {"■", "x", "blocked", Role::Error},
+      {"›", ">", "action", Role::Accent},
+  }};
+  const Shape& shape = shapes[static_cast<std::size_t>(mark)];
+  if (!style_) {
+    output << "  [" << shape.word << "] " << label << (detail.empty() ? "" : ": ") << detail << '\n';
+    return;
+  }
+  Style whole = *style_;
+  if (!cut_to_width) {
+    whole.width = 0;
+  }
+  output << Paint({{"   " + std::string(whole.unicode ? shape.unicode : shape.ascii) + ' ', shape.role},
+                   {Padded(label, detail.empty() ? 0 : label_width + 2), Role::Plain},
+                   {std::string(detail), Role::Muted}},
+                  whole)
+         << '\n';
+}
+
+void Console::Gap(std::ostream& output) const {
+  if (style_) {
+    output << '\n';
+  }
 }
 
 void Console::CommandEnded(std::ostream& output) const {

@@ -554,7 +554,10 @@ TEST_CASE("HuxerUICliDoctorChecksTheBuildSystemAProjectDispatchesTo") {
   REQUIRE(modular.output.find("\"id\":\"android.java\"") != std::string::npos);
   REQUIRE(modular.output.find("\"id\":\"android.android_sdk\"") != std::string::npos);
   REQUIRE(modular.output.find("\"id\":\"android.android_ndk\"") == std::string::npos);
-  REQUIRE(Invoke(temporary.Path() / "modular", {"doctor"}).output.find("Build systems: mcpp\n") != std::string::npos);
+  const auto report = Invoke(temporary.Path() / "modular", {"doctor"}).output;
+  REQUIRE(report.find("Build systems: mcpp\n") != std::string::npos);
+  // What mcpp brings itself is named, not silently dropped.
+  REQUIRE(report.find("  [provided] by mcpp: Android NDK\n") != std::string::npos);
 
   // A root declaring both is checked for the default, CMake, as a build without --build-system reaches it.
   const auto dual = Invoke(temporary.Path() / "dual", {"doctor", "--json"});

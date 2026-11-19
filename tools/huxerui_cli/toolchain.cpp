@@ -349,17 +349,10 @@ EnvironmentDiagnostic ResolveCMake(const ProcessEnvironment& environment, const 
 
 namespace {
 
-// A tool needed by name only: present on PATH, its version read for the record and never compared.
+// A tool needed by name only. It is not started: a version is never compared, and a launcher such as an xlings shim
+// may write to the terminal when it runs.
 EnvironmentDiagnostic ResolveNamedTool(std::string id) {
-  auto check = CheckTool(id, id, FindExecutable(id).value_or(std::filesystem::path{}));
-  if (check.status == EnvironmentDiagnosticStatus::Ready) {
-    try {
-      check.version = ParseToolVersion(RunProcessCapture({check.path.string(), {"--version"}, {}}).output);
-    } catch (const std::runtime_error&) {
-      // The version only annotates the check; the tool was found either way.
-    }
-  }
-  return check;
+  return CheckTool(id, id, FindExecutable(id).value_or(std::filesystem::path{}));
 }
 
 } // namespace

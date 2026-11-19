@@ -174,6 +174,20 @@ public:
   /// Closes the output of a command that streamed it.
   void CommandEnded(std::ostream& output) const;
 
+  /// What a listed item reports.
+  enum class Mark { Ready, Missing, Optional, Blocked, Action };
+  /// One item under a step, such as a requirement and where it was found, with its label padded to `label_width`
+  /// so the details of one group line up.
+  /// A detail that is a path or a command is shown whole; a summary may be cut to the terminal's width.
+  void Item(std::ostream& output, Mark mark, std::string_view label, std::string_view detail,
+            std::size_t label_width = 0, bool cut_to_width = false) const;
+  /// A blank line between groups, on a terminal only.
+  void Gap(std::ostream& output) const;
+  /// Whether the lines carry the prompt's symbols and colors; output elsewhere keeps its plain format.
+  [[nodiscard]] bool Styled() const noexcept {
+    return style_.has_value();
+  }
+
 private:
   std::optional<Style> style_;
 };
