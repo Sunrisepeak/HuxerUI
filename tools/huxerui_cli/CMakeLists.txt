@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
-    project(huxerui_cli VERSION 0.4.0 LANGUAGES CXX)
+    project(huxerui_cli VERSION 0.5.0 LANGUAGES CXX)
 endif ()
 
 include("${CMAKE_CURRENT_LIST_DIR}/../../3dparty/cmrc/CMakeRC.cmake")
@@ -51,6 +51,7 @@ add_library(huxerui_cli_core STATIC
         prompt.cpp
         prompt_terminal.cpp
         sdk.cpp
+        toolchain.cpp
         template.cpp
         watch.cpp
 )

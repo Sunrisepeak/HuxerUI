@@ -68,6 +68,10 @@ For supported downloadable prerequisites:
 huxerui setup web,android
 ```
 
+Use `huxerui doctor android --json` to preview the installation plan without making changes. Use `--operation run`, `--operation devices`, or `--operation package` to check prerequisites for a specific operation. For example, `huxerui doctor linux --operation package --format deb` checks tools needed by DEB packaging.
+
+Setup rechecks the environment after each installation. You can rerun it after addressing a manual action or restarting the machine. `--yes` confirms the HuxerUI plan, while official installers retain their own license and privilege prompts.
+
 ## Build and run
 
 ```bash
@@ -255,8 +259,8 @@ To read a separate resource package, pass the directory produced by `hrc` to `Re
 huxerui create [app <name>] [--build-system <build-system-list>] [--template <name>] [--id <project-id>] [-p|--platform <platform-list>] [--agent <agent-list>] [--yes]
 huxerui create [library <name>] [--build-system <build-system-list>] [--namespace <cpp-namespace>] [--target <public-cmake-target>] [--id <project-id>] [-p|--platform <platform-list>] [--agent <agent-list>] [--yes]
 huxerui platform add <platform-list>
-huxerui doctor [platform-list]
-huxerui setup <platform-list> [--yes]
+huxerui doctor [platform-list] [--operation build|run|package|devices] [--json]
+huxerui setup <platform-list> [--operation build|run|package|devices] [--yes]
 huxerui devices [platform]
 huxerui build [platform-list] [--build-system cmake|mcpp] [-d|--device <id>] [--config debug|release] [--generator <name>] [--sdk <path>] [--java-home <path>] [--no-shell]
 huxerui run <platform> [--build-system cmake|mcpp] [-d|--device <id>] [--config debug|release] [--generator <name>] [--sdk <path>] [--java-home <path>] [--no-shell] [--watch]

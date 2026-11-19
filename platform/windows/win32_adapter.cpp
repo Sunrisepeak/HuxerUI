@@ -35,6 +35,7 @@
 #include <vector>
 
 #include <huxerui/app.h>
+#include <huxerui/windows/platform_registry.h>
 
 #include "internal_access.h"
 #include "application/platform_frame_internal.h"
@@ -1491,8 +1492,10 @@ private:
           )) {
         throw std::runtime_error("HuxerUI could not apply its custom Windows frame");
       }
-      const DWM_WINDOW_CORNER_PREFERENCE preference = DWMWCP_ROUND;
-      HUXERUI_DISCARD(DwmSetWindowAttribute(window_, DWMWA_WINDOW_CORNER_PREFERENCE, &preference, sizeof(preference)));
+      // Older Windows SDKs lack the DWM corner preference constants.
+      constexpr DWORD dwm_corner_preference = 33; // DWMWA_WINDOW_CORNER_PREFERENCE = 33
+      constexpr DWORD round_corners = 2; // DWMWCP_ROUND = 2
+      HUXERUI_DISCARD(DwmSetWindowAttribute(window_, dwm_corner_preference, &round_corners, sizeof(round_corners)));
     }
     dpi_ = static_cast<float>(win32_api_.WindowDpi(window_));
     accessibility_.SetDpiScale(DpiScale());
@@ -2492,3 +2495,13 @@ int RunPlatformApplication(const Application& application) {
 }
 
 } // namespace huxerui::detail
+
+namespace huxerui::windows {
+
+HWND GetPlatformWindow(const WindowHandle& window) {
+  auto* attachment =
+      dynamic_cast<huxerui::detail::WindowsUiWindow*>(huxerui::detail::WindowService::AttachedWindow(window));
+  return attachment ? attachment->Window() : nullptr;
+}
+
+} // namespace huxerui::windows

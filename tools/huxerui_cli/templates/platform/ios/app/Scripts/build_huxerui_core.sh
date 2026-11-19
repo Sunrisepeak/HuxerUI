@@ -79,7 +79,7 @@ if [ "$HUXERUI_BUILD_SYSTEM" = mcpp ]; then
 fi
 
 HUXERUI_CMAKE_ARCHS=$(printf '%s' "$ARCHS" | tr ' ' ';')
-cmake -S "$HUXERUI_PROJECT_ROOT" -B "$HUXERUI_CORE_BUILD_DIR" \
+"${HUXERUI_CMAKE_EXECUTABLE:-cmake}" -S "$HUXERUI_PROJECT_ROOT" -B "$HUXERUI_CORE_BUILD_DIR" \
   -DCMAKE_SYSTEM_NAME=iOS \
   -DCMAKE_OSX_SYSROOT="$SDKROOT" \
   -DCMAKE_OSX_ARCHITECTURES="$HUXERUI_CMAKE_ARCHS" \
@@ -94,4 +94,4 @@ cmake -S "$HUXERUI_PROJECT_ROOT" -B "$HUXERUI_CORE_BUILD_DIR" \
   -DHUXERUI_BUILD_EXAMPLES=OFF \
   -DHUXERUI_BUILD_CLI=OFF
 # A bare --parallel lets Make start every compile at once, which exhausts memory on a small Mac.
-cmake --build "$HUXERUI_CORE_BUILD_DIR" --target @TARGET_NAME@_huxerui_ios_core --parallel "$(sysctl -n hw.logicalcpu)"
+"${HUXERUI_CMAKE_EXECUTABLE:-cmake}" --build "$HUXERUI_CORE_BUILD_DIR" --target @TARGET_NAME@_huxerui_ios_core --parallel "$(sysctl -n hw.logicalcpu)"
