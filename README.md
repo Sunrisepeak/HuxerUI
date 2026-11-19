@@ -39,14 +39,13 @@ huxerui doctor
 huxerui run windows
 ```
 
-The project above uses headers (`#include <huxerui/huxerui.h>`) and CMake. For a C++ modules project, whose sources write `import huxerui;` and which mcpp builds, create it with mcpp as its build system; `huxerui run` is the same for both:
+The project above uses headers (`#include <huxerui/huxerui.h>`) and CMake. For a C++ modules project, whose sources write `import huxerui;` and which mcpp builds:
 
 ```bash
 huxerui create app hello_modules --build-system mcpp
 ```
 
-`--build-system cmake,mcpp` gives a headers project both declarations; it builds with CMake unless a command passes `--build-system mcpp`.
-It is a library's default and is recommended for libraries: the library stays headers you maintain, and its C++ module interface is generated from them, so consumers can both include it and `import` it. See [C++ Modules and mcpp](skills/huxerui-app-development/references/cpp-modules-and-mcpp.md).
+A library defaults to, and is recommended with, `--build-system cmake,mcpp`: you maintain its headers, the mcpp build generates its module interface, and consumers can either include or `import` it. See [C++ Modules and mcpp](skills/huxerui-app-development/references/cpp-modules-and-mcpp.md).
 
 ## Example
 
